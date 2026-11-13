@@ -283,11 +283,16 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 		}
 	}
 
-	var top []field
-	if f, ok := newField("Return-Path", "<"+env.From+">"); ok {
-		top = append(top, f)
+	// RFC 5321 4.4: final delivery puts a Return-Path line with the
+	// reverse-path at the very top, then our Received line. A Return-Path
+	// the message came with is removed, so exactly one is left. Everything
+	// else, the Received lines of earlier hops first of all, stays as it
+	// is and in its order.
+	fields = removeHeader(fields, "Return-Path", 0)
+	top := []field{
+		{name: "Return-Path", raw: []byte("Return-Path: <" + oneLine(env.From) + ">\r\n")},
+		{name: "Received", raw: received(d.Hostname, qid, env, rdns, accounts, now())},
 	}
-	top = append(top, field{name: "Received", raw: received(d.Hostname, qid, env, rdns, accounts, now())})
 	out := joinHeader(append(append(top, added...), fields...), rest)
 
 	for _, a := range accounts {
@@ -338,8 +343,24 @@ func verdict(res *rspamd.Result) *smtp.Error {
 	return nil
 }
 
-// received builds the trace header (RFC 5321 4.4).
+// received builds the time stamp line of RFC 5321 4.4:
+//
+//	Received: from <EHLO name> (<PTR name> <address literal>)
+//		by <our name> (robinmail) with <protocol> id <queue id>
+//		(<TLS version and cipher>)
+//		for <recipient>;
+//		<date>
+//
+// The FROM clause has the name the client gave in EHLO and, as TCP-info,
+// the address of the connection as an address literal, preceded by its
+// PTR name when that was confirmed. A client can say anything in EHLO; a
+// name that is not a Domain or address literal would break the line's
+// syntax, so the address literal stands in for it. The comments are CFWS,
+// which the grammar allows between the clauses. FOR appears only with a
+// single recipient: "it MUST contain exactly one <path>", and with more
+// than one it would tell each about the others.
 func received(host, qid string, env *smtp.Envelope, rdns string, to []store.Account, t time.Time) []byte {
+	// RFC 3848 and RFC 6531 4 register the WITH protocol names.
 	proto := "ESMTP"
 	if env.UTF8 {
 		proto = "UTF8SMTP"
@@ -347,25 +368,62 @@ func received(host, qid string, env *smtp.Envelope, rdns string, to []store.Acco
 	if env.TLS != nil {
 		proto += "S"
 	}
-	var b strings.Builder
-	if rdns != "" {
-		rdns += " "
+	literal := addressLiteral(env.RemoteIP)
+	from := env.Helo
+	if !smtp.ValidHelo(from) {
+		from = literal
 	}
-	fmt.Fprintf(&b, "Received: from %s (%s[%s])\r\n\tby %s (robinmail) with %s id %s", clean(env.Helo), rdns, env.RemoteIP, host, proto, qid)
+	if from == "" {
+		from = "unknown" // no EHLO name and no address: not over TCP
+	}
+	var b strings.Builder
+	b.WriteString("Received: from " + from)
+	switch {
+	case literal != "" && rdns != "":
+		b.WriteString(" (" + rdns + " " + literal + ")")
+	case literal != "":
+		b.WriteString(" (" + literal + ")")
+	}
+	fmt.Fprintf(&b, "\r\n\tby %s (robinmail) with %s id %s", host, proto, qid)
 	if env.TLS != nil {
 		fmt.Fprintf(&b, "\r\n\t(%s %s)", tls.VersionName(env.TLS.Version), tls.CipherSuiteName(env.TLS.CipherSuite))
 	}
 	if len(to) == 1 {
 		fmt.Fprintf(&b, "\r\n\tfor <%s>", to[0].Address)
 	}
+	// "SHOULD use explicit offsets in the dates", and local time.
 	fmt.Fprintf(&b, ";\r\n\t%s\r\n", t.Format(time.RFC1123Z))
 	return []byte(b.String())
+}
+
+// addressLiteral formats an IP address as RFC 5321 4.1.3 wants it in a
+// Received line: "[192.0.2.1]" or "[IPv6:2001:db8::1]". Empty for no address.
+func addressLiteral(ip net.IP) string {
+	if v4 := ip.To4(); v4 != nil {
+		return "[" + v4.String() + "]"
+	}
+	if len(ip) == net.IPv6len {
+		return "[IPv6:" + ip.String() + "]"
+	}
+	return ""
 }
 
 func queueID() string {
 	var r [8]byte
 	rand.Read(r[:])
 	return strings.ToUpper(hex.EncodeToString(r[:]))
+}
+
+// oneLine drops control characters. The SMTP server never lets a
+// reverse-path with one through; this keeps any other caller from writing
+// header lines of its own.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // clean strips control characters from untrusted text for logs and replies.
