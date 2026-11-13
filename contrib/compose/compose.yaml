@@ -1,0 +1,25 @@
+# Development services for robinmail: rqlite for metadata and Garage as the
+# S3-compatible blob store. Everything listens on 127.0.0.1 only and keeps
+# its data in the container, so "down" starts from nothing.
+#
+#   docker compose -f contrib/compose/compose.yaml up -d
+#   contrib/compose/garage-init.sh        # once per fresh Garage
+#
+# Tests:
+#   export ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001
+#   export ROBINMAIL_TEST_S3='http://GK0123456789abcdef01234567:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:3900/robinmail?region=garage'
+#   go test ./...
+name: robinmail
+
+services:
+  rqlite:
+    image: rqlite/rqlite:10.7.1
+    ports:
+      - "127.0.0.1:4001:4001"
+
+  garage:
+    image: dxflrs/garage:v2.1.0
+    ports:
+      - "127.0.0.1:3900:3900"
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro
