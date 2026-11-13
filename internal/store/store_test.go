@@ -919,8 +919,15 @@ func TestSummarize(t *testing.T) {
 	want(t, "summary", got, summary{messageID: "own@x", refs: []string{"own@x", "a@x", "b@x", "c@x"},
 		sender: "Jürgen <j@x.test>", subject: "Re: plan for tomorrow", preview: "Hallö, see you there."})
 
-	html := summarize([]byte("Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n\r\nhi\r\n--x--\r\n"))
-	want(t, "multipart", html, summary{hasAttachment: true})
+	// One unnamed text part is the body, not an attachment (RFC 8621 4.1.4).
+	multi := summarize([]byte("Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n\r\nhi\r\n--x--\r\n"))
+	want(t, "multipart", multi, summary{preview: "hi"})
+	file := summarize([]byte("To: Bob <bob@x.test>\r\nCc: c@x.test\r\nDate: Fri, 13 Nov 2026 10:00:00 +0100\r\n" +
+		"Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n\r\nhi\r\n" +
+		"--x\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=a.pdf\r\n\r\n%PDF\r\n--x--\r\n"))
+	want(t, "attachment", file, summary{recipients: "Bob <bob@x.test>", cc: "c@x.test", sentAt: 1794560400, preview: "hi", hasAttachment: true})
+	htmlOnly := summarize([]byte("Content-Type: text/html\r\n\r\n<p>Hello <b>there</b></p>"))
+	want(t, "html preview", htmlOnly.preview, "Hello there")
 	b64 := summarize([]byte("Content-Transfer-Encoding: base64\r\n\r\naGVsbG8gd29y\r\nbGQ=\r\n"))
 	want(t, "base64 preview", b64.preview, "hello world")
 	want(t, "not mail", summarize([]byte("\x00\x01")), summary{})

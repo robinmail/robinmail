@@ -144,6 +144,10 @@ func (m *Message) Preview() string {
 	return ""
 }
 
+// inlineElements do not break a word: "<b>at</b>tached" reads "attached".
+var inlineElements = set("a", "abbr", "b", "bdi", "bdo", "big", "cite", "code", "del", "dfn", "em", "font", "i", "ins",
+	"kbd", "mark", "q", "s", "samp", "small", "span", "strike", "strong", "sub", "sup", "tt", "u", "var", "wbr")
+
 // htmlText returns the text of an HTML document, without what a browser
 // does not show, until it has about max bytes.
 func htmlText(src string, max int) string {
@@ -159,20 +163,21 @@ func htmlText(src string, max int) string {
 			return b.String()
 		case html.StartTagToken:
 			name, _ := z.TagName()
-			switch n := string(name); n {
-			case "script", "style", "head", "title", "template", "noscript":
+			switch n := string(name); {
+			case n == "script" || n == "style" || n == "head" || n == "title" || n == "template" || n == "noscript":
 				if skip == "" {
 					skip = n
 				}
-			default:
+			case !inlineElements[n]:
 				b.WriteByte(' ')
 			}
 		case html.EndTagToken:
 			name, _ := z.TagName()
-			if string(name) == skip {
+			if n := string(name); n == skip {
 				skip = ""
+			} else if !inlineElements[n] {
+				b.WriteByte(' ')
 			}
-			b.WriteByte(' ')
 		case html.SelfClosingTagToken:
 			b.WriteByte(' ')
 		case html.TextToken:

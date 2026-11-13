@@ -122,3 +122,73 @@ func (s *Store) TrimDelivered(ctx context.Context, before time.Time) (int64, err
 	}
 	return res[0].RowsAffected, nil
 }
+
+// ChangesOf is Changes for one type ("Email", "Mailbox" or "Thread") with
+// a cap, as JMAP's Foo/changes wants (RFC 8620 5.2). With max > 0 it stops
+// at the last state up to which no more than max objects changed and
+// reports that state and more = true; the caller asks again from there. A
+// state is never split, so a single write that touched more than max
+// objects is returned whole.
+func (s *Store) ChangesOf(ctx context.Context, account, typ string, since int64, max int) (set ChangeSet, newState int64, more bool, err error) {
+	res, err := s.query(ctx, account,
+		q(`SELECT modseq, trimmed_modseq FROM account WHERE id = :a`),
+		q(`SELECT modseq, id, op FROM changes WHERE account_id = :a AND type = :type AND modseq > :since ORDER BY modseq`,
+			"type", typ, "since", since))
+	if err != nil {
+		return ChangeSet{}, 0, false, err
+	}
+	if len(res[0].Values) == 0 {
+		return ChangeSet{}, 0, false, ErrNoAccount
+	}
+	state, trimmed := asInt(res[0].Values[0][0]), asInt(res[0].Values[0][1])
+	if since < trimmed || since > state || since < 0 {
+		return ChangeSet{}, 0, false, ErrCannotCalculateChanges
+	}
+
+	type span struct{ first, last string }
+	seen := map[int64]*span{}
+	var order []int64
+	rows := res[1].Values
+	newState = state
+	for i := 0; i < len(rows); {
+		// One state at a time.
+		end := i
+		fresh := 0
+		for end < len(rows) && asInt(rows[end][0]) == asInt(rows[i][0]) {
+			if _, ok := seen[asInt(rows[end][1])]; !ok {
+				fresh++
+			}
+			end++
+		}
+		if max > 0 && len(order) > 0 && len(order)+fresh > max {
+			newState, more = asInt(rows[i-1][0]), true
+			break
+		}
+		for _, row := range rows[i:end] {
+			id, op := asInt(row[1]), asString(row[2])
+			if sp, ok := seen[id]; ok {
+				sp.last = op
+				continue
+			}
+			seen[id] = &span{op, op}
+			order = append(order, id)
+		}
+		i = end
+	}
+	for _, id := range order {
+		sp := seen[id]
+		switch {
+		case sp.first == "created" && sp.last == "destroyed":
+		case sp.first == "created":
+			set.Created = append(set.Created, id)
+		case sp.last == "destroyed":
+			set.Destroyed = append(set.Destroyed, id)
+		default:
+			set.Updated = append(set.Updated, id)
+		}
+	}
+	for _, list := range [][]int64{set.Created, set.Updated, set.Destroyed} {
+		sort.Slice(list, func(i, j int) bool { return list[i] < list[j] })
+	}
+	return set, newState, more, nil
+}

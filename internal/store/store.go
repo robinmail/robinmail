@@ -43,6 +43,16 @@ var (
 	// ErrNoMailboxes is returned when an update would leave an email in no
 	// mailbox at all. Destroy it instead.
 	ErrNoMailboxes = errors.New("an email must be in at least one mailbox")
+	// ErrStateMismatch is returned by a write that was given a state to
+	// expect (JMAP ifInState) when the account has moved on.
+	ErrStateMismatch = errors.New("the account is not in the expected state")
+	// Mailbox/set refusals.
+	ErrMailboxHasChild = errors.New("the mailbox has child mailboxes")
+	ErrMailboxHasEmail = errors.New("the mailbox has emails")
+	ErrMailboxRole     = errors.New("a mailbox with a role cannot be destroyed")
+	ErrMailboxLoop     = errors.New("a mailbox cannot be moved under itself")
+	ErrNoBlob          = errors.New("no such blob")
+	ErrNoSession       = errors.New("no such session")
 	// ErrCannotCalculateChanges is returned by Changes when the given state
 	// is older than the change log reaches, or is not a state of the account.
 	ErrCannotCalculateChanges = errors.New("cannot calculate changes from that state")
@@ -168,6 +178,15 @@ func (b *batch) unique(err error) { b.fail[len(b.stmts)] = err }
 // guardAccount is the first statement of every batch.
 func (b *batch) guardAccount() {
 	b.guard(ErrNoAccount, `EXISTS (SELECT 1 FROM account WHERE id = :a)`)
+}
+
+// ifState makes the batch fail with ErrStateMismatch unless the account is
+// in the given state. 0 is no expectation. Being a statement of the batch,
+// it holds for the write itself, not for a moment before it.
+func (b *batch) ifState(state int64) {
+	if state != 0 {
+		b.guard(ErrStateMismatch, `(SELECT modseq FROM account WHERE id = :a) = :ifstate`, "ifstate", state)
+	}
 }
 
 // bump increments the account's modseq, plus the named counters.

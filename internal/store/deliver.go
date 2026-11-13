@@ -100,12 +100,13 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 			WHERE account_id = a.id AND message_id IN (VALUES ` + refVals + `)), a.next_thread - 1)`
 	}
 	b.add(`INSERT INTO email (account_id, id, blob, size, received_at, thread_id, message_id, sender, subject,
-			preview, has_attachment, modseq)
+			preview, has_attachment, modseq, recipients, cc, bcc, sent_at)
 		SELECT a.id, a.next_email - 1, :blob, :size, :received, `+thread+`, :message_id, :sender, :subject,
-			:preview, :attachment, a.modseq
+			:preview, :attachment, a.modseq, :recipients, :cc, :bcc, :sent_at
 		FROM account a WHERE a.id = :a`,
 		append([]any{"blob", blobID, "size", len(m.Raw), "received", received.Unix(), "message_id", info.messageID,
-			"sender", info.sender, "subject", info.subject, "preview", info.preview, "attachment", attachment},
+			"sender", info.sender, "subject", info.subject, "preview", info.preview, "attachment", attachment,
+			"recipients", info.recipients, "cc", info.cc, "bcc", info.bcc, "sent_at", info.sentAt},
 			refKV...)...)
 	if len(info.refs) > 0 {
 		b.add(`INSERT OR IGNORE INTO thread_ref (account_id, message_id, thread_id)
