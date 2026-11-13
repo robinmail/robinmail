@@ -3,27 +3,39 @@ package main
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"math/rand/v2"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/mikepage/robinmail/internal/delivery"
+	"github.com/mikepage/robinmail/internal/jmap"
 	"github.com/mikepage/robinmail/internal/rspamd"
 	"github.com/mikepage/robinmail/internal/smtp"
 	"github.com/mikepage/robinmail/internal/store"
 	"github.com/mikepage/robinmail/internal/tlsconf"
+	"github.com/mikepage/robinmail/internal/web"
 )
 
 // onListen, when set, is told the address the SMTP listener got. Tests use
-// it to listen on port 0.
-var onListen func(net.Addr)
+// it to listen on port 0. onWebListen is the same for the first web
+// listener.
+var (
+	onListen    func(net.Addr)
+	onWebListen func(net.Addr)
+)
+
+// webStatic is the webmail served outside the API paths. nil is the
+// placeholder page; the build that embeds web/dist sets it.
+var webStatic fs.FS
 
 // How long open SMTP sessions get to finish after a stop signal.
 const shutdownGrace = 30 * time.Second
 
-// serve runs the SMTP listener and the daily trim until a.ctx is done, which
+// serve runs the SMTP listener, the web listeners and the daily upkeep until a.ctx is done, which
 // happens on SIGINT or SIGTERM. stop gives the signals their default action
 // back, so a second one ends the process without waiting.
 func (a *app) serve(stop func()) error {
@@ -35,8 +47,8 @@ func (a *app) serve(stop func()) error {
 		log.Warn("no certificate configured, STARTTLS is off")
 	case err != nil:
 		return err
-	case a.cfg.TLS.ACME:
-		log.Warn("ACME validates over port 443, which robinmail does not serve yet; STARTTLS fails until a certificate is cached")
+	case a.cfg.TLS.ACME && a.cfg.Web.Listen == "":
+		log.Warn("ACME validates over port 443, but web listen is not set; TLS fails until a certificate is cached")
 	}
 
 	d := &delivery.Deliverer{
@@ -73,6 +85,56 @@ func (a *app) serve(stop func()) error {
 		return err
 	}
 	log.Info("smtp listening", "addr", l.Addr().String(), "starttls", tc != nil, "domains", len(domains))
+
+	// The web side: HTTPS for real use, plain HTTP on localhost for
+	// development and tests. Both serve the same handler.
+	site := &web.Server{
+		Hostname:   a.cfg.Hostname,
+		Accounts:   a.store,
+		JMAP:       &jmap.Handler{Store: a.store},
+		Static:     webStatic,
+		DevOrigins: a.cfg.Web.DevOrigins,
+		Logger:     log,
+		WithUser: func(ctx context.Context, accountID, username string) context.Context {
+			return jmap.WithUser(ctx, jmap.User{AccountID: accountID, Username: username})
+		},
+	}
+	var webServers []*http.Server
+	webErr := make(chan error, 2)
+	if a.cfg.Web.Listen != "" {
+		if tc == nil {
+			return errors.New("web listen needs a certificate")
+		}
+		wl, err := net.Listen("tcp", a.cfg.Web.Listen)
+		if err != nil {
+			return err
+		}
+		hs := site.HTTPServer()
+		hs.TLSConfig = tc.Clone()
+		webServers = append(webServers, hs)
+		log.Info("https listening", "addr", wl.Addr().String())
+		if onWebListen != nil {
+			onWebListen(wl.Addr())
+		}
+		go func() { webErr <- hs.ServeTLS(wl, "", "") }()
+	}
+	if a.cfg.Web.HTTPListen != "" {
+		wl, err := net.Listen("tcp", a.cfg.Web.HTTPListen)
+		if err != nil {
+			return err
+		}
+		hs := site.HTTPServer()
+		webServers = append(webServers, hs)
+		log.Warn("plain http listening, for development only", "addr", wl.Addr().String())
+		if onWebListen != nil && a.cfg.Web.Listen == "" {
+			onWebListen(wl.Addr())
+		}
+		go func() { webErr <- hs.Serve(wl) }()
+	}
+	if len(webServers) == 0 {
+		log.Warn("no web listener configured, JMAP and the webmail are off")
+	}
+	// Last, so a test that waits for this has every listener up.
 	if onListen != nil {
 		onListen(l.Addr())
 	}
@@ -91,21 +153,35 @@ func (a *app) serve(stop func()) error {
 	select {
 	case err := <-errc:
 		return err
+	case err := <-webErr:
+		return err
 	case <-a.ctx.Done():
 	}
 	stop()
 	log.Info("shutting down", "grace", shutdownGrace)
 	sctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
+	// Requests in flight finish; new ones are refused.
+	webDone := make(chan struct{})
+	go func() {
+		defer close(webDone)
+		for _, hs := range webServers {
+			if err := hs.Shutdown(sctx); err != nil {
+				hs.Close()
+			}
+		}
+	}()
 	if err := srv.Shutdown(sctx); err != nil {
 		log.Warn("closed sessions that did not finish in time")
 	}
+	<-webDone
 	<-trimmed
 	return nil
 }
 
-// trimLoop removes change log rows and delivery keys past their retention:
-// once after first, then every interval, until ctx is done.
+// trimLoop removes change log rows, delivery keys and web sessions past
+// their time and blob files nothing refers to any more: once after first,
+// then every interval, until ctx is done.
 //
 // Nobody picks which node trims: all of them do. Each trim is one atomic
 // batch in rqlite that deletes whatever is older than the cut and records,
@@ -141,5 +217,17 @@ func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger) {
 		log.Error("trimming delivery keys failed", "err", err)
 		return
 	}
-	log.Info("trimmed", "changes", changes, "delivery_keys", keys)
+	sessions, err := st.TrimSessions(ctx, now)
+	if err != nil {
+		log.Error("trimming sessions failed", "err", err)
+		return
+	}
+	log.Info("trimmed", "changes", changes, "delivery_keys", keys, "sessions", sessions)
+	// The blobs are this node's own: every node sweeps its disk.
+	swept, err := st.SweepBlobs(ctx, now.Add(-store.BlobGrace))
+	if err != nil {
+		log.Error("sweeping blobs failed", "err", err)
+		return
+	}
+	log.Info("swept blobs", "removed", swept.Removed, "restored", swept.Restored, "temp", swept.Temp)
 }

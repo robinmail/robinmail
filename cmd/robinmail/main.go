@@ -1,5 +1,6 @@
 // Command robinmail is a JMAP-first mail server. "serve" runs the inbound
-// SMTP listener; the other commands manage domains, accounts and the store.
+// SMTP listener and the web side (login, JMAP, webmail); the other commands
+// manage domains, accounts and the store.
 package main
 
 import (
@@ -54,7 +55,9 @@ commands:
   flag <address> <email> <keyword>...          set keywords such as $seen; -keyword removes one
   rm <address> <email>                         destroy an email
   changes <address> [state]                    show what changed since a state (default: 0)
-  trim                                         remove change log and delivery keys past their retention
+  trim                                         remove change log, delivery keys and sessions past their time
+  sweep                                        remove this node's blob files that no email refers to
+  reindex [address]                            read stored messages again and refresh the cached columns
 `
 
 func main() {
@@ -153,6 +156,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return a.changes(args[0], optional(args, 1, "0"))
 	case cmd == "trim" && n == 0:
 		return a.trim()
+	case cmd == "sweep" && n == 0:
+		return a.sweep()
+	case cmd == "reindex" && (n == 0 || n == 1):
+		return a.reindex(optional(args, 0, ""))
 	}
 	fs.Usage()
 	return flag.ErrHelp
@@ -689,7 +696,54 @@ func (a *app) trim() error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.stdout, "removed %d change rows and %d delivery keys\n", changes, keys)
+	sessions, err := a.store.TrimSessions(a.ctx, now)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "removed %d change rows, %d delivery keys and %d sessions\n", changes, keys, sessions)
+	return nil
+}
+
+// sweep removes the blob files on this node that no email refers to and
+// that are older than a day. serve does the same once a day.
+func (a *app) sweep() error {
+	res, err := a.store.SweepBlobs(a.ctx, time.Now().Add(-store.BlobGrace))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "removed %d blob files and %d temporary files, put %d back\n", res.Removed, res.Temp, res.Restored)
+	return nil
+}
+
+// reindex refreshes what the email table caches from each message: the
+// fields for lists and filters, the preview, hasAttachment. For mail stored
+// by a version that cached less.
+func (a *app) reindex(s string) error {
+	var accounts []store.Account
+	if s != "" {
+		acct, err := a.account(s)
+		if err != nil {
+			return err
+		}
+		accounts = []store.Account{acct}
+	} else {
+		var err error
+		if accounts, err = a.store.Accounts(a.ctx); err != nil {
+			return err
+		}
+	}
+	for _, acct := range accounts {
+		ids, err := a.store.EmailIDs(a.ctx, acct.ID)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := a.store.Reindex(a.ctx, acct.ID, id); err != nil && !errors.Is(err, store.ErrNoEmail) {
+				return fmt.Errorf("%s %s: %w", acct.Address, store.EmailID(id), err)
+			}
+		}
+		fmt.Fprintf(a.stdout, "%s: %d emails\n", acct.Address, len(ids))
+	}
 	return nil
 }
 

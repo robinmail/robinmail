@@ -6,8 +6,8 @@
     "url": "http://127.0.0.1:4001"
   },
   "tls": {
-    "cert_file": "",
-    "key_file": "",
+    "cert_file": "/etc/robinmail/fullchain.pem",
+    "key_file": "/etc/robinmail/privkey.pem",
     "acme": false,
     "acme_email": ""
   },
@@ -17,6 +17,11 @@
     "max_recipients": 100,
     "max_connections": 100,
     "max_connections_per_ip": 10
+  },
+  "web": {
+    "listen": ":443",
+    "http_listen": "",
+    "dev_origins": []
   },
   "rspamd": {
     "url": "http://127.0.0.1:11333",

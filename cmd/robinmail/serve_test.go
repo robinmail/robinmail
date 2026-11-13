@@ -15,7 +15,8 @@ import (
 
 // server is a "robinmail serve" running inside the test.
 type server struct {
-	addr string
+	addr string       // SMTP
+	web  string       // the web listener, if the config has one
 	stop func() error // what a SIGTERM does; returns what serve returned
 }
 
@@ -24,6 +25,8 @@ func startServe(t *testing.T, c *cli) *server {
 	t.Helper()
 	listening := make(chan net.Addr, 1)
 	onListen = func(a net.Addr) { listening <- a }
+	webAddr := make(chan net.Addr, 1)
+	onWebListen = func(a net.Addr) { webAddr <- a }
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -45,10 +48,16 @@ func startServe(t *testing.T, c *cli) *server {
 			return fmt.Errorf("serve did not stop")
 		}
 	}
-	t.Cleanup(func() { s.stop(); onListen = nil })
+	t.Cleanup(func() { s.stop(); onListen, onWebListen = nil, nil })
 	select {
 	case a := <-listening:
 		s.addr = a.String()
+		// serve reports the web listener before the SMTP one.
+		select {
+		case w := <-webAddr:
+			s.web = w.String()
+		default:
+		}
 	case err := <-done:
 		stopped = true
 		t.Fatalf("serve: %v", err)

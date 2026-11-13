@@ -140,7 +140,12 @@ func TestCommands(t *testing.T) {
 	}
 	expect(ok("", "rm", user, "e2"), `destroyed e2, state 11\n`)
 	expect(ok("", "changes", user, "9"), `Email +destroyed +e2\n`, `Thread +updated +t1\n`)
-	expect(ok("", "trim"), `removed \d+ change rows and \d+ delivery keys\n`)
+	expect(ok("", "trim"), `removed \d+ change rows, \d+ delivery keys and \d+ sessions\n`)
+	// The blob of the destroyed e2 is too young to sweep; reindex reads
+	// what is left again.
+	expect(ok("", "sweep"), `removed 0 blob files and 0 temporary files, put 0 back\n`)
+	expect(ok("", "reindex", user), regexp.QuoteMeta(user)+`: 1 emails\n`)
+	expect(ok("", "list", user, "Werk"), `(?m)^e1 +uid 1 +t1 +m6 .* first +\$seen todo$`)
 
 	for _, bad := range [][]string{
 		{"cat", user, "e2"}, {"cat", user, "2"}, {"list", user, "Nope"}, {"list", "nobody@" + domain},

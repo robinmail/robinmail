@@ -80,3 +80,32 @@ func TestRFC5321_4_5_3_1_MinimumLimits(t *testing.T) {
 		}
 	}
 }
+
+// The web listeners: HTTPS needs a certificate, plain HTTP only exists on a
+// loopback address, and a dev origin is an origin, not a URL.
+func TestWeb(t *testing.T) {
+	const head = `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://x:4001"},`
+	for body, ok := range map[string]bool{
+		`"web":{}`:                               true,
+		`"web":{"http_listen":"127.0.0.1:8080"}`: true,
+		`"web":{"http_listen":"localhost:8080"}`: true,
+		`"web":{"http_listen":"[::1]:8080"}`:     true,
+		`"web":{"http_listen":"127.0.0.1:8080","dev_origins":["http://localhost:5173"]}`: true,
+		`"web":{"listen":":443"},"tls":{"cert_file":"c.pem","key_file":"k.pem"}`:         true,
+		`"web":{"listen":":443"},"tls":{"acme":true}`:                                    true,
+		`"web":{"listen":":443"}`:                                                        false, // no certificate
+		`"web":{"http_listen":":8080"}`:                                                  false, // every interface
+		`"web":{"http_listen":"0.0.0.0:8080"}`:                                           false,
+		`"web":{"http_listen":"192.0.2.1:8080"}`:                                         false,
+		`"web":{"http_listen":"mail.example.test:8080"}`:                                 false,
+		`"web":{"http_listen":"127.0.0.1"}`:                                              false, // no port
+		`"web":{"dev_origins":["http://localhost:5173/"]}`:                               false, // a path
+		`"web":{"dev_origins":["localhost:5173"]}`:                                       false,
+		`"web":{"dev_origins":["*"]}`:                                                    false,
+		`"web":{"dev_origins":["ftp://localhost"]}`:                                      false,
+	} {
+		if _, err := load(t, head+body+"}"); (err == nil) != ok {
+			t.Errorf("%s: err = %v, want ok = %v", body, err, ok)
+		}
+	}
+}

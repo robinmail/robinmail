@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ type Config struct {
 	Rqlite        Rqlite `json:"rqlite"`
 	TLS           TLS    `json:"tls"`
 	SMTP          SMTP   `json:"smtp"`
+	Web           Web    `json:"web"`
 	Rspamd        Rspamd `json:"rspamd"`
 }
 
@@ -46,6 +48,22 @@ type SMTP struct {
 	MaxRecipients       int    `json:"max_recipients"`
 	MaxConnections      int    `json:"max_connections"`
 	MaxConnectionsPerIP int    `json:"max_connections_per_ip"`
+}
+
+// Web configures the HTTP side: login, JMAP and the webmail on one origin.
+// Without a listener it is off.
+type Web struct {
+	// Listen is the HTTPS listener, usually ":443". It needs a certificate
+	// (tls). With ACME this is also the listener the certificate is
+	// validated over.
+	Listen string `json:"listen"`
+	// HTTPListen is a plain HTTP listener for development and tests. It
+	// must be on a loopback address: sessions and passwords cross it
+	// unencrypted.
+	HTTPListen string `json:"http_listen"`
+	// DevOrigins are origins besides the server's own that may call the
+	// API, such as "http://localhost:5173" for the Vite dev server.
+	DevOrigins []string `json:"dev_origins"`
 }
 
 // Rspamd configures spam scanning. An empty URL turns scanning off.
@@ -124,6 +142,22 @@ func Load(path string) (*Config, error) {
 	}
 	if n := c.SMTP.MaxRecipients; n != 0 && n < MinRecipients {
 		return nil, fmt.Errorf("%s: smtp max_recipients must be at least %d (RFC 5321 4.5.3.1.8)", path, MinRecipients)
+	}
+	if c.Web.Listen != "" && !c.TLS.ACME && c.TLS.CertFile == "" {
+		return nil, errors.New(path + ": web listen needs a certificate (tls); for development use web http_listen")
+	}
+	if c.Web.HTTPListen != "" {
+		host, _, err := net.SplitHostPort(c.Web.HTTPListen)
+		ip := net.ParseIP(host)
+		if err != nil || !(host == "localhost" || (ip != nil && ip.IsLoopback())) {
+			return nil, fmt.Errorf("%s: web http_listen must be on a loopback address such as 127.0.0.1:8080", path)
+		}
+	}
+	for _, o := range c.Web.DevOrigins {
+		u, err := url.Parse(o)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Scheme+"://"+u.Host != o {
+			return nil, fmt.Errorf("%s: web dev_origins: %q is not an origin such as http://localhost:5173", path, o)
+		}
 	}
 	if c.Rspamd.URL != "" && !httpURL(c.Rspamd.URL) {
 		return nil, fmt.Errorf("%s: rspamd url must start with http:// or https://", path)
