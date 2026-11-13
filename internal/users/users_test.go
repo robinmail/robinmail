@@ -18,7 +18,7 @@ func TestHashVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(mike, "$argon2id$v=19$m=65536,t=3,p=2$") {
+	if !strings.HasPrefix(mike, "$argon2id$v=19$m=65536,t=3,p=4$") {
 		t.Errorf("hash = %q", mike)
 	}
 	if again, _ := Hash("correct horse"); again == mike {

@@ -15,6 +15,8 @@ type Address struct {
 	Domain string
 }
 
+const maxAddress = 256 - 2
+
 // ErrInvalid is returned for any address that fails validation.
 var ErrInvalid = errors.New("invalid address")
 
@@ -22,7 +24,9 @@ var ErrInvalid = errors.New("invalid address")
 func Parse(s string) (Address, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
 	at := strings.LastIndexByte(s, '@')
-	if at <= 0 || at == len(s)-1 {
+	// RFC 5321 4.5.3.1.3: a path is at most 256 octets with its angle
+	// brackets. A longer address could never be a recipient.
+	if at <= 0 || at == len(s)-1 || len(s) > maxAddress {
 		return Address{}, ErrInvalid
 	}
 	a := Address{Local: s[:at], Domain: s[at+1:]}

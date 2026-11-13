@@ -64,6 +64,12 @@ type TLS struct {
 	ACMEEmail string `json:"acme_email"`
 }
 
+// The smallest limits RFC 5321 4.5.3.1 lets a server have.
+const (
+	MinMessageBytes = 64 << 10
+	MinRecipients   = 100
+)
+
 // Load reads and validates the config file at path.
 func Load(path string) (*Config, error) {
 	f, err := os.Open(path)
@@ -110,6 +116,14 @@ func Load(path string) (*Config, error) {
 	if c.SMTP.MaxMessageBytes < 0 || c.SMTP.MaxRecipients < 0 || c.SMTP.MaxConnections < 0 ||
 		c.SMTP.MaxConnectionsPerIP < 0 || c.Rspamd.TimeoutSeconds < 0 {
 		return nil, errors.New(path + ": limits cannot be negative")
+	}
+	// RFC 5321 4.5.3.1.7 and 4.5.3.1.8: every server takes a message of
+	// 64K octets and 100 recipients. Zero means the server's default.
+	if n := c.SMTP.MaxMessageBytes; n != 0 && n < MinMessageBytes {
+		return nil, fmt.Errorf("%s: smtp max_message_bytes must be at least %d (RFC 5321 4.5.3.1.7)", path, MinMessageBytes)
+	}
+	if n := c.SMTP.MaxRecipients; n != 0 && n < MinRecipients {
+		return nil, fmt.Errorf("%s: smtp max_recipients must be at least %d (RFC 5321 4.5.3.1.8)", path, MinRecipients)
 	}
 	if c.Rspamd.URL != "" && !httpURL(c.Rspamd.URL) {
 		return nil, fmt.Errorf("%s: rspamd url must start with http:// or https://", path)

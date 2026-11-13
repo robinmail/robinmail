@@ -94,32 +94,88 @@ func summarize(raw []byte) summary {
 	return s
 }
 
-// messageIDs returns the ids between angle brackets in a header value,
-// without the brackets. Ids with whitespace or of absurd length are skipped.
+// messageIDs returns the message identifiers in the value of a Message-ID,
+// In-Reply-To or References field, without their angle brackets ("the angle
+// bracket characters are not part of the msg-id", RFC 5322 3.6.4).
+//
+// Identifiers may be separated by CFWS, so comments are skipped, nested and
+// with quoted pairs (3.2.2); a "<" inside a comment starts nothing. The
+// obsolete syntax (4.5.4) also allows phrases between identifiers, as in
+// "In-Reply-To: Your message of Friday <id>", so quoted strings are skipped
+// the same way and other words are ignored.
+//
+// It is lenient about what is between the brackets: real identifiers do not
+// all have the "@" the grammar asks for. Ids with white space or of absurd
+// length are skipped.
 func messageIDs(v string) []string {
 	var out []string
-	for {
-		start := strings.IndexByte(v, '<')
-		if start < 0 {
-			return out
-		}
-		v = v[start+1:]
-		end := strings.IndexAny(v, "<>")
-		if end < 0 {
-			return out
-		}
-		if v[end] == '<' {
-			v = v[end:]
+	for i := 0; i < len(v); {
+		switch v[i] {
+		case '(':
+			if end := skipComment(v, i); end > 0 {
+				i = end
+				continue
+			}
+		case '"':
+			if end := skipQuoted(v, i); end > 0 {
+				i = end
+				continue
+			}
+		case '<':
+			end := strings.IndexAny(v[i+1:], "<>")
+			if end < 0 {
+				return out
+			}
+			end += i + 1
+			if v[end] == '<' {
+				i = end
+				continue
+			}
+			id := v[i+1 : end]
+			if id != "" && len(id) <= maxMessageIDLen && !strings.ContainsFunc(id, func(r rune) bool {
+				return unicode.IsSpace(r) || unicode.IsControl(r)
+			}) {
+				out = append(out, strings.ToValidUTF8(id, ""))
+			}
+			i = end + 1
 			continue
 		}
-		id := v[:end]
-		v = v[end+1:]
-		if id != "" && len(id) <= maxMessageIDLen && !strings.ContainsFunc(id, func(r rune) bool {
-			return unicode.IsSpace(r) || unicode.IsControl(r)
-		}) {
-			out = append(out, strings.ToValidUTF8(id, ""))
+		i++
+	}
+	return out
+}
+
+// skipComment returns the index after the comment that starts at v[i], or
+// -1 if it never ends.
+func skipComment(v string, i int) int {
+	depth := 0
+	for ; i < len(v); i++ {
+		switch v[i] {
+		case '\\':
+			i++
+		case '(':
+			depth++
+		case ')':
+			if depth--; depth == 0 {
+				return i + 1
+			}
 		}
 	}
+	return -1
+}
+
+// skipQuoted returns the index after the quoted string that starts at v[i],
+// or -1 if it never ends.
+func skipQuoted(v string, i int) int {
+	for i++; i < len(v); i++ {
+		switch v[i] {
+		case '\\':
+			i++
+		case '"':
+			return i + 1
+		}
+	}
+	return -1
 }
 
 // oneLine makes untrusted text fit one line of a list: valid UTF-8, runs of
