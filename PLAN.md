@@ -60,7 +60,7 @@ Every mail table starts with `account_id`.
 
 | Table | Columns | Notes |
 |---|---|---|
-| `domain` | name | domains we accept mail for |
+| `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
 | `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread | id is random and never changes; counters live here; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers |
 | `session` | token_hash, account_id, expires_at | web login |
 | `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq | a rename changes `name` only |
@@ -139,7 +139,7 @@ internal/queue       outbound delivery                  new
 internal/imap        IMAP server                        new
 web/                 Vue webmail (Vite, Nuxt UI)
 contrib/rspamd       Rspamd config                      port as is
-contrib/compose      rqlite, Rspamd for dev             new
+contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
 ```
 
 owl's `internal/fsutil` is not ported: the blob store only needed its
@@ -152,7 +152,9 @@ Carried over from owl: the rules for all code (hostile input, size limits and
 deadlines, fuzz tests for parsers, rate-limited logins, no plaintext auth) and
 the Rspamd lessons: defer on greylist only when the `GREYLIST` symbol fired,
 send the FCrDNS hostname, score headers need
-`contrib/rspamd/local.d/milter_headers.conf`.
+`contrib/rspamd/local.d/milter_headers.conf`. Rspamd adds no score headers
+to mail from local addresses (`skip_local`), which is all mail in
+development; `contrib/compose` turns that off for its own Rspamd only.
 
 Every protocol package also gets tests written from the RFC, not from our
 own behaviour. Each names the RFC and section it checks and uses the RFC's
@@ -227,11 +229,80 @@ Built as follows, where it differs from the above:
 - Not built: the blob sweeper (see open questions), mailbox destroy, and
   leader following and blob replication (phase 4). `serve` is phase 2.
 
-### Phase 2: inbound SMTP, Rspamd, delivery
+### Phase 2: inbound SMTP, Rspamd, delivery — done
 
 - `serve` with the ported SMTP listener, Rspamd scan, delivery to Inbox or Junk.
 - Exit: owl's end-to-end test passes here: `swaks` mail lands with score
   headers, GTUBE gets `550`.
+
+Built as follows, where it differs from or adds to the above:
+
+- Accepted domains come from the `domain` table: `domain add|list|remove`.
+  `domains` is gone from the config. `user add` needs the domain to exist
+  and `domain remove` refuses one that still has users; both checks are
+  guards inside the batch. Delivery reads the table at most once per 30
+  seconds and keeps the last list when rqlite does not answer.
+- `<Postmaster>` without a domain goes to the first domain, by name, that
+  has a `postmaster` account. owl used the first domain in the config.
+- Shutdown: on SIGINT or SIGTERM the listener closes, a session waiting for
+  a command gets `421` at once, a session in the middle of a command
+  finishes and answers it first, and after 30 seconds what is left is
+  closed. A second signal ends the process.
+- Trimming: every node runs `TrimChanges` and `TrimDelivered` daily, the
+  first time at a random moment within ten minutes of start. Nobody picks a
+  node: each trim is one atomic batch, so concurrent runs are safe and the
+  later one finds nothing (`TestConcurrentTrim`).
+- The exit test is `TestServeEndToEnd` in `cmd/robinmail`, with a small
+  SMTP client in Go instead of `swaks`. It needs `ROBINMAIL_TEST_RQLITE`
+  and `ROBINMAIL_TEST_RSPAMD` and is skipped without them or when Rspamd
+  does not answer. Run against rqlite 10.7.1 and Rspamd 4.3.0: a normal
+  message lands in the Inbox with `X-Spamd-Result` and `X-Rspamd-Action`,
+  GTUBE gets `550 5.7.1 Gtube pattern`, the "add header" test pattern lands
+  in Junk with `X-Spam: Yes`. `TestServeRspamdDown` covers `451` and
+  `fail_open`.
+- `contrib/compose` runs Rspamd with two development-only overrides in
+  `contrib/compose/rspamd`: `skip_local = false`, because the test sends
+  from 127.0.0.1, and `enable_test_patterns`, so the GTUBE variant that
+  starts with `YJS` yields "add header".
+- RFC tests (the rule above) were written for phases 1 and 2 together.
+  They found and fixed:
+  - `MAIL` and `RCPT` took almost anything between angle brackets. The
+    parser now follows RFC 5321 4.1.2 and 4.1.3: dot-string or quoted
+    local part, LDH domain labels (no underscore, no trailing dot),
+    address literals with `IPv6:`, source routes checked and ignored, the
+    64, 255 and 256 octet limits. Anything else is `501`.
+  - Parameters: `KEY=` without a value, `SIZE=5abc`, `SIZE=+5`, a repeated
+    `SIZE` or `BODY`, and `SMTPUTF8=x` were accepted.
+  - A non-ASCII sender without `SMTPUTF8` got `553`; RFC 6531 3.5 says
+    `550` for `MAIL` and `553` for `RCPT`, and `RCPT` did not check at all.
+  - `RSET x` and `QUIT x` were accepted (`501` now), `VRFY` without an
+    argument too, `EXPN` got `500` and `AUTH` `503` (both `502` now).
+  - Reply text from a handler, such as Rspamd's reason, went out as it
+    was: non-ASCII, and longer than the 512 octets of a reply line.
+  - Pipelining: a reply was held back while the first part of the next
+    command sat in the input buffer, and replies to `NOOP`, `VRFY` and
+    unknown commands were buffered (RFC 2920 3.2).
+  - A command timeout closed the connection without the `421`.
+  - `Received` wrote an IPv6 peer as `[2001:db8::1]` instead of
+    `[IPv6:2001:db8::1]`, and copied any EHLO argument into the line.
+  - `Return-Path` for a non-ASCII reverse-path was MIME-encoded, and a
+    `Return-Path` that came with the message was kept next to ours.
+  - `internal/address` accepted addresses longer than a 256-octet path.
+  - Argon2id used p=2; new hashes use RFC 9106's second recommended
+    option (t=3, p=4, 64 MiB). The PHC parser accepted `v=19junk`, signs,
+    leading zeros and line breaks inside the base64.
+  - `References` and `In-Reply-To`: an id inside a comment or a quoted
+    phrase was taken as a reference.
+  - The config allowed limits below RFC 5321's minimums (64K octets per
+    message, 100 recipients).
+- Deviations kept on purpose, each with a test that says why: a bare CR or
+  LF in `DATA` rejects the message; a command line may end in a bare LF;
+  any printable EHLO argument is accepted; address sizes over the RFC's
+  minimums are refused; `VRFY` answers `252`; `internal/address` knows only
+  lowercase `a-z 0-9 . _ + -` local parts; threads ignore the subject.
+- Not built: a bounce when delivery fails for some recipients of a
+  message. RFC 5321 4.4 wants `250` plus a notification; we answer `451`
+  and rely on the idempotent retry, as owl did. Needs phase 5's outbound.
 
 ### Phase 3: JMAP read side and webmail
 
@@ -305,9 +376,6 @@ Built as follows, where it differs from the above:
 
 ## Open questions
 
-- `domain` table or config: the table exists but nothing reads it. The
-  accepted domains still come from `domains` in the config, as in owl.
-  Several nodes sharing one rqlite argue for the table. Decide in phase 2.
 - The blob sweeper has no phase. `DestroyEmail` leaves the blob, since
   another email of the account may share it. It needs a way to list blobs,
   which `internal/blob` does not have yet, and with replication it has to
@@ -315,9 +383,19 @@ Built as follows, where it differs from the above:
 - Where the master key comes from in production: a file is all there is. A
   lost key file loses all mail, so it needs a backup that is not next to the
   blobs.
-- Nothing calls `TrimChanges` and `TrimDelivered` on a schedule yet (there is
-  a `trim` command). With several nodes, `serve` needs to pick who trims.
 - Delivery keys derived from content mean a byte-identical message from the
   same sender within a week is dropped as a retry. Intended, but worth
   knowing.
 - Where phase 5 gets tested against real providers: which host and domain.
+- The strict `MAIL FROM` grammar refuses senders that exist in the wild,
+  mostly hosts with an underscore in their name. Postfix accepts those by
+  default. The RFC says `501`; real traffic in phase 5 will show whether
+  that costs wanted mail.
+- RFC 9106's own test vectors use a secret and associated data, which
+  `x/crypto`'s exported `argon2.IDKey` does not take. `x/crypto` runs them
+  in its own tests; ours check the reference implementation's vectors
+  without those two inputs. Good enough, or wrap Argon2 ourselves?
+- `<Postmaster>` without a domain picks one domain's postmaster. With
+  several domains of different owners that may be the wrong person.
+- The domain list is cached for 30 seconds per node, so a removed domain
+  still gets mail for that long.
