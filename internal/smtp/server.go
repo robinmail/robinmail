@@ -59,7 +59,7 @@ type Server struct {
 
 	mu       sync.Mutex
 	perIP    map[string]int
-	conns    map[net.Conn]struct{}
+	sessions map[*session]struct{}
 	listener []net.Listener
 	closed   bool
 	wg       sync.WaitGroup
@@ -115,7 +115,7 @@ func (s *Server) Serve(l net.Listener) error {
 		s.defaults()
 		s.sem = make(chan struct{}, s.MaxConnections)
 		s.perIP = map[string]int{}
-		s.conns = map[net.Conn]struct{}{}
+		s.sessions = map[*session]struct{}{}
 	}
 	s.listener = append(s.listener, l)
 	s.mu.Unlock()
@@ -144,13 +144,22 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 }
 
-// Shutdown stops accepting connections, closes the open ones once ctx is
-// done, and waits for them to finish.
+// Shutdown stops accepting connections and waits for the open ones to end.
+// A session waiting for a command is told 421 right away (RFC 5321 3.8); one
+// that is busy, for instance receiving or delivering a message, finishes
+// that command, answers it, and is then told 421. Once ctx is done the
+// connections still open are closed.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.closed = true
 	for _, l := range s.listener {
 		l.Close()
+	}
+	for sess := range s.sessions {
+		if sess.idle {
+			// Wakes the read in session.serve, which then sees closed.
+			sess.conn.SetReadDeadline(time.Now())
+		}
 	}
 	s.mu.Unlock()
 
@@ -161,8 +170,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		s.mu.Lock()
-		for c := range s.conns {
-			c.Close()
+		for sess := range s.sessions {
+			sess.conn.Close()
 		}
 		s.mu.Unlock()
 		<-done
@@ -197,28 +206,29 @@ func (s *Server) handle(c net.Conn) {
 		io.WriteString(c, "421 4.7.0 Too many connections from your address\r\n")
 		return
 	}
+	sess := &session{srv: s, ip: ip, log: s.Logger.With("remote", key)}
+	sess.setConn(c)
 	s.perIP[key]++
-	s.conns[c] = struct{}{}
+	s.sessions[sess] = struct{}{}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
 		if s.perIP[key]--; s.perIP[key] <= 0 {
 			delete(s.perIP, key)
 		}
-		delete(s.conns, c)
+		delete(s.sessions, sess)
 		s.mu.Unlock()
 	}()
-
-	sess := &session{srv: s, conn: c, ip: ip}
-	sess.setConn(c)
-	sess.log = s.Logger.With("remote", key)
 	sess.serve()
 }
 
 // session is one SMTP connection.
 type session struct {
-	srv  *Server
+	srv *Server
+	// conn changes at STARTTLS and idle with every command. Shutdown reads
+	// both, so writes to them hold srv.mu.
 	conn net.Conn
+	idle bool // waiting for a command
 	r    *bufio.Reader
 	w    *bufio.Writer
 	ip   net.IP
@@ -278,20 +288,51 @@ func (s *session) serve() {
 	defer s.flush()
 	s.reply(220, "", s.srv.Hostname+" ESMTP robinmail")
 	for !s.quit {
-		s.conn.SetReadDeadline(time.Now().Add(s.srv.CommandTimeout))
+		if !s.await() {
+			s.reply(421, "4.3.2", s.srv.Hostname+" Service shutting down, closing transmission channel")
+			return
+		}
 		line, err := s.readLine()
+		s.srv.mu.Lock()
+		s.idle = false
+		closed := s.srv.closed
+		s.srv.mu.Unlock()
 		if err == errLineTooLong {
 			s.bad(500, "5.5.2", "Line too long")
 			continue
 		}
-		if err != nil {
+		var ne net.Error
+		switch {
+		case err == nil:
+			s.command(line)
+		case errors.As(err, &ne) && ne.Timeout() && closed:
+			s.reply(421, "4.3.2", s.srv.Hostname+" Service shutting down, closing transmission channel")
+			return
+		case errors.As(err, &ne) && ne.Timeout():
+			s.reply(421, "4.4.2", s.srv.Hostname+" Timeout, closing transmission channel")
+			return
+		default:
 			if !errors.Is(err, io.EOF) {
 				s.log.Debug("read failed", "err", err)
 			}
 			return
 		}
-		s.command(line)
 	}
+}
+
+// await marks the session as waiting for a command and starts the command
+// timeout. It returns false when the server is shutting down. Marking and
+// checking happen under the lock Shutdown holds, so either Shutdown sees the
+// session idle and wakes it, or the session sees the server closed.
+func (s *session) await() bool {
+	s.srv.mu.Lock()
+	defer s.srv.mu.Unlock()
+	if s.srv.closed {
+		return false
+	}
+	s.idle = true
+	s.conn.SetReadDeadline(time.Now().Add(s.srv.CommandTimeout))
+	return true
 }
 
 var errLineTooLong = errors.New("line too long")
@@ -429,11 +470,8 @@ func (s *session) cmdStartTLS(arg string) {
 
 // swapConn swaps the connection for its TLS wrapper and keeps Shutdown able to close it.
 func (s *session) swapConn(tc *tls.Conn) {
-	srv := s.srv
-	srv.mu.Lock()
-	delete(srv.conns, s.conn)
-	srv.conns[tc] = struct{}{}
-	srv.mu.Unlock()
+	s.srv.mu.Lock()
+	defer s.srv.mu.Unlock()
 	s.setConn(tc)
 }
 
