@@ -55,16 +55,18 @@ Every mail table starts with `account_id`.
 | Table | Columns | Notes |
 |---|---|---|
 | `domain` | name | domains we accept mail for |
-| `account` | id, address, password_hash, modseq, next_email, next_mailbox, next_thread | id is random and never changes; counters live here |
+| `account` | id, address, password_hash, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread | id is random and never changes; counters live here; `trimmed_modseq` is the newest state the change log no longer covers |
 | `session` | token_hash, account_id, expires_at | web login |
 | `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq | a rename changes `name` only |
 | `email` | id, blob, size, received_at, thread_id, message_id, sender, subject, preview, has_attachment, modseq | header fields cached for lists and sorting |
 | `email_mailbox` | email_id, mailbox_id, uid | one row per label; the IMAP UID belongs to the row |
 | `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
-| `changes` | modseq, type, id, op | type Email, Mailbox or Thread; op created, updated or destroyed |
-| `delivered` | key | queue id plus recipient, for idempotent delivery; trimmed after a week |
+| `changes` | modseq, type, id, op, at | type Email, Mailbox or Thread; op created, updated or destroyed; `at` is for trimming |
+| `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
 | `submission` | id, email_id, envelope, state, next_try, claimed_by, claimed_until | outbound queue (phase 5) |
+| `guard` | ok | always empty; how a batch checks a precondition (below) |
+| `schema_version` | version | checked at start; no migrations yet |
 
 Rules:
 
@@ -78,8 +80,12 @@ Rules:
 - **Transactions.** rqlite runs a batch of statements atomically but has no
   interactive transactions: no read, decide in Go, then write. So each store
   operation is one batch whose statements compute what they need in SQL
-  (take the counter, look up the thread, take `uidnext`). JMAP `ifInState`
-  becomes `WHERE modseq = ?`.
+  (take the counter, look up the thread, take `uidnext`). A precondition
+  ("this mailbox exists", later JMAP `ifInState`) is a guard statement:
+  `INSERT INTO guard SELECT 1 WHERE NOT (condition)`. The table only accepts
+  0, so an unmet condition breaks its `CHECK` and rolls the batch back. rqlite
+  reports which statement failed, and the store maps that position to an
+  error such as `ErrNoMailbox`.
 - **Threads.** Assigned in the delivery batch: the first `thread_ref` hit among
   the message's ids wins, otherwise a new thread. Never changed afterwards. Two
   threads that turn out to be related are not merged.
@@ -91,7 +97,9 @@ Rules:
   them. A crash leaves an unreferenced blob, never a row without a blob. A
   sweeper removes unreferenced blobs older than a day.
 - **Delivery is idempotent** through `delivered`, so a sender's retry after a
-  partial failure makes no second copy (owl did).
+  partial failure makes no second copy (owl did). The key is the SHA-256 of
+  the envelope sender and the message as received. It cannot be our queue id:
+  a retry gets a new one.
 - **Reads** use rqlite's `weak` consistency. Change polling for push may use
   `none` with a freshness bound.
 
@@ -119,7 +127,8 @@ contrib/rspamd       Rspamd config                      port as is
 contrib/compose      rqlite, Garage, Rspamd for dev     new
 ```
 
-owl's `internal/fsutil` is only needed by the local blob backend. Ported code
+owl's `internal/fsutil` is not ported: the local blob backend only needed its
+atomic write, which is now a few lines in `internal/blob`. Ported code
 keeps its tests. Protocol packages know nothing about storage and call
 interfaces that `cmd/robinmail` wires up. Store tests run against a real
 `rqlited` and are skipped when none is available.
@@ -155,7 +164,7 @@ deletes it.
 - Unused counter values: every delivery takes a thread id, also when it joins
   an existing thread. Thread ids have gaps; Email ids and UIDs do not.
 
-### Phase 1: store and ported packages — 2 weeks
+### Phase 1: store and ported packages — done
 
 - Port the packages marked above.
 - `internal/rqlite`, `internal/blob` (local and S3), `internal/store` with the
@@ -163,6 +172,33 @@ deletes it.
 - Commands: `user add|list`, `mailbox list`, `deliver`, `list`, `cat`.
 - Exit: deliver from the command line, move and label a message, and see the
   ids hold and `changes` fill; tests cover threads, UIDs and trimming.
+
+Built as follows, where it differs from the above:
+
+- More commands than planned, because the exit needs them: `mailbox
+  create|rename`, `move`, `label`, `unlabel`, `flag`, `rm`, `changes`, `trim`.
+  `cmd/robinmail/main_test.go` runs the exit against a real rqlite.
+- Ids on the outside are a type letter plus the counter in base 36: `e1`,
+  `m6`, `t1`.
+- One store call, `UpdateEmail`, adds and removes mailboxes and keywords in
+  one batch. A move is that call with one removal and one addition. An email
+  cannot end up in no mailbox.
+- Destroying the last email of a thread also drops its `thread_ref` rows, so
+  a late reply starts a new thread instead of reviving a destroyed id.
+- A keyword change marks the email's mailboxes as updated too: their unread
+  count changed.
+- `preview` and `has_attachment` are rough (text/plain only; multipart/mixed)
+  until `internal/message` in phase 3.
+- The S3 client only does path-style requests (`<endpoint>/<bucket>/<key>`).
+  Garage, MinIO and R2 accept that. Tested against Garage 2.1.0 and against
+  the signing examples in the S3 API reference.
+- `internal/users` only hashes and verifies now. It refuses stored hashes
+  with absurd Argon2 parameters.
+- Tests: `contrib/compose` starts rqlite and Garage. Set
+  `ROBINMAIL_TEST_RQLITE` and `ROBINMAIL_TEST_S3` (see `compose.yaml`);
+  without them those tests are skipped.
+- Not built: the blob sweeper (see open questions), mailbox destroy, and
+  leader following (phase 4). `serve` is phase 2.
 
 ### Phase 2: inbound SMTP, Rspamd, delivery — 4 days
 
@@ -212,6 +248,18 @@ deletes it.
 - Exit: Thunderbird and iOS Mail sync, move, flag and see new mail arrive.
 
 ## Open questions
+
+- `domain` table or config: the table exists but nothing reads it. The
+  accepted domains still come from `domains` in the config, as in owl.
+  Stateless nodes argue for the table. Decide in phase 2.
+- The blob sweeper has no phase. `DestroyEmail` leaves the blob, since
+  another email of the account may share it. It needs a way to list blobs,
+  which `internal/blob` does not have yet.
+- Nothing calls `TrimChanges` and `TrimDelivered` on a schedule yet (there is
+  a `trim` command). With several nodes, `serve` needs to pick who trims.
+- Delivery keys derived from content mean a byte-identical message from the
+  same sender within a week is dropped as a retry. Intended, but worth
+  knowing.
 
 - Which S3 store to run in the cluster test: Garage is assumed.
 - Where phase 5 gets tested against real providers: which host and domain.
