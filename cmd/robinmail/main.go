@@ -1,6 +1,5 @@
-// Command robinmail is a JMAP-first mail server. For now it only has the
-// offline commands that manage accounts and the store; the server comes in
-// phase 2.
+// Command robinmail is a JMAP-first mail server. "serve" runs the inbound
+// SMTP listener; the other commands manage domains, accounts and the store.
 package main
 
 import (
@@ -11,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -33,7 +34,11 @@ A <mailbox> is an id (m1), a role (inbox, junk) or a path (Work/Invoices).
 An <email> is an id (e1).
 
 commands:
+  serve                                        run the server until SIGINT or SIGTERM
   key generate                                 write a new master key to master_key_file
+  domain add <domain>                          accept mail for a domain
+  domain list                                  list the accepted domains
+  domain remove <domain>                       stop accepting mail for a domain without users
   user add <address>                           create a user (password from the prompt or stdin)
   user list                                    list users
   mailbox list <address>                       list a user's mailboxes
@@ -53,7 +58,7 @@ commands:
 `
 
 func main() {
-	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
+	if err := run(context.Background(), os.Args[1:], os.Stdin, os.Stdout); err != nil {
 		if !errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(os.Stderr, "robinmail:", err)
 		}
@@ -61,7 +66,7 @@ func main() {
 	}
 }
 
-func run(args []string, stdin io.Reader, stdout io.Writer) error {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("robinmail", flag.ContinueOnError)
 	cfgPath := fs.String("config", "robinmail.json", "path to the config file")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -86,7 +91,20 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "wrote %s\nBack it up and give every node the same file: without it the stored mail cannot be read.\n", cfg.MasterKeyFile)
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	if len(args) == 1 && args[0] == "serve" {
+		// The server runs until it is told to stop; only starting is bounded.
+		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		ictx, cancel := context.WithTimeout(ctx, time.Minute)
+		st, err := openStore(ictx, cfg)
+		cancel()
+		if err != nil {
+			return err
+		}
+		a := app{ctx: ctx, cfg: cfg, store: st, stdin: stdin, stdout: stdout}
+		return a.serve(stop)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	st, err := openStore(ctx, cfg)
 	if err != nil {
@@ -97,6 +115,12 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 	cmd, args := args[0], args[1:]
 	n := len(args)
 	switch {
+	case cmd == "domain" && n == 2 && args[0] == "add":
+		return a.domainAdd(args[1])
+	case cmd == "domain" && n == 1 && args[0] == "list":
+		return a.domainList()
+	case cmd == "domain" && n == 2 && args[0] == "remove":
+		return a.domainRemove(args[1])
 	case cmd == "user" && n == 2 && args[0] == "add":
 		return a.userAdd(args[1])
 	case cmd == "user" && n == 1 && args[0] == "list":
@@ -229,13 +253,61 @@ func emailID(arg string) (int64, error) {
 	return id, nil
 }
 
+// domain validates a domain name from the command line.
+func domain(s string) (string, error) {
+	name := strings.ToLower(strings.TrimSpace(s))
+	if !address.ValidDomain(name) {
+		return "", fmt.Errorf("%q is not a domain name", s)
+	}
+	return name, nil
+}
+
+func (a *app) domainAdd(s string) error {
+	name, err := domain(s)
+	if err != nil {
+		return err
+	}
+	if err := a.store.AddDomain(a.ctx, name); errors.Is(err, store.ErrDomainExists) {
+		return fmt.Errorf("%s: domain already exists", name)
+	} else if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "added %s; running servers pick it up within half a minute\n", name)
+	return nil
+}
+
+func (a *app) domainList() error {
+	list, err := a.store.Domains(a.ctx)
+	if err != nil {
+		return err
+	}
+	for _, d := range list {
+		fmt.Fprintln(a.stdout, d)
+	}
+	return nil
+}
+
+func (a *app) domainRemove(s string) error {
+	name, err := domain(s)
+	if err != nil {
+		return err
+	}
+	switch err := a.store.RemoveDomain(a.ctx, name); {
+	case errors.Is(err, store.ErrNoDomain):
+		return fmt.Errorf("%s: no such domain", name)
+	case errors.Is(err, store.ErrDomainInUse):
+		return fmt.Errorf("%s still has users", name)
+	case err != nil:
+		return err
+	}
+	fmt.Fprintf(a.stdout, "removed %s\n", name)
+	return nil
+}
+
 func (a *app) userAdd(s string) error {
 	addr, err := address.Parse(s)
 	if err != nil {
 		return fmt.Errorf("%q: %w", s, err)
-	}
-	if !a.cfg.HasDomain(addr.Domain) {
-		return fmt.Errorf("%s is not in the configured domains", addr.Domain)
 	}
 	password, err := a.readPassword()
 	if err != nil {
@@ -248,6 +320,9 @@ func (a *app) userAdd(s string) error {
 	acct, err := a.store.CreateAccount(a.ctx, addr.String(), hash)
 	if errors.Is(err, store.ErrAccountExists) {
 		return fmt.Errorf("%s: user already exists", addr)
+	}
+	if errors.Is(err, store.ErrNoDomain) {
+		return fmt.Errorf("%s is not an accepted domain (add it with \"robinmail domain add %s\")", addr.Domain, addr.Domain)
 	}
 	if err != nil {
 		return err

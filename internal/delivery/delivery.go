@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mikepage/robinmail/internal/address"
@@ -26,12 +27,13 @@ type Store interface {
 	// Account returns store.ErrNoAccount for an unknown address.
 	Account(ctx context.Context, address string) (store.Account, error)
 	Deliver(ctx context.Context, account string, m store.Message) (store.Email, error)
+	// Domains lists the domains we accept mail for, sorted.
+	Domains(ctx context.Context) ([]string, error)
 }
 
 // Deliverer implements smtp.Handler for inbound mail on port 25.
 type Deliverer struct {
 	Hostname string
-	Domains  []string // accepted domains; the first one gets <Postmaster>
 	Store    Store
 	Rspamd   *rspamd.Client // nil delivers without scanning
 	// FailOpen delivers unscanned mail when Rspamd cannot be reached.
@@ -40,6 +42,51 @@ type Deliverer struct {
 	Logger   *slog.Logger
 	Resolver Resolver         // nil uses net.DefaultResolver
 	Now      func() time.Time // for tests
+	// DomainTTL is how long the list of accepted domains is kept before it
+	// is read from the store again. [30s]
+	DomainTTL time.Duration
+
+	mu        sync.Mutex
+	domains   []string
+	domainsAt time.Time
+}
+
+func (d *Deliverer) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
+}
+
+// acceptedDomains returns the domain table, read at most once per DomainTTL:
+// every RCPT asks, and a flood of them should not turn into a flood of
+// queries. A domain added or removed on any node takes effect within the
+// TTL. When the store cannot be reached an older list is better than
+// deferring all mail, so it stays in use until the store answers again.
+func (d *Deliverer) acceptedDomains(ctx context.Context) ([]string, error) {
+	ttl := d.DomainTTL
+	if ttl == 0 {
+		ttl = 30 * time.Second
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	if d.domains != nil && now.Sub(d.domainsAt) < ttl {
+		return d.domains, nil
+	}
+	list, err := d.Store.Domains(ctx)
+	if err != nil {
+		if d.domains != nil {
+			d.log().Warn("domain lookup failed, using the last known list", "err", err)
+			return d.domains, nil
+		}
+		return nil, err
+	}
+	if list == nil {
+		list = []string{}
+	}
+	d.domains, d.domainsAt = list, now
+	return list, nil
 }
 
 // Resolver is the part of *net.Resolver used for reverse DNS.
@@ -99,9 +146,9 @@ func (d *Deliverer) log() *slog.Logger {
 	return d.Logger
 }
 
-func (d *Deliverer) hasDomain(s string) bool {
-	for _, dom := range d.Domains {
-		if dom == s {
+func has(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
 			return true
 		}
 	}
@@ -109,25 +156,36 @@ func (d *Deliverer) hasDomain(s string) bool {
 }
 
 // resolve maps a recipient to an account. "user+tag@domain" reaches "user"
-// when no account with the full name exists.
+// when no account with the full name exists. <Postmaster> without a domain
+// (RFC 5321 4.1.1.3) reaches the postmaster of the first accepted domain, by
+// name, that has one.
 func (d *Deliverer) resolve(ctx context.Context, to string) (store.Account, error) {
 	var none store.Account
-	if strings.EqualFold(to, "postmaster") && len(d.Domains) > 0 {
-		to = "postmaster@" + d.Domains[0]
-	}
-	a, err := address.Parse(to)
+	domains, err := d.acceptedDomains(ctx)
 	if err != nil {
-		if at := strings.LastIndexByte(to, '@'); at >= 0 && !d.hasDomain(strings.ToLower(to[at+1:])) {
+		d.log().Error("domain lookup failed", "err", err)
+		return none, errTempFail
+	}
+	var candidates []address.Address
+	if strings.EqualFold(to, "postmaster") {
+		for _, dom := range domains {
+			candidates = append(candidates, address.Address{Local: "postmaster", Domain: dom})
+		}
+	} else {
+		a, err := address.Parse(to)
+		if err != nil {
+			if at := strings.LastIndexByte(to, '@'); at >= 0 && !has(domains, strings.ToLower(to[at+1:])) {
+				return none, errNoRelay
+			}
+			return none, errNoUser
+		}
+		if !has(domains, a.Domain) {
 			return none, errNoRelay
 		}
-		return none, errNoUser
-	}
-	if !d.hasDomain(a.Domain) {
-		return none, errNoRelay
-	}
-	candidates := []address.Address{a}
-	if base, _, ok := strings.Cut(a.Local, "+"); ok && base != "" {
-		candidates = append(candidates, address.Address{Local: base, Domain: a.Domain})
+		candidates = []address.Address{a}
+		if base, _, ok := strings.Cut(a.Local, "+"); ok && base != "" {
+			candidates = append(candidates, address.Address{Local: base, Domain: a.Domain})
+		}
 	}
 	for _, c := range candidates {
 		acct, err := d.Store.Account(ctx, c.String())
@@ -142,7 +200,7 @@ func (d *Deliverer) resolve(ctx context.Context, to string) (store.Account, erro
 	return none, errNoUser
 }
 
-// Rcpt accepts only existing users in the configured domains, so robinmail
+// Rcpt accepts only existing users in the accepted domains, so robinmail
 // never relays for unauthenticated senders.
 func (d *Deliverer) Rcpt(ctx context.Context, _ *smtp.Envelope, to string) error {
 	_, err := d.resolve(ctx, to)
@@ -164,10 +222,7 @@ func deliveryKey(from string, msg []byte) string {
 
 // Deliver scans the message and stores one copy per account.
 func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte) error {
-	now := time.Now
-	if d.Now != nil {
-		now = d.Now
-	}
+	now := d.now
 	qid := queueID()
 	log := d.log().With("qid", qid, "ip", env.RemoteIP.String(), "from", clean(env.From))
 

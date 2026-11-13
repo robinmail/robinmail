@@ -29,6 +29,9 @@ import (
 var (
 	ErrNoAccount     = errors.New("no such account")
 	ErrAccountExists = errors.New("account already exists")
+	ErrNoDomain      = errors.New("no such domain")
+	ErrDomainExists  = errors.New("domain already exists")
+	ErrDomainInUse   = errors.New("domain still has accounts")
 	ErrNoMailbox     = errors.New("no such mailbox")
 	ErrMailboxExists = errors.New("a mailbox with that name already exists")
 	ErrMailboxName   = errors.New("invalid mailbox name")

@@ -1,11 +1,16 @@
-# Development services for robinmail: rqlite for metadata. It listens on
-# 127.0.0.1 only and keeps its data in the container, so "down" starts from
-# nothing.
+# Development services for robinmail: rqlite for metadata and Rspamd for
+# spam scanning. Both listen on 127.0.0.1 only and keep their data in the
+# container, so "down" starts from nothing.
 #
 #   docker compose -f contrib/compose/compose.yaml up -d
 #
 # Tests:
-#   ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test ./...
+#   ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 \
+#   ROBINMAIL_TEST_RSPAMD=http://127.0.0.1:11333 go test ./...
+#
+# Without the first variable the tests that need rqlite are skipped; without
+# the second, or when Rspamd does not answer, the end-to-end test of "serve"
+# in cmd/robinmail is.
 name: robinmail
 
 services:
@@ -13,3 +18,16 @@ services:
     image: rqlite/rqlite:10.7.1
     ports:
       - "127.0.0.1:4001:4001"
+
+  # Rspamd runs without Redis, so greylisting, rate limits and Bayes are off.
+  # It does look up DNS blocklists, so a scan can take a few seconds.
+  rspamd:
+    image: rspamd/rspamd:4.3.0
+    ports:
+      - "127.0.0.1:11333:11333"
+    volumes:
+      - ../rspamd/local.d/milter_headers.conf:/etc/rspamd/local.d/milter_headers.conf:ro
+      # Development only: score headers also on mail from 127.0.0.1, and
+      # test patterns for "add header" and "rewrite subject".
+      - ./rspamd/override.d/milter_headers.conf:/etc/rspamd/override.d/milter_headers.conf:ro
+      - ./rspamd/local.d/options.inc:/etc/rspamd/local.d/options.inc:ro

@@ -31,7 +31,9 @@ func newAccountID() string {
 }
 
 // CreateAccount creates the account with its default mailboxes. address is
-// the canonical (lowercase) address, passwordHash a PHC string.
+// the canonical (lowercase) address, passwordHash a PHC string. The domain of
+// the address has to be in the domain table (ErrNoDomain); the check is part
+// of the batch, so a domain cannot be removed from under a new account.
 func (s *Store) CreateAccount(ctx context.Context, address, passwordHash string) (Account, error) {
 	id := newAccountID()
 	key, wrapped, err := s.master.NewAccountKey(id)
@@ -39,6 +41,8 @@ func (s *Store) CreateAccount(ctx context.Context, address, passwordHash string)
 		return Account{}, fmt.Errorf("store: %w", err)
 	}
 	b := s.newBatch(id)
+	b.guard(ErrNoDomain, `EXISTS (SELECT 1 FROM domain WHERE name = :domain)`,
+		"domain", address[strings.LastIndexByte(address, '@')+1:])
 	b.unique(ErrAccountExists)
 	b.add(`INSERT INTO account (id, address, password_hash, blob_key, created_at, modseq, next_email,
 			next_mailbox, next_thread)

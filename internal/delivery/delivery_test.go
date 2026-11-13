@@ -19,12 +19,23 @@ import (
 // fakeStore keeps what was delivered, per account and role, and honours
 // delivery keys like the real store.
 type fakeStore struct {
-	accounts map[string]string // address -> account id
-	noJunk   bool              // accounts have no Junk mailbox
-	failFor  string            // account id whose deliveries fail
-	lookups  error             // fails every Account call
-	keys     map[string]bool
-	mail     map[string][]string // account id + "/" + role -> messages
+	accounts    map[string]string // address -> account id
+	noJunk      bool              // accounts have no Junk mailbox
+	failFor     string            // account id whose deliveries fail
+	lookups     error             // fails every Account call
+	keys        map[string]bool
+	mail        map[string][]string // account id + "/" + role -> messages
+	domains     []string
+	noDomains   error // fails every Domains call
+	domainCalls int
+}
+
+func (f *fakeStore) Domains(context.Context) ([]string, error) {
+	f.domainCalls++
+	if f.noDomains != nil {
+		return nil, f.noDomains
+	}
+	return f.domains, nil
 }
 
 func (f *fakeStore) Account(_ context.Context, addr string) (store.Account, error) {
@@ -62,9 +73,10 @@ func setup(t *testing.T, reply string) (*Deliverer, *fakeStore) {
 	st := &fakeStore{
 		accounts: map[string]string{"mike@example.test": "acct-mike", "postmaster@example.test": "acct-pm"},
 		keys:     map[string]bool{}, mail: map[string][]string{},
+		domains: []string{"example.test"},
 	}
 	d := &Deliverer{
-		Hostname: "mx.example.test", Domains: []string{"example.test"}, Store: st,
+		Hostname: "mx.example.test", Store: st,
 		Now:      func() time.Time { return time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC) },
 		Resolver: fakeResolver{},
 	}
@@ -329,4 +341,59 @@ func FuzzNewField(f *testing.F) {
 			}
 		}
 	})
+}
+
+// The accepted domains come from the store and are cached for DomainTTL.
+func TestDomainsFromStore(t *testing.T) {
+	d, st := setup(t, "")
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	d.Now = func() time.Time { return now }
+	rcpt := func(to string) int { return code(d.Rcpt(context.Background(), env(), to)) }
+
+	st.accounts["anna@second.test"] = "acct-anna"
+	if got := rcpt("anna@second.test"); got != 550 {
+		t.Errorf("recipient in a domain not in the table = %d, want 550", got)
+	}
+	// Added on another node: unknown here until the cache expires.
+	st.domains = []string{"example.test", "second.test"}
+	if got := rcpt("anna@second.test"); got != 550 {
+		t.Errorf("within the TTL = %d, want 550", got)
+	}
+	if st.domainCalls != 1 {
+		t.Errorf("%d domain lookups for two RCPTs, want 1", st.domainCalls)
+	}
+	now = now.Add(31 * time.Second)
+	if got := rcpt("anna@second.test"); got != 0 {
+		t.Errorf("after the TTL = %d, want accepted", got)
+	}
+
+	// The store going away keeps the last known list in use.
+	st.noDomains = errors.New("rqlite is down")
+	now = now.Add(time.Hour)
+	if got := rcpt("anna@second.test"); got != 0 {
+		t.Errorf("with the store down and a cached list = %d, want accepted", got)
+	}
+	// Without any list there is nothing to decide on: defer.
+	d2, st2 := setup(t, "")
+	st2.noDomains = errors.New("rqlite is down")
+	if got := code(d2.Rcpt(context.Background(), env(), "mike@example.test")); got != 451 {
+		t.Errorf("with the store down and no list = %d, want 451", got)
+	}
+}
+
+// <Postmaster> without a domain goes to the first domain, by name, that has
+// a postmaster account.
+func TestPostmasterAcrossDomains(t *testing.T) {
+	d, st := setup(t, "")
+	st.domains = []string{"aaa.test", "example.test"}
+	a, err := d.resolve(context.Background(), "POSTMASTER")
+	if err != nil || a.ID != "acct-pm" {
+		t.Errorf("resolve(POSTMASTER) = %+v, %v", a, err)
+	}
+	delete(st.accounts, "postmaster@example.test")
+	d2, st2 := setup(t, "")
+	delete(st2.accounts, "postmaster@example.test")
+	if got := code(d2.Rcpt(context.Background(), env(), "Postmaster")); got != 550 {
+		t.Errorf("Postmaster without any postmaster account = %d, want 550", got)
+	}
 }

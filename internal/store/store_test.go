@@ -49,6 +49,9 @@ func open(t *testing.T) *Store {
 	if err := s.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.AddDomain(ctx, "example.test"); err != nil && !errors.Is(err, ErrDomainExists) {
+		t.Fatal(err)
+	}
 	locals[s] = blobs
 	t.Cleanup(func() { delete(locals, s) })
 	return s
@@ -949,4 +952,104 @@ func FuzzSummarize(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestDomains(t *testing.T) {
+	s := open(t)
+	var r [6]byte
+	rand.Read(r[:])
+	name := "d" + hex.EncodeToString(r[:]) + ".test"
+
+	_, err := s.CreateAccount(ctx, "anna@"+name, "$argon2id$test")
+	wantErr(t, "CreateAccount in an unknown domain", err, ErrNoDomain)
+	wantErr(t, "RemoveDomain(unknown)", s.RemoveDomain(ctx, name), ErrNoDomain)
+
+	wantErr(t, "AddDomain", s.AddDomain(ctx, name), nil)
+	wantErr(t, "second AddDomain", s.AddDomain(ctx, name), ErrDomainExists)
+	list, err := s.Domains(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for i, d := range list {
+		found = found || d == name
+		if i > 0 && list[i-1] >= d {
+			t.Errorf("Domains not sorted: %q before %q", list[i-1], d)
+		}
+	}
+	if !found {
+		t.Errorf("Domains lacks %s", name)
+	}
+
+	// A domain with an account stays. A domain whose name merely ends the
+	// same way does not count as in use.
+	if _, err := s.CreateAccount(ctx, "anna@"+name, "$argon2id$test"); err != nil {
+		t.Fatal(err)
+	}
+	wantErr(t, "RemoveDomain with an account", s.RemoveDomain(ctx, name), ErrDomainInUse)
+	sub := "sub." + name
+	wantErr(t, "AddDomain(sub)", s.AddDomain(ctx, sub), nil)
+	if _, err := s.CreateAccount(ctx, "anna@"+sub, "$argon2id$test"); err != nil {
+		t.Fatal(err)
+	}
+	wantErr(t, "RemoveDomain while only the subdomain's twin has accounts", s.RemoveDomain(ctx, name), ErrDomainInUse)
+
+	empty := "empty." + name
+	wantErr(t, "AddDomain(empty)", s.AddDomain(ctx, empty), nil)
+	wantErr(t, "RemoveDomain(empty)", s.RemoveDomain(ctx, empty), nil)
+	wantErr(t, "RemoveDomain again", s.RemoveDomain(ctx, empty), ErrNoDomain)
+	_, err = s.CreateAccount(ctx, "anna@"+empty, "$argon2id$test")
+	wantErr(t, "CreateAccount after RemoveDomain", err, ErrNoDomain)
+}
+
+// TestConcurrentTrim runs the daily trim the way several nodes would: all at
+// once. Each trim is one atomic batch, so together they remove every old row
+// exactly once and agree on where the change log now starts.
+func TestConcurrentTrim(t *testing.T) {
+	s := open(t)
+	a := account(t, s)
+
+	// Nothing else in the database is as old as 1999, see TestTrimChanges.
+	real := s.Now
+	s.Now = func() time.Time { return time.Date(1999, 1, 1, 0, 0, 0, 0, time.UTC) }
+	var oldState int64
+	for i := 0; i < 5; i++ {
+		oldState = deliver(t, s, a, Message{Raw: msg(fmt.Sprintf("%d@trim", i), "old"), Key: fmt.Sprintf("old-%d", i)}).Modseq
+	}
+	s.Now = real
+	recent := deliver(t, s, a, Message{Raw: msg("new@trim", "new"), Key: "new"})
+
+	before := time.Date(1999, 1, 2, 0, 0, 0, 0, time.UTC)
+	const nodes = 8
+	var wg sync.WaitGroup
+	var rows, keys atomic.Int64
+	for i := 0; i < nodes; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			n, err := s.TrimChanges(ctx, before)
+			if err != nil {
+				t.Error(err)
+			}
+			rows.Add(n)
+			if n, err = s.TrimDelivered(ctx, before); err != nil {
+				t.Error(err)
+			}
+			keys.Add(n)
+		}()
+	}
+	wg.Wait()
+	want(t, "change rows removed by all nodes together", rows.Load(), int64(15))
+	want(t, "delivery keys removed by all nodes together", keys.Load(), int64(5))
+
+	_, err := s.Changes(ctx, a.ID, oldState-1)
+	wantErr(t, "Changes from before the cut", err, ErrCannotCalculateChanges)
+	want(t, "changes from the cut", changes(t, s, a, oldState), Changes{OldState: oldState, NewState: oldState + 1,
+		Email: ChangeSet{Created: []int64{recent.ID}}, Mailbox: ChangeSet{Updated: []int64{inbox}},
+		Thread: ChangeSet{Created: []int64{recent.ThreadID}}})
+	// An old key is free again; the recent one still blocks a retry.
+	_, err = s.Deliver(ctx, a.ID, Message{Raw: msg("again@trim", "again"), Key: "old-0"})
+	wantErr(t, "old key after trimming", err, nil)
+	_, err = s.Deliver(ctx, a.ID, Message{Raw: msg("new@trim", "new"), Key: "new"})
+	wantErr(t, "recent key after trimming", err, ErrDuplicate)
 }

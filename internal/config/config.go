@@ -23,13 +23,14 @@ type Config struct {
 	// encrypted with. Make one with "robinmail key generate"; every node of
 	// a cluster needs the same file. Relative paths as for DataDir.
 	MasterKeyFile string `json:"master_key_file"`
-	// Domains lists the domains this server accepts mail for.
-	Domains []string `json:"domains"`
-	Rqlite  Rqlite   `json:"rqlite"`
-	TLS     TLS      `json:"tls"`
-	SMTP    SMTP     `json:"smtp"`
-	Rspamd  Rspamd   `json:"rspamd"`
+	Rqlite        Rqlite `json:"rqlite"`
+	TLS           TLS    `json:"tls"`
+	SMTP          SMTP   `json:"smtp"`
+	Rspamd        Rspamd `json:"rspamd"`
 }
+
+// The domains the server accepts mail for are not in this file: the nodes of
+// a cluster share them through the domain table ("robinmail domain add").
 
 // Rqlite is where all metadata lives.
 type Rqlite struct {
@@ -82,16 +83,6 @@ func Load(path string) (*Config, error) {
 	if !address.ValidDomain(c.Hostname) {
 		return nil, fmt.Errorf("%s: invalid hostname %q", path, c.Hostname)
 	}
-	if len(c.Domains) == 0 {
-		return nil, fmt.Errorf("%s: at least one domain is required", path)
-	}
-	for i, d := range c.Domains {
-		d = strings.ToLower(d)
-		if !address.ValidDomain(d) {
-			return nil, fmt.Errorf("%s: invalid domain %q", path, d)
-		}
-		c.Domains[i] = d
-	}
 
 	if !httpURL(c.Rqlite.URL) {
 		return nil, fmt.Errorf("%s: rqlite url must be an http:// or https:// URL", path)
@@ -129,16 +120,6 @@ func Load(path string) (*Config, error) {
 func httpURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
-}
-
-// HasDomain reports whether the server accepts mail for domain.
-func (c *Config) HasDomain(domain string) bool {
-	for _, d := range c.Domains {
-		if d == domain {
-			return true
-		}
-	}
-	return false
 }
 
 // BlobDir is where this node keeps its blob files.

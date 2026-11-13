@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -20,35 +21,11 @@ func TestCommands(t *testing.T) {
 	if base == "" {
 		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
 	}
-	dir := t.TempDir()
-	cfg := filepath.Join(dir, "robinmail.json")
-	os.WriteFile(cfg, []byte(fmt.Sprintf(`{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key",
-		"domains":["example.test"],"rqlite":{"url":%q}}`, base)), 0o600)
-	var r [6]byte
-	rand.Read(r[:])
-	user := "cli-" + hex.EncodeToString(r[:]) + "@example.test"
-
-	do := func(stdin string, args ...string) (string, error) {
-		var out bytes.Buffer
-		err := run(append([]string{"-config", cfg}, args...), strings.NewReader(stdin), &out)
-		return out.String(), err
-	}
-	ok := func(stdin string, args ...string) string {
-		t.Helper()
-		out, err := do(stdin, args...)
-		if err != nil {
-			t.Fatalf("robinmail %s: %v", strings.Join(args, " "), err)
-		}
-		return out
-	}
-	expect := func(out string, patterns ...string) {
-		t.Helper()
-		for _, p := range patterns {
-			if !regexp.MustCompile(p).MatchString(out) {
-				t.Errorf("output does not match %q:\n%s", p, out)
-			}
-		}
-	}
+	c := newCLI(t, base, "")
+	do, ok, expect, dir := c.do, c.ok, c.expect, c.dir
+	// A domain of its own, so the test can add and remove it.
+	domain := "cli-" + randomHex() + ".test"
+	user := "anna@" + domain
 
 	// Nothing works without a master key, and the key is never overwritten.
 	if _, err := do("", "user", "list"); err == nil || !strings.Contains(err.Error(), "key generate") {
@@ -59,6 +36,24 @@ func TestCommands(t *testing.T) {
 		t.Error("overwrote the master key")
 	}
 
+	// Users only exist in accepted domains, which live in the domain table.
+	if _, err := do("correct horse\n", "user", "add", user); err == nil || !strings.Contains(err.Error(), "domain add") {
+		t.Errorf("created a user in a domain that was not added: %v", err)
+	}
+	expect(ok("", "domain", "add", strings.ToUpper(domain)), `^added `+regexp.QuoteMeta(domain))
+	if _, err := do("", "domain", "add", domain); err == nil {
+		t.Error("added the same domain twice")
+	}
+	if _, err := do("", "domain", "add", "not a domain"); err == nil {
+		t.Error("added an invalid domain")
+	}
+	expect(ok("", "domain", "list"), `(?m)^`+regexp.QuoteMeta(domain)+`$`)
+	expect(ok("", "domain", "add", "empty."+domain), `^added `)
+	expect(ok("", "domain", "remove", "empty."+domain), `^removed empty\.`)
+	if _, err := do("", "domain", "remove", "empty."+domain); err == nil {
+		t.Error("removed a domain twice")
+	}
+
 	if _, err := do("short\n", "user", "add", user); err == nil {
 		t.Error("accepted a weak password")
 	}
@@ -66,8 +61,11 @@ func TestCommands(t *testing.T) {
 	if _, err := do("correct horse\n", "user", "add", user); err == nil {
 		t.Error("created the same user twice")
 	}
-	if _, err := do("correct horse\n", "user", "add", "x@elsewhere.test"); err == nil {
-		t.Error("created a user in a foreign domain")
+	if _, err := do("correct horse\n", "user", "add", "x@empty."+domain); err == nil {
+		t.Error("created a user in a removed domain")
+	}
+	if _, err := do("", "domain", "remove", domain); err == nil || !strings.Contains(err.Error(), "still has users") {
+		t.Errorf("removed a domain with a user: %v", err)
 	}
 	expect(ok("", "user", "list"), regexp.QuoteMeta(user)+` +account [a-z2-7]{16}  state 1\n`)
 
@@ -145,11 +143,66 @@ func TestCommands(t *testing.T) {
 	expect(ok("", "trim"), `removed \d+ change rows and \d+ delivery keys\n`)
 
 	for _, bad := range [][]string{
-		{"cat", user, "e2"}, {"cat", user, "2"}, {"list", user, "Nope"}, {"list", "nobody@example.test"},
-		{"move", user, "e1", "inbox", "trash"}, {"changes", user, "99"}, {"changes", user, "x"}, {"nonsense"}, {"user"},
+		{"cat", user, "e2"}, {"cat", user, "2"}, {"list", user, "Nope"}, {"list", "nobody@" + domain},
+		{"move", user, "e1", "inbox", "trash"}, {"changes", user, "99"}, {"changes", user, "x"}, {"nonsense"}, {"user"}, {"domain"}, {"domain", "remove"},
 	} {
 		if _, err := do("", bad...); err == nil {
 			t.Errorf("robinmail %s: no error", strings.Join(bad, " "))
+		}
+	}
+}
+
+func randomHex() string {
+	var r [6]byte
+	rand.Read(r[:])
+	return hex.EncodeToString(r[:])
+}
+
+// cli runs robinmail commands against a config in a directory of its own.
+type cli struct {
+	t   *testing.T
+	dir string
+	cfg string
+}
+
+// newCLI writes a config for the rqlite at base. extra is more JSON members
+// for the config, each followed by a comma.
+func newCLI(t *testing.T, base, extra string) *cli {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "robinmail.json")
+	body := fmt.Sprintf(`{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key",
+		%s"rqlite":{"url":%q}}`, extra, base)
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return &cli{t: t, dir: dir, cfg: cfg}
+}
+
+func (c *cli) run(ctx context.Context, stdin string, args ...string) (string, error) {
+	var out bytes.Buffer
+	err := run(ctx, append([]string{"-config", c.cfg}, args...), strings.NewReader(stdin), &out)
+	return out.String(), err
+}
+
+func (c *cli) do(stdin string, args ...string) (string, error) {
+	return c.run(context.Background(), stdin, args...)
+}
+
+func (c *cli) ok(stdin string, args ...string) string {
+	c.t.Helper()
+	out, err := c.do(stdin, args...)
+	if err != nil {
+		c.t.Fatalf("robinmail %s: %v", strings.Join(args, " "), err)
+	}
+	return out
+}
+
+func (c *cli) expect(out string, patterns ...string) {
+	c.t.Helper()
+	for _, p := range patterns {
+		if !regexp.MustCompile(p).MatchString(out) {
+			c.t.Errorf("output does not match %q:\n%s", p, out)
 		}
 	}
 }
