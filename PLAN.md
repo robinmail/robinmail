@@ -62,9 +62,9 @@ Every mail table starts with `account_id`.
 |---|---|---|
 | `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
 | `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread | id is random and never changes; counters live here; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers |
-| `session` | token_hash, account_id, expires_at | web login |
-| `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq | a rename changes `name` only |
-| `email` | id, blob, size, received_at, thread_id, message_id, sender, subject, preview, has_attachment, modseq | header fields cached for lists and sorting |
+| `session` | token_hash, account_id, expires_at | web login; the hash is SHA-256 of the token in the cookie |
+| `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq, subscribed | a rename changes `name` only |
+| `email` | id, blob, size, received_at, thread_id, message_id, sender, recipients, cc, bcc, subject, sent_at, preview, has_attachment, modseq | header fields cached for lists, filters and sorting |
 | `email_mailbox` | email_id, mailbox_id, uid | one row per label; the IMAP UID belongs to the row |
 | `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
@@ -73,7 +73,7 @@ Every mail table starts with `account_id`.
 | `submission` | id, email_id, envelope, state, next_try, claimed_by, claimed_until | outbound queue (phase 5) |
 | `acme` | key, value | ACME account and certificates, shared by nodes (not built yet) |
 | `guard` | ok | always empty; how a batch checks a precondition (below) |
-| `schema_version` | version | checked at start; no migrations yet |
+| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3) |
 
 Rules:
 
@@ -102,7 +102,10 @@ Rules:
   `modseq` doubles as `CONDSTORE` later.
 - **Blobs.** Written to a temp file, synced and renamed into place before the
   batch that references them. A crash leaves an unreferenced blob, never a
-  row without a blob. A sweeper removes unreferenced blobs older than a day.
+  row without a blob. A sweeper on every node removes that node's
+  unreferenced blob files older than a day. It claims a file by renaming it
+  aside, then looks at its age again and asks rqlite once more, so a
+  delivery of the same content at that moment keeps its blob.
 - **Blob file format.** A 27-byte header (magic `RMB1`, chunk size, random
   nonce prefix), then the plaintext in 64 KiB chunks, each sealed on its own.
   The chunk's position and whether it is the last are part of its nonce;
@@ -132,7 +135,7 @@ internal/delivery    recipient to mailbox               port; talks to a store i
 internal/rqlite      rqlite HTTP client                 new
 internal/blob        encrypted blob files on disk       new
 internal/store       schema and all mail operations     new, replaces owl's store
-internal/message     MIME to JMAP body structure        new
+internal/message     MIME to JMAP body structure, HTML view   new
 internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, static app new
 internal/queue       outbound delivery                  new
@@ -140,6 +143,7 @@ internal/imap        IMAP server                        new
 web/                 Vue webmail (Vite, Nuxt UI)
 contrib/rspamd       Rspamd config                      port as is
 contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
+contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev
 ```
 
 owl's `internal/fsutil` is not ported: the blob store only needed its
@@ -304,7 +308,7 @@ Built as follows, where it differs from or adds to the above:
   message. RFC 5321 4.4 wants `250` plus a notification; we answer `451`
   and rely on the idempotent retry, as owl did. Needs phase 5's outbound.
 
-### Phase 3: JMAP read side and webmail
+### Phase 3: JMAP read side and webmail — Go side done, webmail open
 
 - `internal/jmap`: session, request handling with result references
   and limits, `Mailbox/get|changes|query`, `Thread/get`,
@@ -316,9 +320,94 @@ Built as follows, where it differs from or adds to the above:
 - `internal/web`: login, sessions, `Origin` check, serving the embedded app
   (in development Vite's dev server proxies the API paths to Go instead).
 - `web/`: login, mailbox list, message list, thread view, labels,
-  attachment download, mark read, flag, move, delete.
+  attachment download, mark read, flag, move, delete. **Not built yet.**
 - Exit: browse and manage mail in the browser; the same session answers raw
-  JMAP from `curl`.
+  JMAP from `curl`. The `curl` half is shown (`contrib/dev/jmap-demo.sh`);
+  the browser half waits for `web/`.
+
+Built as follows (the Go side), where it differs from or adds to the above:
+
+- Paths. `/.well-known/jmap` and `/jmap/session` (session resource),
+  `/jmap/api`, `/jmap/download/{accountId}/{blobId}/{name}?type=`,
+  `/jmap/view/{accountId}/{emailId}[?images=1]` (the HTML view, not part of
+  JMAP), `/auth/login`, `/auth/logout`, `/auth/session`. `/jmap/upload/` and
+  `/jmap/eventsource/` are named in the session, as the RFC requires, and
+  answer 501 until phases 5 and 6. Everything else is the webmail from an
+  `fs.FS`: a placeholder page now, `cmd/robinmail`'s `webStatic` later.
+- More methods than listed, because a client needs them to stay in sync:
+  `Mailbox/queryChanges`, `Thread/changes`, `Email/queryChanges`,
+  `Core/echo`. Not built: `Email/set` create (answers `forbidden`; phase
+  5), `Email/import`, `Email/copy`, `Email/parse`, `SearchSnippet/get`.
+- `Email/query` is SQL over the email table. Filters: `inMailbox`,
+  `inMailboxOtherThan`, `before`, `after`, `minSize`, `maxSize`,
+  `hasKeyword`, `notKeyword`, `allInThreadHaveKeyword`,
+  `someInThreadHaveKeyword`, `noneInThreadHaveKeyword`, `hasAttachment`,
+  `from`, `to`, `cc`, `bcc`, `subject` (substring, ASCII case-insensitive,
+  on the cached header text) and `AND`/`OR`/`NOT`. `text`, `body` and
+  `header` answer `unsupportedFilter` until phase 8. Sorts: `receivedAt`,
+  `sentAt`, `size`, `from`, `to`, `subject`, `hasKeyword`.
+  `collapseThreads` is a window function. Without an anchor the window is
+  cut in SQL; with an anchor or a position from the end the ids are
+  fetched and cut in Go.
+- `/queryChanges` reports every email that changed, and every email of a
+  thread that changed, as removed and, if it is in the results now, as
+  added at its index. The RFC allows that; it is not the smallest answer.
+  `upToId` is accepted and not used.
+- State strings are the account `modseq` for every type. `ifInState` is
+  compared first and then travels as a guard inside the first write of the
+  call. Each create, update and destroy of a `/set` is a batch of its own.
+- Body part blob ids are `<blob of the message>-<partId>`; the part is
+  found by parsing the message again. Only the blobId of an Email is a
+  SHA-256 (see open questions).
+- `bodyStructure` always includes `subParts`. Member names of a request
+  are matched case-sensitively, which `encoding/json` does not do by
+  itself.
+- Delivery fills the cached columns through `internal/message`: the header
+  text, `sent_at`, a preview from the text body or from the HTML, and
+  `has_attachment` by the RFC's rule. Schema version 3 adds the columns
+  with the first migration. `robinmail reindex` refreshes mail stored
+  before.
+- The HTML view drops `<style>`, `<script>`, forms, SVG and MathML with
+  their content, keeps an allowlist of elements and attributes, filters
+  `style` attributes per declaration, turns `cid:` images into `data:`
+  URLs and leaves out remote images unless `?images=1`. It answers
+  `X-Remote-Images: blocked|shown|none` so the webmail can offer to load
+  them. Its CSP is `default-src 'none'` with `sandbox`; a download is
+  always an attachment with `nosniff` and a sandbox CSP.
+- Web: the cookie is `__Host-robinmail` (`Secure`, `HttpOnly`,
+  `SameSite=Strict`) on HTTPS and `robinmail` without `Secure` on the plain
+  listener. The `Origin` check: an `Origin` must be ours or a configured
+  dev origin; without one `Sec-Fetch-Site` must be `same-origin`; a client
+  that sends neither is not a browser and is let through, or `curl` and
+  standard JMAP clients could not work. Requests for another `Host` get
+  421. Basic auth on the JMAP paths, with a verified password remembered
+  for five minutes. Login failures: 10 per address and 50 per IP in 15
+  minutes, in memory, and at most four Argon2id checks at once.
+- Config: `web.listen` (HTTPS, needs `tls`; with ACME it is the listener
+  the certificate is validated over), `web.http_listen` (plain HTTP on a
+  loopback address only), `web.dev_origins`. Without a listener the web
+  side is off.
+- The blob sweeper is built (rule "Blobs" above) and runs with the daily
+  trim, which now also removes expired sessions. Commands: `sweep`,
+  `reindex`.
+- `contrib/dev/seed.sh` makes a local instance in `./dev` with a user and
+  five messages; `contrib/dev/jmap-demo.sh` is the `curl` session.
+- The tests found and fixed, in the new code:
+  - A date with folding or comments around the colons of the time did not
+    parse (RFC 5322 4.3; the example of appendix A.6.3).
+  - Header values of nothing but `(`, `"`, `[` or `=?` cost quadratic
+    time (the limits test); every such scan is bounded now.
+  - A message id of only invalid UTF-8 became an empty id, and `<<>`
+    gave a URL of `<` (fuzzing).
+  - `methodCAlls` was taken for `methodCalls`, and a request without
+    calls answered `"methodResponses": null` (fuzzing).
+  - Three messages of the same second came oldest first in a list sorted
+    newest first (the end-to-end test).
+- Deviations kept on purpose, each with a test that says why: encoded
+  words are also decoded inside quoted strings, when split inside a
+  character, and when longer than 75 characters; an obsolete message id
+  with white space inside is skipped; `bodyStructure` has `subParts`
+  without being asked.
 
 ### Phase 4: cluster and blob replication
 
@@ -376,10 +465,6 @@ Built as follows, where it differs from or adds to the above:
 
 ## Open questions
 
-- The blob sweeper has no phase. `DestroyEmail` leaves the blob, since
-  another email of the account may share it. It needs a way to list blobs,
-  which `internal/blob` does not have yet, and with replication it has to
-  run on every node.
 - Where the master key comes from in production: a file is all there is. A
   lost key file loses all mail, so it needs a backup that is not next to the
   blobs.
@@ -399,3 +484,26 @@ Built as follows, where it differs from or adds to the above:
   several domains of different owners that may be the wrong person.
 - The domain list is cached for 30 seconds per node, so a removed domain
   still gets mail for that long.
+- The Decisions say the name of a blob "is also the JMAP blobId". That
+  holds for a message. A body part needs a blobId too and has no file of
+  its own, so its id is `<message blob>-<partId>`. Phase 5's upload will
+  make real blobs again; `Email/set` create then has to accept both kinds.
+- The HTML view drops `<style>` blocks, so mail that is laid out with a
+  style sheet instead of attributes looks plain. Keeping them needs a CSS
+  sanitiser of our own. Worth it once the webmail shows real mail.
+- `Email/get` reads and decrypts the whole message for any property that
+  comes from a header, also for a list of thirty rows. Fast on local
+  disk, but a list could be answered from the email row alone if the
+  parsed `from` and `to` were cached there as JSON.
+- `Email/query` sorts all matches of an account before it cuts the window,
+  and `Mailbox/get` counts emails and threads on every call. Fine for
+  thousands of messages; phase 4 should measure it with more.
+- Login limits and the Basic auth memory are per node and in memory until
+  phase 7. A changed password keeps working over Basic for up to five
+  minutes on a node that remembered the old one.
+- On the plain listener the session cookie has no `Secure` flag. That
+  listener only binds to loopback, but a TLS-terminating proxy in front of
+  it would get cookies a browser also sends over HTTP. The plan has no
+  proxy; if one ever appears, it needs its own setting.
+- A JMAP request may be 10 MB and four run at once per account, each held
+  in memory. No limit across accounts yet.
