@@ -3,8 +3,9 @@
 robinmail is a JMAP-first mail server in Go. It receives mail, stores it, sends
 it, and serves it over JMAP (RFC 8620, RFC 8621). The webmail is a Vue app in
 `web/` that talks JMAP and ships inside the Go binary. Spam filtering and SPF/DKIM/DMARC are delegated to
-Rspamd. All state lives in rqlite and S3-compatible storage, so robinmail nodes
-are stateless and can run in several availability zones.
+Rspamd. Metadata lives in rqlite. Message files live on each node's own disk,
+encrypted, and robinmail copies them between nodes itself, so a cluster can
+run in several availability zones without any other storage service.
 
 It replaces owl (`../owl`), whose per-folder Maildir store does not fit JMAP.
 This is a learning project. There is no production target yet.
@@ -14,11 +15,12 @@ This is a learning project. There is no production target yet.
 | Topic | Decision | Why |
 |---|---|---|
 | Language | Go, one binary `cmd/robinmail` | As in owl. |
-| Dependencies | Standard library plus `golang.org/x` only | owl's rule, kept. rqlite and S3 are reached over HTTP with small clients of our own. |
+| Dependencies | Standard library plus `golang.org/x` only | owl's rule, kept. rqlite is reached over HTTP with a small client of our own. |
 | Mail API | JMAP core and mail | One standard API for the webmail, a later app and existing clients. |
 | Metadata | One rqlite cluster (SQLite replicated with Raft), one database for all accounts | Self-hosted, replicated, automatic leader failover. No replication, lease or consensus code of our own. |
-| Message files | Immutable blobs in S3-compatible storage, keyed by account and SHA-256 | Garage or MinIO self-hosted across zones, R2 in the cloud, a local-disk backend for development. Own SigV4 client. |
-| Nodes | Stateless. Any node serves any account | No owner per account and no forwarding. rqlite's leader orders the writes. |
+| Message files | Immutable blobs on the local disk of every node, named by account and SHA-256 of the plaintext | No storage service to run. robinmail replicates blobs itself (phase 4): every node holds every blob, a write is acknowledged once 2 nodes have it, and a background check fetches missing ones. |
+| Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has | Protects against stolen disks and backups. Does not protect against a compromised running server, which holds the master key. |
+| Nodes | Not stateless: metadata is in rqlite, blobs are on each node's disk. Any node serves any account | No owner per account and no forwarding. rqlite's leader orders the writes. |
 | Mailboxes | An Email can be in several mailboxes (labels) | Full JMAP `mailboxIds`. |
 | IMAP | Last phase, but UIDs exist from day one | No store migration later. |
 | Webmail | Vue single-page app in `web/`: plain Vite, Vue Router, Nuxt UI (without Nuxt). Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. Nuxt UI is MIT and has the dashboard and inbox components a mail client needs. |
@@ -40,13 +42,15 @@ over several rqlite clusters, because every table is keyed by account.
 ### Where data lives
 
 ```
-rqlite      all tables below
-S3 bucket   <account-id>/<sha256>     raw message or uploaded blob, immutable
-S3 bucket   acme/                     ACME account and certificates, shared by nodes
-<data_dir>/blobs/                     blob backend "local", development only
+rqlite                                            all tables below
+<data_dir>/blobs/<account-id>/<2 hex>/<sha256>    raw message or uploaded blob, encrypted, immutable
+master key file                                   wraps the account keys; the same on every node
 ```
 
-A node keeps nothing on its own disk except its config.
+The name of a blob is the SHA-256 of its plaintext, which is also the JMAP
+blobId. A node keeps its config, the master key file and its blobs on disk,
+nothing else. ACME account and certificates go into an rqlite table, shared by
+the nodes.
 
 ### Tables
 
@@ -55,7 +59,7 @@ Every mail table starts with `account_id`.
 | Table | Columns | Notes |
 |---|---|---|
 | `domain` | name | domains we accept mail for |
-| `account` | id, address, password_hash, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread | id is random and never changes; counters live here; `trimmed_modseq` is the newest state the change log no longer covers |
+| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread | id is random and never changes; counters live here; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers |
 | `session` | token_hash, account_id, expires_at | web login |
 | `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq | a rename changes `name` only |
 | `email` | id, blob, size, received_at, thread_id, message_id, sender, subject, preview, has_attachment, modseq | header fields cached for lists and sorting |
@@ -65,6 +69,7 @@ Every mail table starts with `account_id`.
 | `changes` | modseq, type, id, op, at | type Email, Mailbox or Thread; op created, updated or destroyed; `at` is for trimming |
 | `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
 | `submission` | id, email_id, envelope, state, next_try, claimed_by, claimed_until | outbound queue (phase 5) |
+| `acme` | key, value | ACME account and certificates, shared by nodes (not built yet) |
 | `guard` | ok | always empty; how a batch checks a precondition (below) |
 | `schema_version` | version | checked at start; no migrations yet |
 
@@ -93,9 +98,17 @@ Rules:
   is remove plus add, so the message gets a new UID in the target, as IMAP
   expects. In IMAP an Email with three labels shows up in three folders.
   `modseq` doubles as `CONDSTORE` later.
-- **Blobs.** Written and confirmed in S3 before the batch that references
-  them. A crash leaves an unreferenced blob, never a row without a blob. A
-  sweeper removes unreferenced blobs older than a day.
+- **Blobs.** Written to a temp file, synced and renamed into place before the
+  batch that references them. A crash leaves an unreferenced blob, never a
+  row without a blob. A sweeper removes unreferenced blobs older than a day.
+- **Blob file format.** A 27-byte header (magic `RMB1`, chunk size, random
+  nonce prefix), then the plaintext in 64 KiB chunks, each sealed on its own.
+  The chunk's position and whether it is the last are part of its nonce;
+  header, account id and SHA-256 are the associated data. So a changed,
+  moved, missing or extra chunk fails, as does a file under another name, and
+  a reader holds one chunk in memory. The file does not depend on the node
+  that wrote it: replication copies it as it is, and a node can check a copy
+  it received by decrypting it and comparing the hash with the name.
 - **Delivery is idempotent** through `delivered`, so a sender's retry after a
   partial failure makes no second copy (owl did). The key is the SHA-256 of
   the envelope sender and the message as received. It cannot be our queue id:
@@ -115,7 +128,7 @@ internal/rspamd      Rspamd client                      port as is
 internal/users       Argon2id hash and verify           port the hashing; storage moves to rqlite
 internal/delivery    recipient to mailbox               port; talks to a store interface, mailbox by role
 internal/rqlite      rqlite HTTP client                 new
-internal/blob        blob backends: S3, local           new
+internal/blob        encrypted blob files on disk       new
 internal/store       schema and all mail operations     new, replaces owl's store
 internal/message     MIME to JMAP body structure        new
 internal/jmap        JMAP core and mail, protocol only  new
@@ -124,10 +137,10 @@ internal/queue       outbound delivery                  new
 internal/imap        IMAP server                        new
 web/                 Vue webmail (Vite, Nuxt UI)
 contrib/rspamd       Rspamd config                      port as is
-contrib/compose      rqlite, Garage, Rspamd for dev     new
+contrib/compose      rqlite, Rspamd for dev             new
 ```
 
-owl's `internal/fsutil` is not ported: the local blob backend only needed its
+owl's `internal/fsutil` is not ported: the blob store only needed its
 atomic write, which is now a few lines in `internal/blob`. Ported code
 keeps its tests. Protocol packages know nothing about storage and call
 interfaces that `cmd/robinmail` wires up. Store tests run against a real
@@ -141,7 +154,7 @@ send the FCrDNS hostname, score headers need
 
 ## Phases
 
-Estimates assume focused work. About 15 weeks in total.
+Estimates assume focused work. About 16 weeks in total.
 
 ### Phase 0: spike — done
 
@@ -167,8 +180,8 @@ deletes it.
 ### Phase 1: store and ported packages — done
 
 - Port the packages marked above.
-- `internal/rqlite`, `internal/blob` (local and S3), `internal/store` with the
-  full schema.
+- `internal/rqlite`, `internal/blob` (encrypted files on local disk),
+  `internal/store` with the full schema.
 - Commands: `user add|list`, `mailbox list`, `deliver`, `list`, `cat`.
 - Exit: deliver from the command line, move and label a message, and see the
   ids hold and `changes` fill; tests cover threads, UIDs and trimming.
@@ -189,16 +202,20 @@ Built as follows, where it differs from the above:
   count changed.
 - `preview` and `has_attachment` are rough (text/plain only; multipart/mixed)
   until `internal/message` in phase 3.
-- The S3 client only does path-style requests (`<endpoint>/<bucket>/<key>`).
-  Garage, MinIO and R2 accept that. Tested against Garage 2.1.0 and against
-  the signing examples in the S3 API reference.
+- An S3 backend with its own SigV4 client was built first and then removed
+  when blobs moved to local disk (it is in the git history).
+- `key generate` writes the master key file (mode 0600, never overwritten).
+  Every other command refuses to run without it, or if others can read it.
+  `verify` decrypts blob files and checks them against their hash.
+- Account keys are cached in memory once unwrapped; they never change.
+- There is no master key rotation yet: that means rewrapping every
+  `account.blob_key`.
 - `internal/users` only hashes and verifies now. It refuses stored hashes
   with absurd Argon2 parameters.
-- Tests: `contrib/compose` starts rqlite and Garage. Set
-  `ROBINMAIL_TEST_RQLITE` and `ROBINMAIL_TEST_S3` (see `compose.yaml`);
-  without them those tests are skipped.
+- Tests: `contrib/compose` starts rqlite. Set `ROBINMAIL_TEST_RQLITE` (see
+  `compose.yaml`); without it the tests that need rqlite are skipped.
 - Not built: the blob sweeper (see open questions), mailbox destroy, and
-  leader following (phase 4). `serve` is phase 2.
+  leader following and blob replication (phase 4). `serve` is phase 2.
 
 ### Phase 2: inbound SMTP, Rspamd, delivery — 4 days
 
@@ -222,13 +239,19 @@ Built as follows, where it differs from the above:
 - Exit: browse and manage mail in the browser; the same session answers raw
   JMAP from `curl`.
 
-### Phase 4: cluster — 1 week
+### Phase 4: cluster and blob replication — 2 weeks
 
-- Three rqlite nodes, three robinmail nodes and Garage in Docker Compose.
+- Three rqlite nodes and three robinmail nodes in Docker Compose.
 - robinmail follows rqlite leader changes and retries safely.
+- Blob replication between robinmail nodes: every node holds every blob. A
+  write is acknowledged once 2 nodes have the file. A background check finds
+  blobs a node misses and fetches them from another node. Nodes exchange the
+  encrypted files as they are; the format from phase 1 does not change.
 - Exit: kill the rqlite leader and a robinmail node during a stream of
-  deliveries: no acknowledged message is lost, none is doubled, and the webmail
-  keeps working on another node.
+  deliveries: no acknowledged message is lost, none is doubled, every
+  acknowledged blob is readable from a surviving node, the killed node
+  catches up on the blobs it missed, and the webmail keeps working on another
+  node.
 
 ### Phase 5: outbound, submission, compose — 3 weeks
 
@@ -251,15 +274,17 @@ Built as follows, where it differs from the above:
 
 - `domain` table or config: the table exists but nothing reads it. The
   accepted domains still come from `domains` in the config, as in owl.
-  Stateless nodes argue for the table. Decide in phase 2.
+  Several nodes sharing one rqlite argue for the table. Decide in phase 2.
 - The blob sweeper has no phase. `DestroyEmail` leaves the blob, since
   another email of the account may share it. It needs a way to list blobs,
-  which `internal/blob` does not have yet.
+  which `internal/blob` does not have yet, and with replication it has to
+  run on every node.
+- Where the master key comes from in production: a file is all there is. A
+  lost key file loses all mail, so it needs a backup that is not next to the
+  blobs.
 - Nothing calls `TrimChanges` and `TrimDelivered` on a schedule yet (there is
   a `trim` command). With several nodes, `serve` needs to pick who trims.
 - Delivery keys derived from content mean a byte-identical message from the
   same sender within a week is dropped as a retry. Intended, but worth
   knowing.
-
-- Which S3 store to run in the cluster test: Garage is assumed.
 - Where phase 5 gets tested against real providers: which host and domain.
