@@ -1,0 +1,15 @@
+{
+  "hostname": "mail.robinmail.test",
+  "data_dir": "data",
+  "master_key_file": "master.key",
+  "rqlite": {
+    "url": "http://127.0.0.1:4001"
+  },
+  "smtp": {
+    "listen": "127.0.0.1:2525"
+  },
+  "web": {
+    "http_listen": "127.0.0.1:8080",
+    "dev_origins": ["http://localhost:5173"]
+  }
+}

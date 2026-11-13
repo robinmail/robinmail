@@ -1022,12 +1022,14 @@ func applyQueryChanges(old []string, qc map[string]any) []string {
 func TestRFC8620CannotCalculateChanges(t *testing.T) {
 	e := newEnv(t)
 	start := e.state()
-	// A change written "40 days ago", then the trim.
+	// A change written "40 days ago", then the trim, as serve runs it once a
+	// day. Only this account is trimmed here: the database is shared with
+	// other tests.
 	e.st.Now = func() time.Time { return time.Now().Add(-40 * 24 * time.Hour) }
 	e.deliver(store.Message{Raw: simple("o1@x", "a@x.test", "old")})
 	e.st.Now = time.Now
 	fresh := e.deliver(store.Message{Raw: simple("o2@x", "a@x.test", "fresh")})
-	if _, err := e.st.TrimChanges(e.ctx, time.Now().Add(-store.ChangesRetention)); err != nil {
+	if _, err := e.st.TrimAccountChanges(e.ctx, e.acct.ID, time.Now().Add(-store.ChangesRetention)); err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range []string{"Email/changes", "Mailbox/changes", "Thread/changes"} {

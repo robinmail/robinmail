@@ -1,0 +1,26 @@
+From: "Weekly Digest" <news@lists.example>
+To: dev@robinmail.test
+Subject: This week: 5 things worth reading
+Date: Fri, 13 Nov 2026 16:30:00 +0000
+Message-ID: <digest-46@lists.example>
+List-Id: Weekly Digest <digest.lists.example>
+List-Unsubscribe: <https://lists.example/unsubscribe?u=123>, <mailto:unsubscribe@lists.example>
+List-Post: NO
+MIME-Version: 1.0
+Content-Type: text/html; charset=iso-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+<html><head><style>h1 { color: #333 }</style>
+<script>document.title =3D "tracked"</script></head>
+<body>
+<center><img src=3D"https://lists.example/header.png" width=3D"600" alt=3D"Weekly Digest"></center>
+<h1>5 things worth reading</h1>
+<ol>
+<li><a href=3D"https://example.org/one?utm_source=3Ddigest">A caf=E9 that runs on mail</a></li>
+<li><a href=3D"https://example.org/two">JMAP in ten minutes</a></li>
+<li><a href=3D"javascript:alert(1)">A link that should not work</a></li>
+</ol>
+<p style=3D"font-size: 11px; color: #888">You get this because you signed up.
+<a href=3D"https://lists.example/unsubscribe?u=3D123">Unsubscribe</a></p>
+<img src=3D"https://lists.example/open.gif?u=3D123" width=3D"1" height=3D"1">
+</body></html>

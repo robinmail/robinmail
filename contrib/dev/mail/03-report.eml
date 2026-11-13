@@ -1,0 +1,54 @@
+From: =?UTF-8?Q?Ren=C3=A9e_Dubois?= <renee@partner.example>
+To: Dev <dev@robinmail.test>, Team: anna@sender.example, bert@sender.example;
+Subject: =?UTF-8?B?UmFwcG9ydCDigJMgUTM=?=
+Date: Fri, 13 Nov 2026 10:00:00 +0100
+Message-ID: <report-q3@partner.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed-1"
+
+--mixed-1
+Content-Type: multipart/alternative; boundary="alt-1"
+
+--alt-1
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hoi,
+
+het rapport over Q3 staat in de bijlage. De omzet is 12% hoger dan vorig =
+jaar.
+
+Groet,
+Ren=C3=A9e
+--alt-1
+Content-Type: multipart/related; boundary="rel-1"
+
+--rel-1
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family: Arial, sans-serif">
+<p>Hoi,</p>
+<p>het rapport over <b>Q3</b> staat in de bijlage. De omzet is
+<span style="color: #0a7d2c; font-weight: bold">12% hoger</span> dan vorig jaar.</p>
+<table border="0" cellpadding="6"><tr><td bgcolor="#eeeeee">Q2</td><td>&euro; 410.000</td></tr>
+<tr><td bgcolor="#eeeeee">Q3</td><td>&euro; 459.000</td></tr></table>
+<p>Groet,<br>Ren&eacute;e</p>
+<p><img src="cid:logo@partner.example" alt="Partner" width="16" height="16"></p>
+</body></html>
+--rel-1
+Content-Type: image/png
+Content-ID: <logo@partner.example>
+Content-Disposition: inline; filename="logo.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6
+kgAAAABJRU5ErkJggg==
+--rel-1--
+--alt-1--
+--mixed-1
+Content-Type: application/pdf
+Content-Disposition: attachment; filename*=UTF-8''rapport%20Q3.pdf
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJSBub3QgYSByZWFsIFBERiwgb25seSBhIHRlc3QgYXR0YWNobWVudAo=
+--mixed-1--
