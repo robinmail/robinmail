@@ -1,0 +1,36 @@
+{
+  "hostname": "mail.example.test",
+  "data_dir": "data",
+  "domains": ["example.test"],
+  "rqlite": {
+    "url": "http://127.0.0.1:4001"
+  },
+  "blob": {
+    "backend": "local",
+    "s3": {
+      "endpoint": "http://127.0.0.1:3900",
+      "region": "garage",
+      "bucket": "robinmail",
+      "access_key": "",
+      "secret_key": ""
+    }
+  },
+  "tls": {
+    "cert_file": "",
+    "key_file": "",
+    "acme": false,
+    "acme_email": ""
+  },
+  "smtp": {
+    "listen": ":25",
+    "max_message_bytes": 26214400,
+    "max_recipients": 100,
+    "max_connections": 100,
+    "max_connections_per_ip": 10
+  },
+  "rspamd": {
+    "url": "http://127.0.0.1:11333",
+    "fail_open": false,
+    "timeout_seconds": 30
+  }
+}
