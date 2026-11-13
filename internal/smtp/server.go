@@ -4,13 +4,16 @@ package smtp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -240,6 +243,7 @@ type session struct {
 	env    *Envelope // non-nil between MAIL and the end of the transaction
 	errors int
 	quit   bool
+	hold   bool // the reply just written may wait for the next one
 }
 
 func (s *session) setConn(c net.Conn) {
@@ -248,23 +252,41 @@ func (s *session) setConn(c net.Conn) {
 	s.w = bufio.NewWriter(c)
 }
 
-// reply writes a response. Writes are only flushed when the client has no
-// further pipelined commands waiting, as PIPELINING (RFC 2920) allows.
+// maxReplyLine is the longest reply line, CRLF included (RFC 5321 4.5.3.1.5).
+const maxReplyLine = 512
+
+// reply writes a response into the output buffer; serve decides when it is
+// sent. The text can come from outside (a handler passing on what Rspamd
+// said), so it is made to fit RFC 5321 4.2: printable ASCII, and a line of
+// at most 512 octets.
 func (s *session) reply(code int, enhanced string, lines ...string) {
 	for i, l := range lines {
 		sep := " "
 		if i < len(lines)-1 {
 			sep = "-"
 		}
+		head := fmt.Sprintf("%d%s", code, sep)
 		if enhanced != "" {
-			fmt.Fprintf(s.w, "%d%s%s %s\r\n", code, sep, enhanced, l)
-		} else {
-			fmt.Fprintf(s.w, "%d%s%s\r\n", code, sep, l)
+			head += enhanced + " "
 		}
+		l = strings.Map(func(r rune) rune {
+			if r < 0x20 || r > 0x7e {
+				return '?'
+			}
+			return r
+		}, l)
+		if max := maxReplyLine - 2 - len(head); len(l) > max {
+			l = l[:max]
+		}
+		s.w.WriteString(head + l + "\r\n")
 	}
-	if s.r.Buffered() == 0 {
-		s.flush()
-	}
+}
+
+// pendingLine reports whether a complete command line is waiting in the
+// input buffer.
+func (s *session) pendingLine() bool {
+	buf, _ := s.r.Peek(s.r.Buffered())
+	return bytes.IndexByte(buf, '\n') >= 0
 }
 
 func (s *session) flush() {
@@ -288,6 +310,17 @@ func (s *session) serve() {
 	defer s.flush()
 	s.reply(220, "", s.srv.Hostname+" ESMTP robinmail")
 	for !s.quit {
+		// PIPELINING (RFC 2920 3.2): replies to RSET, MAIL and RCPT may
+		// wait for the reply to the next command of the group, all others
+		// go out at once, and nothing is held back once no complete
+		// command is left to read.
+		if !s.hold || !s.pendingLine() {
+			s.flush()
+			if s.quit {
+				return
+			}
+		}
+		s.hold = false
 		if !s.await() {
 			s.reply(421, "4.3.2", s.srv.Hostname+" Service shutting down, closing transmission channel")
 			return
@@ -385,19 +418,38 @@ func (s *session) command(line string) {
 	case "DATA":
 		s.cmdData(arg)
 	case "RSET":
+		// RFC 5321 4.3.2: commands without arguments answer 501 to one.
+		if arg != "" {
+			s.bad(501, "5.5.4", "Syntax: RSET")
+			return
+		}
 		s.env = nil
+		s.hold = true
 		s.reply(250, "2.0.0", "OK")
 	case "NOOP":
+		// Its optional argument is ignored (4.1.1.9).
 		s.reply(250, "2.0.0", "OK")
 	case "QUIT":
-		s.reply(221, "2.0.0", "Bye")
+		if arg != "" {
+			s.bad(501, "5.5.4", "Syntax: QUIT")
+			return
+		}
+		s.reply(221, "2.0.0", s.srv.Hostname+" Service closing transmission channel")
 		s.quit = true
 	case "VRFY":
+		if arg == "" {
+			s.bad(501, "5.5.4", "Syntax: VRFY address")
+			return
+		}
+		// 3.5.3 and 7.3: a server may decline to verify, with 252.
 		s.reply(252, "2.5.0", "Cannot VRFY user, but will accept message and attempt delivery")
+	case "EXPN":
+		// Recognised but not offered: 502, not 500 (4.2.4).
+		s.bad(502, "5.5.1", "EXPN is not available")
 	case "HELP":
 		s.reply(214, "2.0.0", "See RFC 5321")
 	case "AUTH":
-		s.bad(503, "5.5.1", "Authentication is not available on this port")
+		s.bad(502, "5.5.1", "Authentication is not available on this port")
 	default:
 		// Clients sometimes send HTTP to port 25 to probe it.
 		if verb == "GET" || verb == "POST" || verb == "CONNECT" {
@@ -475,7 +527,26 @@ func (s *session) swapConn(tc *tls.Conn) {
 	s.setConn(tc)
 }
 
+// sizeValue parses the value of the SIZE parameter. A number too large for
+// 64 bits is a valid size-value, and larger than any limit.
+func sizeValue(v string) (uint64, bool) {
+	if len(v) == 0 || len(v) > 20 {
+		return 0, false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return math.MaxUint64, true
+	}
+	return n, true
+}
+
 func (s *session) cmdMail(arg string) {
+	s.hold = true
 	if s.helo == "" {
 		s.bad(503, "5.5.1", "Send EHLO first")
 		return
@@ -489,43 +560,50 @@ func (s *session) cmdMail(arg string) {
 		s.bad(501, "5.5.4", "Syntax: MAIL FROM:<address>")
 		return
 	}
-	from, params, err := parsePath(rest, true)
+	from, params, err := parsePath(rest, false)
 	if err != nil {
 		s.bad(501, "5.1.7", "Bad sender address")
 		return
 	}
 	env := &Envelope{RemoteIP: s.ip, Helo: s.helo, TLS: s.tls, From: from}
+	tooBig := false
 	for _, p := range params {
-		k, v, _ := strings.Cut(p, "=")
-		switch strings.ToUpper(k) {
+		switch p.key {
 		case "SIZE":
-			var n int64
-			if _, err := fmt.Sscanf(v, "%d", &n); err != nil || n < 0 {
+			// RFC 1870 3: size-value ::= 1*20DIGIT
+			n, ok := sizeValue(p.value)
+			if !ok {
 				s.bad(501, "5.5.4", "Bad SIZE parameter")
 				return
 			}
-			if n > s.srv.MaxMessageBytes {
-				s.reply(552, "5.3.4", "Message too big")
-				return
-			}
+			tooBig = n > uint64(s.srv.MaxMessageBytes)
 		case "BODY":
-			if u := strings.ToUpper(v); u != "7BIT" && u != "8BITMIME" {
+			// RFC 6152 2: body-value ::= "7BIT" / "8BITMIME"
+			if u := strings.ToUpper(p.value); u != "7BIT" && u != "8BITMIME" {
 				s.bad(501, "5.5.4", "Bad BODY parameter")
 				return
 			}
 		case "SMTPUTF8":
-			if v != "" {
+			// RFC 6531 3.4: the parameter takes no value.
+			if p.hasValue {
 				s.bad(501, "5.5.4", "Bad SMTPUTF8 parameter")
 				return
 			}
 			env.UTF8 = true
 		default:
+			// RFC 5321 4.1.1.11
 			s.bad(555, "5.5.4", "Unsupported parameter")
 			return
 		}
 	}
 	if !env.UTF8 && !ascii(from) {
-		s.bad(553, "5.6.7", "Non-ASCII address needs SMTPUTF8")
+		// RFC 6531 3.5 gives MAIL 550 for this and RCPT 553.
+		s.bad(550, "5.6.7", "Non-ASCII address needs SMTPUTF8")
+		return
+	}
+	if tooBig {
+		// RFC 1870 6.1
+		s.reply(552, "5.3.4", "Message size exceeds fixed maximum message size")
 		return
 	}
 	s.env = env
@@ -533,6 +611,7 @@ func (s *session) cmdMail(arg string) {
 }
 
 func (s *session) cmdRcpt(arg string) {
+	s.hold = true
 	if s.env == nil {
 		s.bad(503, "5.5.1", "Send MAIL first")
 		return
@@ -542,13 +621,18 @@ func (s *session) cmdRcpt(arg string) {
 		s.bad(501, "5.5.4", "Syntax: RCPT TO:<address>")
 		return
 	}
-	to, params, err := parsePath(rest, false)
+	to, params, err := parsePath(rest, true)
 	if err != nil {
 		s.bad(501, "5.1.3", "Bad recipient address")
 		return
 	}
 	if len(params) > 0 {
 		s.bad(555, "5.5.4", "Unsupported parameter")
+		return
+	}
+	if !s.env.UTF8 && !ascii(to) {
+		// RFC 6531 3.5
+		s.bad(553, "5.6.7", "Non-ASCII address needs SMTPUTF8")
 		return
 	}
 	if len(s.env.Rcpts) >= s.srv.MaxRecipients {

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 type fakeHandler struct {
@@ -322,9 +323,9 @@ func TestParsePath(t *testing.T) {
 		{"<a@>", "", false, false, 0},
 		{"<a\x00@b.test>", "", false, false, 0},
 	} {
-		addr, params, err := parsePath(tc.in, tc.null)
+		addr, params, err := parsePath(tc.in, !tc.null)
 		if (err == nil) != tc.ok || (tc.ok && (addr != tc.addr || len(params) != tc.nparams)) {
-			t.Errorf("parsePath(%q, %v) = %q, %q, %v", tc.in, tc.null, addr, params, err)
+			t.Errorf("parsePath(%q, forward=%v) = %q, %v, %v", tc.in, !tc.null, addr, params, err)
 		}
 	}
 }
@@ -332,10 +333,24 @@ func TestParsePath(t *testing.T) {
 func FuzzParsePath(f *testing.F) {
 	f.Add("<a@b.test> SIZE=1")
 	f.Add("<@x:\"q\\\"\"@y>")
+	f.Add("<@0:") // a source route and then nothing
 	f.Fuzz(func(t *testing.T, s string) {
-		addr, _, err := parsePath(s, true)
-		if err == nil && strings.ContainsAny(addr, "\r\n\x00") {
-			t.Errorf("control character in %q", addr)
+		for _, forward := range []bool{false, true} {
+			addr, params, err := parsePath(s, forward)
+			if err != nil {
+				continue
+			}
+			if strings.ContainsAny(addr, "\r\n\x00") || !utf8.ValidString(addr) {
+				t.Errorf("control character or broken UTF-8 in %q", addr)
+			}
+			if len(s) > maxPath+10*501 {
+				t.Errorf("accepted %d bytes", len(s))
+			}
+			for _, p := range params {
+				if p.key == "" || strings.ContainsAny(p.key+p.value, " =\r\n\x00") {
+					t.Errorf("parameter %+v from %q", p, s)
+				}
+			}
 		}
 	})
 }
