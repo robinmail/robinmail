@@ -1,8 +1,8 @@
 # robinmail: plan
 
 robinmail is a JMAP-first mail server in Go. It receives mail, stores it, sends
-it, and serves it over JMAP (RFC 8620, RFC 8621). The webmail is a Void app in
-`web/` that talks JMAP. Spam filtering and SPF/DKIM/DMARC are delegated to
+it, and serves it over JMAP (RFC 8620, RFC 8621). The webmail is a Vue app in
+`web/` that talks JMAP and ships inside the Go binary. Spam filtering and SPF/DKIM/DMARC are delegated to
 Rspamd. All state lives in rqlite and S3-compatible storage, so robinmail nodes
 are stateless and can run in several availability zones.
 
@@ -21,8 +21,8 @@ This is a learning project. There is no production target yet.
 | Nodes | Stateless. Any node serves any account | No owner per account and no forwarding. rqlite's leader orders the writes. |
 | Mailboxes | An Email can be in several mailboxes (labels) | Full JMAP `mailboxIds`. |
 | IMAP | Last phase, but UIDs exist from day one | No store migration later. |
-| Webmail | Void app in `web/`, self-hosted on workerd, plain Tailwind | Public repo, so no Tailwind Plus components. |
-| Origin | One hostname. robinmail serves HTTPS and proxies everything outside `/jmap`, `/.well-known/jmap` and `/auth` to workerd | Same origin: no CORS, `SameSite=Strict` works. |
+| Webmail | Vue single-page app in `web/`: plain Vite, Vue Router, Nuxt UI (without Nuxt). Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. Nuxt UI is MIT and has the dashboard and inbox components a mail client needs. |
+| Origin | One hostname. robinmail serves the API under `/jmap`, `/.well-known/jmap` and `/auth`, and the embedded webmail everywhere else | Same origin: no CORS, `SameSite=Strict` works. |
 | Web auth | Session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`) plus an `Origin` check on every JMAP request. Sessions are rows in rqlite | The client never holds a token. Any node accepts the cookie. |
 | Spam and mail auth | Rspamd over HTTP | As in owl, including its lessons (below). |
 | Config | JSON | As in owl. |
@@ -111,10 +111,10 @@ internal/blob        blob backends: S3, local           new
 internal/store       schema and all mail operations     new, replaces owl's store
 internal/message     MIME to JMAP body structure        new
 internal/jmap        JMAP core and mail, protocol only  new
-internal/web         HTTPS, login, sessions, proxy      new
+internal/web         HTTPS, login, sessions, static app new
 internal/queue       outbound delivery                  new
 internal/imap        IMAP server                        new
-web/                 Void webmail
+web/                 Vue webmail (Vite, Nuxt UI)
 contrib/rspamd       Rspamd config                      port as is
 contrib/compose      rqlite, Garage, Rspamd for dev     new
 ```
@@ -134,12 +134,11 @@ send the FCrDNS hostname, score headers need
 
 Estimates assume focused work. About 15 weeks in total.
 
-### Phase 0: spikes — 2 days
+### Phase 0: spike — 1 day
 
 - rqlite: write the delivery batch (counters, thread lookup, UID, change log)
   as one atomic request and confirm it holds under concurrent deliveries.
-- A Void app self-hosted on workerd behind a Go reverse proxy.
-- Exit: two short notes in this file, and the decisions table corrected.
+- Exit: a short note in this file, and the decisions table corrected.
 
 ### Phase 1: store and ported packages — 2 weeks
 
@@ -165,7 +164,8 @@ Estimates assume focused work. About 15 weeks in total.
 - `internal/message`, 1 week: MIME to body structure, charsets through
   `x/text`, sanitised HTML view for a sandboxed iframe (allowlist on
   `x/net/html`, CSP, remote images off by default).
-- `internal/web`: login, sessions, `Origin` check, proxy to workerd.
+- `internal/web`: login, sessions, `Origin` check, serving the embedded app
+  (in development Vite's dev server proxies the API paths to Go instead).
 - `web/`, 2 weeks: login, mailbox list, message list, thread view, labels,
   attachment download, mark read, flag, move, delete.
 - Exit: browse and manage mail in the browser; the same session answers raw
@@ -198,6 +198,6 @@ Estimates assume focused work. About 15 weeks in total.
 
 ## Open questions
 
-- Both spikes in phase 0.
+- The spike in phase 0.
 - Which S3 store to run in the cluster test: Garage is assumed.
 - Where phase 5 gets tested against real providers: which host and domain.
