@@ -1,0 +1,228 @@
+package message
+
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/net/html"
+)
+
+// Bodies flattens the body structure into the three lists of RFC 8621
+// 4.1.4: the parts to show as the plain text body, the parts to show as the
+// HTML body, and the attachments. It is the algorithm the RFC gives there,
+// statement for statement.
+func (m *Message) Bodies() (text, htmlBody, attachments []*Part) {
+	text, htmlBody, attachments = []*Part{}, []*Part{}, []*Part{}
+	parseStructure([]*Part{m.Root}, "mixed", false, &htmlBody, &text, &attachments)
+	return text, htmlBody, attachments
+}
+
+func isInlineMediaType(t string) bool {
+	return strings.HasPrefix(t, "image/") || strings.HasPrefix(t, "audio/") || strings.HasPrefix(t, "video/")
+}
+
+// parseStructure is the function of the same name in RFC 8621 4.1.4. A nil
+// htmlBody or textBody is the RFC's null: that list is not being collected
+// on this branch.
+func parseStructure(parts []*Part, multipartType string, inAlternative bool, htmlBody, textBody, attachments *[]*Part) {
+	textLength, htmlLength := -1, -1
+	if textBody != nil {
+		textLength = len(*textBody)
+	}
+	if htmlBody != nil {
+		htmlLength = len(*htmlBody)
+	}
+
+	for i, part := range parts {
+		isInline := (part.Disposition == nil || *part.Disposition != "attachment") &&
+			(part.Type == "text/plain" || part.Type == "text/html" || isInlineMediaType(part.Type)) &&
+			// Must be either not the first part or have no file name.
+			(i == 0 || (multipartType != "related" && (isInlineMediaType(part.Type) || part.Name == nil)))
+
+		switch {
+		case part.IsMultipart():
+			subType := part.Type[len("multipart/"):]
+			parseStructure(part.SubParts, subType, inAlternative || subType == "alternative", htmlBody, textBody, attachments)
+		case isInline:
+			if multipartType == "alternative" {
+				switch part.Type {
+				case "text/plain":
+					if textBody != nil {
+						*textBody = append(*textBody, part)
+					}
+				case "text/html":
+					if htmlBody != nil {
+						*htmlBody = append(*htmlBody, part)
+					}
+				default:
+					*attachments = append(*attachments, part)
+				}
+				continue
+			} else if inAlternative {
+				if part.Type == "text/plain" {
+					htmlBody = nil
+				}
+				if part.Type == "text/html" {
+					textBody = nil
+				}
+			}
+			if textBody != nil {
+				*textBody = append(*textBody, part)
+			}
+			if htmlBody != nil {
+				*htmlBody = append(*htmlBody, part)
+			}
+			if (htmlBody == nil || textBody == nil) && isInlineMediaType(part.Type) {
+				*attachments = append(*attachments, part)
+			}
+		default:
+			*attachments = append(*attachments, part)
+		}
+	}
+
+	if multipartType == "alternative" && textBody != nil && htmlBody != nil {
+		// Found HTML part only.
+		if textLength == len(*textBody) && htmlLength != len(*htmlBody) {
+			*textBody = append(*textBody, (*htmlBody)[htmlLength:]...)
+		}
+		// Found plain text part only.
+		if htmlLength == len(*htmlBody) && textLength != len(*textBody) {
+			*htmlBody = append(*htmlBody, (*textBody)[textLength:]...)
+		}
+	}
+}
+
+// HasAttachment is the hasAttachment property (RFC 8621 4.1.4): true if
+// the attachments hold a part that is not marked inline. Detached
+// signatures are left out, as the RFC allows for parts "processed
+// automatically".
+func (m *Message) HasAttachment() bool {
+	_, _, attachments := m.Bodies()
+	for _, p := range attachments {
+		if p.Disposition != nil && *p.Disposition == "inline" {
+			continue
+		}
+		switch p.Type {
+		case "application/pgp-signature", "application/pkcs7-signature", "application/x-pkcs7-signature":
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// PreviewLen is the most characters a preview has (RFC 8621 4.1.4: "up to
+// 256 characters").
+const PreviewLen = 256
+
+// previewScan is how much of a body is read to make a preview.
+const previewScan = 16 << 10
+
+// Preview is the preview property: the start of the text body as one line
+// of plain text. For a message with only HTML it is the text of the HTML.
+func (m *Message) Preview() string {
+	text, _, _ := m.Bodies()
+	for _, p := range text {
+		var s string
+		switch p.Type {
+		case "text/plain":
+			s, _ = p.Text()
+			if len(s) > previewScan {
+				s = s[:previewScan]
+			}
+		case "text/html":
+			s, _ = p.Text()
+			s = htmlText(s, previewScan)
+		default:
+			continue
+		}
+		if s = OneLine(s, PreviewLen); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// htmlText returns the text of an HTML document, without what a browser
+// does not show, until it has about max bytes.
+func htmlText(src string, max int) string {
+	if len(src) > 64*max {
+		src = src[:64*max]
+	}
+	z := html.NewTokenizer(strings.NewReader(src))
+	var b strings.Builder
+	skip := ""
+	for b.Len() < max {
+		switch z.Next() {
+		case html.ErrorToken:
+			return b.String()
+		case html.StartTagToken:
+			name, _ := z.TagName()
+			switch n := string(name); n {
+			case "script", "style", "head", "title", "template", "noscript":
+				if skip == "" {
+					skip = n
+				}
+			default:
+				b.WriteByte(' ')
+			}
+		case html.EndTagToken:
+			name, _ := z.TagName()
+			if string(name) == skip {
+				skip = ""
+			}
+			b.WriteByte(' ')
+		case html.SelfClosingTagToken:
+			b.WriteByte(' ')
+		case html.TextToken:
+			if skip == "" {
+				b.Write(z.Text())
+			}
+		}
+	}
+	return b.String()
+}
+
+// OneLine makes untrusted text fit one line of a list: valid UTF-8, runs of
+// white space and control characters become one space, at most max
+// characters.
+func OneLine(s string, max int) string {
+	s = strings.ToValidUTF8(s, "")
+	var b strings.Builder
+	n, space := 0, false
+	for _, r := range s {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || r == 0x200B || r == 0xFEFF {
+			space = b.Len() > 0
+			continue
+		}
+		if n >= max {
+			break
+		}
+		if space {
+			b.WriteByte(' ')
+			n++
+			space = false
+			if n >= max {
+				break
+			}
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
+}
+
+// BodyValue is the EmailBodyValue of a text part (RFC 8621 4.1.4). max is
+// the most bytes of text to return, 0 for all of it. A cut never lands
+// inside a UTF-8 character.
+func (p *Part) BodyValue(max int) (value string, encodingProblem, truncated bool) {
+	value, encodingProblem = p.Text()
+	if max > 0 && len(value) > max {
+		for max > 0 && !utf8.RuneStart(value[max]) {
+			max--
+		}
+		value, truncated = value[:max], true
+	}
+	return value, encodingProblem, truncated
+}
