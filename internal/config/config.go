@@ -16,14 +16,16 @@ import (
 type Config struct {
 	// Hostname is the name the server announces and requests certificates for.
 	Hostname string `json:"hostname"`
-	// DataDir is only used by the "local" blob backend, which keeps blobs in
-	// <data_dir>/blobs. A relative path is resolved against the directory of
-	// the config file.
+	// DataDir holds this node's blobs, encrypted, in <data_dir>/blobs. A
+	// relative path is resolved against the directory of the config file.
 	DataDir string `json:"data_dir"`
+	// MasterKeyFile holds the key that wraps the account keys blobs are
+	// encrypted with. Make one with "robinmail key generate"; every node of
+	// a cluster needs the same file. Relative paths as for DataDir.
+	MasterKeyFile string `json:"master_key_file"`
 	// Domains lists the domains this server accepts mail for.
 	Domains []string `json:"domains"`
 	Rqlite  Rqlite   `json:"rqlite"`
-	Blob    Blob     `json:"blob"`
 	TLS     TLS      `json:"tls"`
 	SMTP    SMTP     `json:"smtp"`
 	Rspamd  Rspamd   `json:"rspamd"`
@@ -34,23 +36,6 @@ type Rqlite struct {
 	// URL of one rqlite node, for example "http://127.0.0.1:4001". Basic
 	// auth credentials may be given as "http://user:password@host:4001".
 	URL string `json:"url"`
-}
-
-// Blob selects where message files are kept.
-type Blob struct {
-	// Backend is "local" (development, the default) or "s3".
-	Backend string `json:"backend"`
-	S3      S3     `json:"s3"`
-}
-
-// S3 configures the "s3" blob backend. Requests are path-style:
-// <endpoint>/<bucket>/<key>.
-type S3 struct {
-	Endpoint  string `json:"endpoint"` // "https://s3.example.test"
-	Region    string `json:"region"`   // "garage" for Garage, "auto" for R2
-	Bucket    string `json:"bucket"`
-	AccessKey string `json:"access_key"`
-	SecretKey string `json:"secret_key"`
 }
 
 // SMTP configures the inbound listener. Zero values get the server defaults.
@@ -77,11 +62,6 @@ type TLS struct {
 	ACME      bool   `json:"acme"`
 	ACMEEmail string `json:"acme_email"`
 }
-
-const (
-	BlobLocal = "local"
-	BlobS3    = "s3"
-)
 
 // Load reads and validates the config file at path.
 func Load(path string) (*Config, error) {
@@ -116,27 +96,18 @@ func Load(path string) (*Config, error) {
 	if !httpURL(c.Rqlite.URL) {
 		return nil, fmt.Errorf("%s: rqlite url must be an http:// or https:// URL", path)
 	}
-	if c.Blob.Backend == "" {
-		c.Blob.Backend = BlobLocal
+	if c.DataDir == "" {
+		return nil, fmt.Errorf("%s: data_dir is required", path)
 	}
-	switch c.Blob.Backend {
-	case BlobLocal:
-		if c.DataDir == "" {
-			return nil, fmt.Errorf("%s: blob backend \"local\" needs data_dir", path)
-		}
-	case BlobS3:
-		s := c.Blob.S3
-		if !httpURL(s.Endpoint) {
-			return nil, fmt.Errorf("%s: blob s3 endpoint must be an http:// or https:// URL", path)
-		}
-		if s.Region == "" || s.Bucket == "" || s.AccessKey == "" || s.SecretKey == "" {
-			return nil, fmt.Errorf("%s: blob s3 needs region, bucket, access_key and secret_key", path)
-		}
-	default:
-		return nil, fmt.Errorf("%s: unknown blob backend %q", path, c.Blob.Backend)
+	if c.MasterKeyFile == "" {
+		return nil, fmt.Errorf("%s: master_key_file is required", path)
 	}
-	if c.DataDir != "" && !filepath.IsAbs(c.DataDir) {
-		c.DataDir = filepath.Join(filepath.Dir(path), c.DataDir)
+	dir := filepath.Dir(path)
+	if !filepath.IsAbs(c.DataDir) {
+		c.DataDir = filepath.Join(dir, c.DataDir)
+	}
+	if !filepath.IsAbs(c.MasterKeyFile) {
+		c.MasterKeyFile = filepath.Join(dir, c.MasterKeyFile)
 	}
 
 	if !c.TLS.ACME && (c.TLS.CertFile == "") != (c.TLS.KeyFile == "") {
@@ -170,5 +141,5 @@ func (c *Config) HasDomain(domain string) bool {
 	return false
 }
 
-// BlobDir is where the "local" blob backend keeps its files.
+// BlobDir is where this node keeps its blob files.
 func (c *Config) BlobDir() string { return filepath.Join(c.DataDir, "blobs") }

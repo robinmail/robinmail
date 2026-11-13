@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,7 +32,7 @@ type Message struct {
 // after the bump.
 const sqlNewEmail = `(SELECT next_email - 1 FROM account WHERE id = :a)`
 
-// Deliver stores a message: the blob first, then one transaction that takes
+// Deliver stores a message: the encrypted blob first, then one transaction that takes
 // the email id, assigns the thread, takes the mailbox's next UID and writes
 // the change log. A crash in between leaves a blob nobody references, never
 // an email without a blob.
@@ -57,7 +58,15 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 		role = RoleInbox
 	}
 
-	if err := s.blobs.Put(ctx, blob.Key(account, blobID), m.Raw); err != nil {
+	key, err := s.blobKey(ctx, account)
+	if err != nil {
+		return Email{}, err
+	}
+	sealed, err := blob.Encrypt(key, account, blobID, bytes.NewReader(m.Raw))
+	if err != nil {
+		return Email{}, fmt.Errorf("store: %w", err)
+	}
+	if err := s.blobs.Put(ctx, blob.Key(account, blobID), sealed); err != nil {
 		return Email{}, fmt.Errorf("store: %w", err)
 	}
 

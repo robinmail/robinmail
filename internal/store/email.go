@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"sort"
@@ -109,17 +111,61 @@ func (s *Store) ThreadEmails(ctx context.Context, account string, threadID int64
 	return out, nil
 }
 
-// Open returns the raw message. The caller closes it.
+// Open returns the raw message, decrypted while it is read. The caller closes
+// it. A damaged blob file makes a Read fail with blob.ErrCorrupt; only
+// reading up to io.EOF shows the message is whole.
 func (s *Store) Open(ctx context.Context, account string, id int64) (io.ReadCloser, Email, error) {
 	e, err := s.Email(ctx, account, id)
 	if err != nil {
 		return nil, Email{}, err
 	}
-	r, err := s.blobs.Get(ctx, blob.Key(account, e.Blob))
+	key, err := s.blobKey(ctx, account)
+	if err != nil {
+		return nil, Email{}, err
+	}
+	f, err := s.blobs.Get(ctx, blob.Key(account, e.Blob))
+	if err != nil {
+		return nil, Email{}, fmt.Errorf("store: email %s: %w", EmailID(id), err)
+	}
+	r, err := blob.Decrypt(key, account, e.Blob, f)
 	if err != nil {
 		return nil, Email{}, fmt.Errorf("store: email %s: %w", EmailID(id), err)
 	}
 	return r, e, nil
+}
+
+// EmailIDs lists the ids of all emails of the account.
+func (s *Store) EmailIDs(ctx context.Context, account string) ([]int64, error) {
+	res, err := s.query(ctx, account, q(`SELECT id FROM email WHERE account_id = :a ORDER BY id`))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(res[0].Values))
+	for _, row := range res[0].Values {
+		out = append(out, asInt(row[0]))
+	}
+	return out, nil
+}
+
+// VerifyEmail checks an email's blob file: it must be there, decrypt in
+// full, and its plaintext must have the size and SHA-256 the email row
+// names.
+func (s *Store) VerifyEmail(ctx context.Context, account string, id int64) error {
+	r, e, err := s.Open(ctx, account, id)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, r)
+	if err != nil {
+		return fmt.Errorf("store: email %s: %w", EmailID(id), err)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != e.Blob || n != e.Size {
+		return fmt.Errorf("store: email %s: blob holds %d bytes with SHA-256 %s, the email says %d bytes and %s",
+			EmailID(id), n, got, e.Size, e.Blob)
+	}
+	return nil
 }
 
 // Update describes a change to one email. All of it is applied in one
@@ -275,7 +321,7 @@ func (s *Store) MoveEmail(ctx context.Context, account string, id, from, to int6
 }
 
 // DestroyEmail removes the email from every mailbox and returns the new
-// state. The blob stays: another email of the account may share it, and
+// state. The blob file stays: another email of the account may share it, and
 // removing unreferenced blobs is the sweeper's job.
 func (s *Store) DestroyEmail(ctx context.Context, account string, id int64) (int64, error) {
 	const others = `EXISTS (SELECT 1 FROM email o WHERE o.account_id = :a AND o.thread_id = e.thread_id AND o.id <> :e)`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base32"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -33,11 +34,16 @@ func newAccountID() string {
 // the canonical (lowercase) address, passwordHash a PHC string.
 func (s *Store) CreateAccount(ctx context.Context, address, passwordHash string) (Account, error) {
 	id := newAccountID()
+	key, wrapped, err := s.master.NewAccountKey(id)
+	if err != nil {
+		return Account{}, fmt.Errorf("store: %w", err)
+	}
 	b := s.newBatch(id)
 	b.unique(ErrAccountExists)
-	b.add(`INSERT INTO account (id, address, password_hash, created_at, modseq, next_email, next_mailbox, next_thread)
-		VALUES (:a, :address, :hash, :now, 1, 1, :next, 1)`,
-		"address", address, "hash", passwordHash, "next", len(defaultMailboxes)+1)
+	b.add(`INSERT INTO account (id, address, password_hash, blob_key, created_at, modseq, next_email,
+			next_mailbox, next_thread)
+		VALUES (:a, :address, :hash, :blob_key, :now, 1, 1, :next, 1)`,
+		"address", address, "hash", passwordHash, "blob_key", wrapped, "next", len(defaultMailboxes)+1)
 	for i, m := range defaultMailboxes {
 		b.add(`INSERT INTO mailbox (account_id, id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq)
 			VALUES (:a, :id, 0, :name, :role, :id, :now, 1, 1)`, "id", i+1, "name", m.name, "role", m.role)
@@ -46,6 +52,7 @@ func (s *Store) CreateAccount(ctx context.Context, address, passwordHash string)
 	if _, err := s.run(ctx, b); err != nil {
 		return Account{}, err
 	}
+	s.keys.Store(id, key)
 	now := time.Unix(b.base["now"].(int64), 0)
 	return Account{ID: id, Address: address, PasswordHash: passwordHash, CreatedAt: now, State: 1}, nil
 }
@@ -92,4 +99,25 @@ func (s *Store) State(ctx context.Context, account string) (int64, error) {
 		return 0, ErrNoAccount
 	}
 	return asInt(res[0].Values[0][0]), nil
+}
+
+// blobKey returns the key that encrypts the account's blobs. Keys never
+// change, so they are cached once unwrapped.
+func (s *Store) blobKey(ctx context.Context, account string) ([]byte, error) {
+	if key, ok := s.keys.Load(account); ok {
+		return key.([]byte), nil
+	}
+	res, err := s.query(ctx, account, q(`SELECT blob_key FROM account WHERE id = :a`))
+	if err != nil {
+		return nil, err
+	}
+	if len(res[0].Values) == 0 {
+		return nil, ErrNoAccount
+	}
+	key, err := s.master.Unwrap(account, asString(res[0].Values[0][0]))
+	if err != nil {
+		return nil, fmt.Errorf("store: account %s: %w", account, err)
+	}
+	s.keys.Store(account, key)
+	return key, nil
 }

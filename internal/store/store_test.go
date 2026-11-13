@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -39,12 +40,26 @@ func open(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(db, blob.NewLocal(t.TempDir()))
+	master, err := blob.NewMasterKey(testMasterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs := blob.NewLocal(t.TempDir())
+	s := New(db, blobs, master)
 	if err := s.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
+	locals[s] = blobs
+	t.Cleanup(func() { delete(locals, s) })
 	return s
 }
+
+// testMasterKey is fixed, so accounts left in the database by an earlier run
+// stay readable.
+var testMasterKey = bytes.Repeat([]byte{0x42}, 32)
+
+// locals gives a test the blob directory behind its store.
+var locals = map[*Store]*blob.Local{}
 
 func account(t *testing.T, s *Store) Account {
 	t.Helper()
@@ -270,6 +285,96 @@ func TestDeliverAndRead(t *testing.T) {
 	// A message that is not mail at all is still stored.
 	odd := deliver(t, s, a, Message{Raw: []byte("\x00\xff not mail")})
 	want(t, "odd message", []any{odd.ThreadID, odd.MessageID, odd.Subject}, []any{int64(5), "", ""})
+}
+
+func TestBlobsEncrypted(t *testing.T) {
+	s := open(t)
+	a, b := account(t, s), account(t, s)
+	raw := msg("secret@sender.test", "the launch codes")
+	e := deliver(t, s, a, Message{Raw: raw})
+	eb := deliver(t, s, b, Message{Raw: raw})
+	want(t, "same content, same blob name", eb.Blob, e.Blob)
+
+	// On disk: <account>/<2 hex>/<sha256>, and not a byte of the message.
+	path, err := locals[s].Path(blob.Key(a.ID, e.Blob))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(path, "/"+a.ID+"/"+e.Blob[:2]+"/"+e.Blob) {
+		t.Errorf("blob path %s", path)
+	}
+	file, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(file, []byte("launch")) || bytes.Contains(file, []byte("sender.test")) || len(file) <= len(raw) {
+		t.Errorf("blob file is not encrypted: %q", file)
+	}
+	if err := s.VerifyEmail(ctx, a.ID, e.ID); err != nil {
+		t.Errorf("VerifyEmail: %v", err)
+	}
+	ids, err := s.EmailIDs(ctx, a.ID)
+	want(t, "EmailIDs", ids, []int64{e.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A store without the key cache, as another node or a restart would be,
+	// reads the key from the account row.
+	master, _ := blob.NewMasterKey(testMasterKey)
+	fresh := New(s.db, locals[s], master)
+	r, _, err := fresh.Open(ctx, a.ID, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(r)
+	r.Close()
+	if err != nil || !bytes.Equal(got, raw) {
+		t.Errorf("read on a fresh store: %q, %v", got, err)
+	}
+	// With another master key the account key does not unwrap.
+	wrong, _ := blob.NewMasterKey(bytes.Repeat([]byte{1}, 32))
+	if _, _, err := New(s.db, locals[s], wrong).Open(ctx, a.ID, e.ID); err == nil || !strings.Contains(err.Error(), "master key") {
+		t.Errorf("Open under another master key: %v", err)
+	}
+	if _, err := New(s.db, locals[s], wrong).Deliver(ctx, a.ID, Message{Raw: raw}); err == nil {
+		t.Error("Deliver under another master key succeeded")
+	}
+
+	// Another account's file under this name: each account has its own key.
+	otherPath, _ := locals[s].Path(blob.Key(b.ID, eb.Blob))
+	other, _ := os.ReadFile(otherPath)
+	if bytes.Equal(other, file) {
+		t.Error("two accounts have identical blob files")
+	}
+	damage := map[string][]byte{
+		"another account's file": other,
+		"a flipped bit":          append(bytes.Clone(file[:len(file)-1]), file[len(file)-1]^1),
+		"a truncated file":       file[:len(file)-5],
+		"plaintext":              raw,
+	}
+	for name, content := range damage {
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		wantErr(t, "VerifyEmail with "+name, s.VerifyEmail(ctx, a.ID, e.ID), blob.ErrCorrupt)
+		if r, _, err := s.Open(ctx, a.ID, e.ID); err == nil {
+			got, err := io.ReadAll(r)
+			r.Close()
+			if err == nil || len(got) != 0 {
+				t.Errorf("Open with %s returned %q, %v", name, got, err)
+			}
+		}
+	}
+	os.Remove(path)
+	wantErr(t, "VerifyEmail without the file", s.VerifyEmail(ctx, a.ID, e.ID), blob.ErrNotFound)
+	if err := os.WriteFile(path, file, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.VerifyEmail(ctx, a.ID, e.ID); err != nil {
+		t.Errorf("VerifyEmail after restoring the file: %v", err)
+	}
+	wantErr(t, "VerifyEmail(missing)", s.VerifyEmail(ctx, a.ID, 99), ErrNoEmail)
 }
 
 func TestIdempotentDelivery(t *testing.T) {

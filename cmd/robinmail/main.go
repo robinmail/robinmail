@@ -33,6 +33,7 @@ A <mailbox> is an id (m1), a role (inbox, junk) or a path (Work/Invoices).
 An <email> is an id (e1).
 
 commands:
+  key generate                                 write a new master key to master_key_file
   user add <address>                           create a user (password from the prompt or stdin)
   user list                                    list users
   mailbox list <address>                       list a user's mailboxes
@@ -41,6 +42,7 @@ commands:
   deliver <address> [mailbox]                  store the message on stdin (default: inbox)
   list <address> [mailbox]                     list the emails in a mailbox (default: inbox)
   cat <address> <email>                        print one message
+  verify <address> [email]                     check blob files against their hashes (default: all)
   move <address> <email> <from> <to>           move an email to another mailbox
   label <address> <email> <mailbox>            also put an email in a mailbox
   unlabel <address> <email> <mailbox>          take an email out of a mailbox
@@ -76,7 +78,15 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	// The one command that runs without a master key: it makes one.
+	if len(args) == 2 && args[0] == "key" && args[1] == "generate" {
+		if err := blob.GenerateMasterKeyFile(cfg.MasterKeyFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "wrote %s\nBack it up and give every node the same file: without it the stored mail cannot be read.\n", cfg.MasterKeyFile)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	st, err := openStore(ctx, cfg)
 	if err != nil {
@@ -103,6 +113,8 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		return a.list(args[0], optional(args, 1, store.RoleInbox))
 	case cmd == "cat" && n == 2:
 		return a.cat(args[0], args[1])
+	case cmd == "verify" && (n == 1 || n == 2):
+		return a.verify(args[0], optional(args, 1, ""))
 	case cmd == "move" && n == 4:
 		return a.move(args[0], args[1], args[2], args[3])
 	case cmd == "label" && n == 3:
@@ -129,26 +141,18 @@ func optional(args []string, i int, def string) string {
 	return def
 }
 
-// openStore connects the store to rqlite and the configured blob backend,
-// and creates the schema in an empty database.
+// openStore loads the master key, connects the store to rqlite and the blob
+// directory, and creates the schema in an empty database.
 func openStore(ctx context.Context, cfg *config.Config) (*store.Store, error) {
 	db, err := rqlite.New(cfg.Rqlite.URL, nil)
 	if err != nil {
 		return nil, err
 	}
-	var blobs blob.Store
-	switch cfg.Blob.Backend {
-	case config.BlobS3:
-		s3 := cfg.Blob.S3
-		blobs, err = blob.NewS3(blob.S3Config{Endpoint: s3.Endpoint, Region: s3.Region, Bucket: s3.Bucket,
-			AccessKey: s3.AccessKey, SecretKey: s3.SecretKey})
-		if err != nil {
-			return nil, err
-		}
-	default:
-		blobs = blob.NewLocal(cfg.BlobDir())
+	master, err := blob.LoadMasterKey(cfg.MasterKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("%w (make one with \"robinmail key generate\")", err)
 	}
-	st := store.New(db, blobs)
+	st := store.New(db, blob.NewLocal(cfg.BlobDir()), master)
 	if err := st.Init(ctx); err != nil {
 		return nil, err
 	}
@@ -422,6 +426,38 @@ func (a *app) cat(s, arg string) error {
 	defer r.Close()
 	_, err = io.Copy(a.stdout, r)
 	return err
+}
+
+// verify checks one email's blob file, or those of all the account's emails.
+func (a *app) verify(s, arg string) error {
+	acct, err := a.account(s)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	if arg != "" {
+		id, err := emailID(arg)
+		if err != nil {
+			return err
+		}
+		ids = []int64{id}
+	} else if ids, err = a.store.EmailIDs(a.ctx, acct.ID); err != nil {
+		return err
+	}
+	bad := 0
+	for _, id := range ids {
+		if err := a.store.VerifyEmail(a.ctx, acct.ID, id); err != nil {
+			bad++
+			fmt.Fprintf(a.stdout, "%-5s  FAILED  %v\n", store.EmailID(id), err)
+		} else if arg != "" {
+			fmt.Fprintf(a.stdout, "%-5s  ok\n", store.EmailID(id))
+		}
+	}
+	fmt.Fprintf(a.stdout, "%s: %d emails checked, %d failed\n", acct.Address, len(ids), bad)
+	if bad > 0 {
+		return fmt.Errorf("%d of %d blobs failed", bad, len(ids))
+	}
+	return nil
 }
 
 func (a *app) move(s, arg, fromArg, toArg string) error {

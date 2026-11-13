@@ -22,7 +22,7 @@ func TestCommands(t *testing.T) {
 	}
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "robinmail.json")
-	os.WriteFile(cfg, []byte(fmt.Sprintf(`{"hostname":"mail.example.test","data_dir":"data",
+	os.WriteFile(cfg, []byte(fmt.Sprintf(`{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key",
 		"domains":["example.test"],"rqlite":{"url":%q}}`, base)), 0o600)
 	var r [6]byte
 	rand.Read(r[:])
@@ -50,6 +50,15 @@ func TestCommands(t *testing.T) {
 		}
 	}
 
+	// Nothing works without a master key, and the key is never overwritten.
+	if _, err := do("", "user", "list"); err == nil || !strings.Contains(err.Error(), "key generate") {
+		t.Errorf("ran without a master key: %v", err)
+	}
+	expect(ok("", "key", "generate"), `^wrote .*/master\.key\n`)
+	if _, err := do("", "key", "generate"); err == nil {
+		t.Error("overwrote the master key")
+	}
+
 	if _, err := do("short\n", "user", "add", user); err == nil {
 		t.Error("accepted a weak password")
 	}
@@ -69,6 +78,37 @@ func TestCommands(t *testing.T) {
 	if out := ok("", "cat", user, "e1"); out != first {
 		t.Errorf("cat e1 = %q", out)
 	}
+
+	// The message on disk is encrypted; verify finds damage.
+	var files []string
+	filepath.WalkDir(filepath.Join(dir, "data", "blobs"), func(p string, d os.DirEntry, _ error) error {
+		if d != nil && !d.IsDir() {
+			files = append(files, p)
+		}
+		return nil
+	})
+	if len(files) != 2 {
+		t.Fatalf("%d blob files, want 2", len(files))
+	}
+	for _, p := range files {
+		data, _ := os.ReadFile(p)
+		if bytes.Contains(data, []byte("sender.test")) || !bytes.HasPrefix(data, []byte("RMB1")) {
+			t.Errorf("%s is not encrypted", p)
+		}
+		if !regexp.MustCompile(`/blobs/[a-z2-7]{16}/([0-9a-f]{2})/([0-9a-f]{2})[0-9a-f]{62}$`).MatchString(p) ||
+			filepath.Base(filepath.Dir(p)) != filepath.Base(p)[:2] {
+			t.Errorf("blob path %s", p)
+		}
+	}
+	expect(ok("", "verify", user), `2 emails checked, 0 failed\n`)
+	expect(ok("", "verify", user, "e1"), `e1 +ok\n`)
+	saved, _ := os.ReadFile(files[0])
+	os.WriteFile(files[0], append(bytes.Clone(saved[:len(saved)-1]), saved[len(saved)-1]^1), 0o600)
+	if out, err := do("", "verify", user); err == nil || !strings.Contains(out, "FAILED") || !strings.Contains(out, "2 emails checked, 1 failed") {
+		t.Errorf("verify with a damaged blob: %v\n%s", err, out)
+	}
+	os.WriteFile(files[0], saved, 0o600)
+	expect(ok("", "verify", user), `0 failed\n`)
 
 	expect(ok("", "mailbox", "create", user, "Work"), `created mailbox m6 Work, state 4\n`)
 	expect(ok("", "mailbox", "create", user, "Work/Invoices"), `created mailbox m7 Work/Invoices, state 5\n`)

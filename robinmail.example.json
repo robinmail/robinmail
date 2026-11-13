@@ -1,19 +1,10 @@
 {
   "hostname": "mail.example.test",
   "data_dir": "data",
+  "master_key_file": "master.key",
   "domains": ["example.test"],
   "rqlite": {
     "url": "http://127.0.0.1:4001"
-  },
-  "blob": {
-    "backend": "local",
-    "s3": {
-      "endpoint": "http://127.0.0.1:3900",
-      "region": "garage",
-      "bucket": "robinmail",
-      "access_key": "",
-      "secret_key": ""
-    }
   },
   "tls": {
     "cert_file": "",

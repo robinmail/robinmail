@@ -3,56 +3,68 @@ package blob
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
+	"testing/iotest"
 )
 
-func TestCheckKey(t *testing.T) {
-	for _, k := range []string{"acct/0a1b", "acme/account.json", "a", "A-b_c.d/e"} {
-		if err := checkKey(k); err != nil {
-			t.Errorf("checkKey(%q): %v", k, err)
+func sha(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func random(t testing.TB, n int) []byte {
+	t.Helper()
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestSplitKey(t *testing.T) {
+	sum := sha([]byte("x"))
+	for _, k := range []string{Key("acct", sum), Key("mit6k7r3v6xjkz3y", sum), Key("A-b_9", sum)} {
+		if _, _, err := splitKey(k); err != nil {
+			t.Errorf("splitKey(%q): %v", k, err)
 		}
 	}
-	for _, k := range []string{"", "/a", "a/", "a//b", "..", "a/../b", "a/.b", ".tmp-1", "a b", "a\\b", "a/b\x00", "é", strings.Repeat("a", 513)} {
-		if err := checkKey(k); err == nil {
-			t.Errorf("checkKey(%q) accepted", k)
+	for _, k := range []string{"", sum, "/" + sum, "acct/", "acct/" + sum[:63], "acct/" + sum + "0", "acct/" + strings.ToUpper(sum),
+		"../" + sum, "a/b/" + sum, "a.b/" + sum, "a b/" + sum, "acct/../" + sum[:61], "acct/" + sum[:62] + "/.",
+		strings.Repeat("a", 65) + "/" + sum, "é/" + sum, "a\x00/" + sum} {
+		if _, _, err := splitKey(k); err == nil {
+			t.Errorf("splitKey(%q) accepted", k)
 		}
-	}
-	if Key("acct", "abc") != "acct/abc" {
-		t.Error(Key("acct", "abc"))
 	}
 }
 
-// exercise runs the behaviour every backend must have.
-func exercise(t *testing.T, s Store) {
-	t.Helper()
+func TestLocal(t *testing.T) {
 	ctx := context.Background()
-	key := Key("blobtest", hex.EncodeToString([]byte(time.Now().Format("150405.000000000"))))
+	dir := filepath.Join(t.TempDir(), "blobs")
+	l := NewLocal(dir)
+	sum := sha([]byte("x"))
+	key := Key("acct", sum)
 
-	if _, err := s.Get(ctx, key); !errors.Is(err, ErrNotFound) {
+	if _, err := l.Get(ctx, key); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get missing: %v", err)
 	}
-	if err := s.Delete(ctx, key); err != nil {
+	if err := l.Delete(ctx, key); err != nil {
 		t.Errorf("Delete missing: %v", err)
 	}
-	for _, data := range [][]byte{[]byte("first\r\n"), bytes.Repeat([]byte("0123456789abcdef"), 100_000), {}} {
-		if err := s.Put(ctx, key, data); err != nil {
+	for _, data := range [][]byte{[]byte("first\r\n"), random(t, 300_000), {}} {
+		if err := l.Put(ctx, key, bytes.NewReader(data)); err != nil {
 			t.Fatalf("Put %d bytes: %v", len(data), err)
 		}
-		r, err := s.Get(ctx, key)
+		r, err := l.Get(ctx, key)
 		if err != nil {
-			t.Fatalf("Get: %v", err)
+			t.Fatal(err)
 		}
 		got, err := io.ReadAll(r)
 		r.Close()
@@ -60,173 +72,294 @@ func exercise(t *testing.T, s Store) {
 			t.Fatalf("Get returned %d bytes, %v; want %d", len(got), err, len(data))
 		}
 	}
-	if err := s.Delete(ctx, key); err != nil {
-		t.Fatalf("Delete: %v", err)
+
+	// <dir>/<account>/<first 2 hex>/<sha256>, private, and no temp files left.
+	path := filepath.Join(dir, "acct", sum[:2], sum)
+	if got, _ := l.Path(key); got != path {
+		t.Errorf("Path = %s, want %s", got, path)
 	}
-	if _, err := s.Get(ctx, key); !errors.Is(err, ErrNotFound) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("blob file: %v, %v", fi, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("%d files in the directory, want 1", len(entries))
+	}
+
+	// A failing source leaves nothing behind.
+	other := Key("acct", sha([]byte("y")))
+	if err := l.Put(ctx, other, iotest.ErrReader(errors.New("boom"))); err == nil {
+		t.Error("Put with a failing reader succeeded")
+	}
+	if _, err := l.Get(ctx, other); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get after a failed Put: %v", err)
+	}
+	otherPath, _ := l.Path(other)
+	if entries, _ := os.ReadDir(filepath.Dir(otherPath)); len(entries) != 0 {
+		t.Errorf("%d files left after a failed Put", len(entries))
+	}
+
+	if err := l.Delete(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Get(ctx, key); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get after Delete: %v", err)
 	}
-	for _, bad := range []string{"../escape", "a/../../b", ""} {
-		if s.Put(ctx, bad, nil) == nil || s.Delete(ctx, bad) == nil {
+	for _, bad := range []string{"../" + sum, "acct/../../x", ""} {
+		if l.Put(ctx, bad, strings.NewReader("x")) == nil || l.Delete(ctx, bad) == nil {
 			t.Errorf("key %q accepted", bad)
 		}
-		if _, err := s.Get(ctx, bad); err == nil || errors.Is(err, ErrNotFound) {
+		if _, err := l.Get(ctx, bad); err == nil || errors.Is(err, ErrNotFound) {
 			t.Errorf("Get(%q): %v", bad, err)
 		}
 	}
 }
 
-func TestLocal(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "blobs")
-	l := NewLocal(dir)
-	exercise(t, l)
-
-	if err := l.Put(context.Background(), "acct/abc", []byte("x")); err != nil {
-		t.Fatal(err)
-	}
-	fi, err := os.Stat(filepath.Join(dir, "acct", "abc"))
-	if err != nil || fi.Mode().Perm() != 0o600 {
-		t.Errorf("blob file: %v, %v", fi, err)
-	}
-	entries, _ := os.ReadDir(filepath.Join(dir, "acct"))
-	if len(entries) != 1 {
-		t.Errorf("%d files left in the directory, want 1", len(entries))
-	}
-}
-
-// The two examples from "Signature Calculations for the Authorization
-// Header" in the Amazon S3 API reference.
-func TestSignAWSExamples(t *testing.T) {
-	const (
-		access = "AKIAIOSFODNN7EXAMPLE"
-		secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-		empty  = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	)
-	now := time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC)
-
-	get, _ := http.NewRequest("GET", "https://examplebucket.s3.amazonaws.com/test.txt", nil)
-	get.Header.Set("Range", "bytes=0-9")
-	sign(get, empty, "us-east-1", access, secret, now)
-	want := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, " +
-		"SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, " +
-		"Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
-	if got := get.Header.Get("Authorization"); got != want {
-		t.Errorf("GET:\n got %s\nwant %s", got, want)
-	}
-
-	body := "Welcome to Amazon S3."
-	sum := sha256.Sum256([]byte(body))
-	put, _ := http.NewRequest("PUT", "https://examplebucket.s3.amazonaws.com/test$file.text", strings.NewReader(body))
-	put.Header.Set("Date", "Fri, 24 May 2013 00:00:00 GMT")
-	put.Header.Set("X-Amz-Storage-Class", "REDUCED_REDUNDANCY")
-	sign(put, hex.EncodeToString(sum[:]), "us-east-1", access, secret, now)
-	want = "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, " +
-		"SignedHeaders=date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class, " +
-		"Signature=98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd"
-	if got := put.Header.Get("Authorization"); got != want {
-		t.Errorf("PUT:\n got %s\nwant %s", got, want)
-	}
-
-	list, _ := http.NewRequest("GET", "https://examplebucket.s3.amazonaws.com/?max-keys=2&prefix=J", nil)
-	sign(list, empty, "us-east-1", access, secret, now)
-	if got := list.Header.Get("Authorization"); !strings.HasSuffix(got, "Signature=34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7") {
-		t.Errorf("list: %s", got)
-	}
-}
-
-// fakeS3 is an in-memory bucket that checks what a real one would: the path,
-// the payload hash and that the request is signed for the right scope.
-type fakeS3 struct {
-	t       *testing.T
-	mu      sync.Mutex
-	objects map[string][]byte
-}
-
-func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	body, _ := io.ReadAll(r.Body)
-	sum := sha256.Sum256(body)
-	auth := r.Header.Get("Authorization")
-	if r.Header.Get("X-Amz-Content-Sha256") != hex.EncodeToString(sum[:]) ||
-		!strings.HasPrefix(auth, "AWS4-HMAC-SHA256 Credential=key/") || !strings.Contains(auth, "/garage/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=") {
-		f.t.Errorf("bad signature headers: %q", auth)
-		http.Error(w, "SignatureDoesNotMatch", http.StatusForbidden)
-		return
-	}
-	key, ok := strings.CutPrefix(r.URL.Path, "/bucket/")
-	if !ok {
-		http.Error(w, "NoSuchBucket", http.StatusNotFound)
-		return
-	}
-	switch r.Method {
-	case http.MethodPut:
-		f.objects[key] = body
-	case http.MethodGet:
-		data, ok := f.objects[key]
-		if !ok {
-			http.Error(w, "NoSuchKey", http.StatusNotFound)
-			return
-		}
-		w.Write(data)
-	case http.MethodDelete:
-		delete(f.objects, key)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "MethodNotAllowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func TestS3Fake(t *testing.T) {
-	srv := httptest.NewServer(&fakeS3{t: t, objects: map[string][]byte{}})
-	defer srv.Close()
-	s, err := NewS3(S3Config{Endpoint: srv.URL, Region: "garage", Bucket: "bucket", AccessKey: "key", SecretKey: "secret"})
+func seal(t testing.TB, key []byte, account string, plain []byte) []byte {
+	t.Helper()
+	r, err := Encrypt(key, account, sha(plain), bytes.NewReader(plain))
 	if err != nil {
 		t.Fatal(err)
 	}
-	exercise(t, s)
-
-	other, _ := NewS3(S3Config{Endpoint: srv.URL, Region: "garage", Bucket: "elsewhere", AccessKey: "key", SecretKey: "secret"})
-	if err := other.Put(context.Background(), "a/b", []byte("x")); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
-		t.Errorf("Put to a missing bucket: %v", err)
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, cfg := range []S3Config{
-		{Endpoint: "127.0.0.1:3900", Region: "r", Bucket: "b", AccessKey: "k", SecretKey: "s"},
-		{Endpoint: "http://h/prefix", Region: "r", Bucket: "b", AccessKey: "k", SecretKey: "s"},
-		{Endpoint: "http://h", Bucket: "b", AccessKey: "k", SecretKey: "s"},
+	return out
+}
+
+// open decrypts a whole file. It returns what was readable before any error.
+func open(key []byte, account, sum string, file []byte) ([]byte, error) {
+	r, err := Decrypt(key, account, sum, io.NopCloser(bytes.NewReader(file)))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return io.ReadAll(r)
+}
+
+func TestEncryptRoundTrip(t *testing.T) {
+	key := random(t, KeySize)
+	sizes := []int{0, 1, 100, chunkSize - 1, chunkSize, chunkSize + 1, 3 * chunkSize, 3*chunkSize + 7}
+	if !testing.Short() {
+		sizes = append(sizes, 25<<20)
+	}
+	for _, size := range sizes {
+		plain := random(t, size)
+		file := seal(t, key, "acct", plain)
+
+		chunks := (size + chunkSize - 1) / chunkSize
+		if chunks == 0 {
+			chunks = 1
+		}
+		if want := headerLen + size + chunks*tagLen; len(file) != want {
+			t.Errorf("%d bytes encrypt to %d, want %d", size, len(file), want)
+		}
+		if size >= 100 && bytes.Contains(file, plain[:32]) {
+			t.Errorf("%d bytes: plaintext visible in the file", size)
+		}
+		got, err := open(key, "acct", sha(plain), file)
+		if err != nil || !bytes.Equal(got, plain) {
+			t.Errorf("%d bytes: decrypt returned %d bytes, %v", size, len(got), err)
+		}
+		// The same through a reader that hands out one byte at a time.
+		r, err := Decrypt(key, "acct", sha(plain), io.NopCloser(iotest.OneByteReader(bytes.NewReader(file))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if size <= 3*chunkSize+7 {
+			if got, err := io.ReadAll(iotest.OneByteReader(r)); err != nil || !bytes.Equal(got, plain) {
+				t.Errorf("%d bytes, byte by byte: %d bytes, %v", size, len(got), err)
+			}
+		}
+	}
+
+	// Two encryptions of one plaintext share nothing but the fixed header.
+	a, b := seal(t, key, "acct", []byte("same")), seal(t, key, "acct", []byte("same"))
+	if bytes.Equal(a[8:], b[8:]) || !bytes.Equal(a[:8], b[:8]) || string(a[:4]) != "RMB1" {
+		t.Errorf("two files: %x and %x", a, b)
+	}
+	if _, err := Encrypt(key[:16], "acct", sha(nil), bytes.NewReader(nil)); err == nil {
+		t.Error("accepted a short key")
+	}
+	if _, err := Encrypt(key, "acct", sha(nil), iotest.ErrReader(errors.New("boom"))); err != nil {
+		t.Fatal(err)
+	} else if r, _ := Encrypt(key, "acct", sha(nil), iotest.ErrReader(errors.New("boom"))); r != nil {
+		if _, err := io.ReadAll(r); err == nil {
+			t.Error("a failing source went unnoticed")
+		}
+	}
+}
+
+// Every way of damaging a file must end in ErrCorrupt, and never in
+// plaintext that passes as complete.
+func TestDecryptRejects(t *testing.T) {
+	key := random(t, KeySize)
+	plain := random(t, 3*chunkSize+1000) // four chunks
+	sum := sha(plain)
+	file := seal(t, key, "acct", plain)
+	const sealed = chunkSize + tagLen
+	chunk := func(i int) []byte { return file[headerLen+i*sealed : min(headerLen+(i+1)*sealed, len(file))] }
+	join := func(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+	header := file[:headerLen]
+
+	exact := random(t, 2*chunkSize) // ends on a chunk boundary
+	exactFile := seal(t, key, "acct", exact)
+
+	cases := map[string][]byte{
+		"empty file":                {},
+		"header only":               header,
+		"half a header":             file[:10],
+		"cut inside the last chunk": file[:len(file)-1],
+		"cut inside the last tag":   file[:len(file)-tagLen+1],
+		"cut at a chunk boundary":   file[:headerLen+3*sealed],
+		"cut after the first chunk": file[:headerLen+sealed],
+		"cut inside a middle chunk": file[:headerLen+sealed+100],
+		"last chunk dropped, exact": exactFile[:headerLen+sealed],
+		"chunks swapped":            join(header, chunk(1), chunk(0), chunk(2), chunk(3)),
+		"chunk repeated":            join(header, chunk(0), chunk(0), chunk(1), chunk(2), chunk(3)),
+		"middle chunk dropped":      join(header, chunk(0), chunk(2), chunk(3)),
+		"first chunk dropped":       join(header, chunk(1), chunk(2), chunk(3)),
+		"only the last chunk":       join(header, chunk(3)),
+		"data appended":             join(file, []byte("x")),
+		"chunk appended":            join(file, chunk(3)),
+		"another file's chunk":      join(header, chunk(0), exactFile[headerLen:headerLen+sealed], chunk(2), chunk(3)),
+		"another file's header":     join(exactFile[:headerLen], file[headerLen:]),
+		"not a blob file":           plain,
+	}
+	for name, at := range map[string]int{
+		"magic": 0, "chunk size": 6, "nonce prefix": 20, "first byte of data": headerLen,
+		"middle chunk": headerLen + sealed + 500, "tag of the first chunk": headerLen + sealed - 1,
+		"last byte": len(file) - 1,
 	} {
-		if _, err := NewS3(cfg); err == nil {
-			t.Errorf("NewS3(%+v) accepted", cfg)
+		flipped := bytes.Clone(file)
+		flipped[at] ^= 0x01
+		cases["bit flipped in the "+name] = flipped
+	}
+	for name, damaged := range cases {
+		got, err := open(key, "acct", sum, damaged)
+		if !errors.Is(err, ErrCorrupt) {
+			t.Errorf("%s: err = %v, want ErrCorrupt (%d bytes returned)", name, err, len(got))
 		}
+		if !bytes.HasPrefix(plain, got) {
+			t.Errorf("%s: returned bytes that are not the plaintext", name)
+		}
+	}
+
+	// The right file under the wrong name or key.
+	other := random(t, KeySize)
+	for name, err := range map[string]error{
+		"another account": func() error { _, err := open(key, "acct2", sum, file); return err }(),
+		"another hash":    func() error { _, err := open(key, "acct", sha([]byte("x")), file); return err }(),
+		"another key":     func() error { _, err := open(other, "acct", sum, file); return err }(),
+		"account and hash run together": func() error {
+			_, err := open(key, "acc", "t"+sum, file)
+			return err
+		}(),
+	} {
+		if !errors.Is(err, ErrCorrupt) {
+			t.Errorf("%s: err = %v, want ErrCorrupt", name, err)
+		}
+	}
+	if got, err := open(key, "acct", sum, file); err != nil || !bytes.Equal(got, plain) {
+		t.Fatalf("the undamaged file: %v", err)
 	}
 }
 
-// TestS3Real runs against a real S3-compatible service:
-//
-//	ROBINMAIL_TEST_S3='http://ACCESSKEY:SECRETKEY@127.0.0.1:3900/bucket?region=garage' go test ./internal/blob
-//
-// contrib/compose has a Garage for this.
-func TestS3Real(t *testing.T) {
-	raw := os.Getenv("ROBINMAIL_TEST_S3")
-	if raw == "" {
-		t.Skip("ROBINMAIL_TEST_S3 is not set")
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret, _ := u.User.Password()
-	cfg := S3Config{Endpoint: u.Scheme + "://" + u.Host, Region: u.Query().Get("region"),
-		Bucket: strings.Trim(u.Path, "/"), AccessKey: u.User.Username(), SecretKey: secret}
-	s, err := NewS3(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	exercise(t, s)
+func FuzzDecrypt(f *testing.F) {
+	key := bytes.Repeat([]byte{7}, KeySize)
+	plain := []byte("hello")
+	good := seal(f, key, "acct", plain)
+	f.Add(good)
+	f.Add(good[:headerLen])
+	f.Add([]byte("RMB1"))
+	f.Fuzz(func(t *testing.T, file []byte) {
+		got, err := open(key, "acct", sha(plain), file)
+		// The nonce prefix is random, so the fuzzer cannot build a second
+		// valid file: whatever decrypts without error is this plaintext.
+		if err == nil && !bytes.Equal(got, plain) {
+			t.Fatalf("accepted a forged file: %q", got)
+		}
+		if err != nil && len(got) != 0 {
+			t.Fatalf("returned %q with error %v", got, err)
+		}
+	})
+}
 
-	cfg.SecretKey += "x"
-	wrong, _ := NewS3(cfg)
-	if err := wrong.Put(context.Background(), "blobtest/wrong", []byte("x")); err == nil || !strings.Contains(err.Error(), "HTTP 403") {
-		t.Errorf("Put with a wrong secret: %v", err)
+func TestMasterKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "master.key")
+	if _, err := LoadMasterKey(path); err == nil {
+		t.Fatal("loaded a missing key file")
+	}
+	if err := GenerateMasterKeyFile(path); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(path)
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("key file mode %v", fi.Mode().Perm())
+	}
+	if err := GenerateMasterKeyFile(path); err == nil {
+		t.Error("overwrote an existing key file")
+	}
+	m, err := LoadMasterKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key, wrapped, err := m.NewAccountKey("acct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(key) != KeySize || !strings.HasPrefix(wrapped, "1:") || strings.Contains(wrapped, keyEncoding.EncodeToString(key)) {
+		t.Errorf("key of %d bytes, wrapped %q", len(key), wrapped)
+	}
+	if got, err := m.Unwrap("acct", wrapped); err != nil || !bytes.Equal(got, key) {
+		t.Errorf("Unwrap: %v", err)
+	}
+	// The same master key loaded again, as another node would.
+	again, _ := LoadMasterKey(path)
+	if got, err := again.Unwrap("acct", wrapped); err != nil || !bytes.Equal(got, key) {
+		t.Errorf("Unwrap on a second load: %v", err)
+	}
+	if _, w2, _ := m.NewAccountKey("acct"); w2 == wrapped {
+		t.Error("two account keys wrap to the same text")
+	}
+
+	otherPath := filepath.Join(dir, "other.key")
+	GenerateMasterKeyFile(otherPath)
+	other, _ := LoadMasterKey(otherPath)
+	tampered := []byte(wrapped)
+	tampered[len(tampered)-1] ^= 1
+	for name, err := range map[string]error{
+		"another master key": func() error { _, err := other.Unwrap("acct", wrapped); return err }(),
+		"another account":    func() error { _, err := m.Unwrap("acct2", wrapped); return err }(),
+		"tampered":           func() error { _, err := m.Unwrap("acct", string(tampered)); return err }(),
+		"unknown version":    func() error { _, err := m.Unwrap("acct", "2:"+wrapped[2:]); return err }(),
+		"truncated":          func() error { _, err := m.Unwrap("acct", wrapped[:20]); return err }(),
+		"empty":              func() error { _, err := m.Unwrap("acct", ""); return err }(),
+	} {
+		if err == nil {
+			t.Errorf("Unwrap accepted: %s", name)
+		}
+	}
+
+	// Key files others can read, or that hold no key, are refused.
+	os.Chmod(path, 0o644)
+	if _, err := LoadMasterKey(path); err == nil || !strings.Contains(err.Error(), "0600") {
+		t.Errorf("loaded a world-readable key file: %v", err)
+	}
+	for name, content := range map[string]string{"empty": "", "short": "YWJj\n", "junk": "not a key\n"} {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte(content), 0o600)
+		if _, err := LoadMasterKey(p); err == nil {
+			t.Errorf("loaded a key file that is %s", name)
+		}
+	}
+	if _, err := LoadMasterKey(dir); err == nil {
+		t.Error("loaded a directory")
+	}
+	if _, err := NewMasterKey(make([]byte, 16)); err == nil {
+		t.Error("accepted a 16-byte master key")
 	}
 }

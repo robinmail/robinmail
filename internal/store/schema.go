@@ -11,7 +11,7 @@ import (
 
 // schemaVersion goes up with every change to the tables below. There are no
 // migrations yet: Init refuses a database of another version.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -25,12 +25,14 @@ var schema = []string{
 		name TEXT NOT NULL PRIMARY KEY
 	) WITHOUT ROWID`,
 
-	// id is random and never changes. The counters hand out Email, Mailbox
-	// and Thread ids. Change log rows up to trimmed_modseq are gone.
+	// id is random and never changes. blob_key encrypts the account's blobs
+	// and is stored wrapped by the master key. The counters hand out Email,
+	// Mailbox and Thread ids. Change log rows up to trimmed_modseq are gone.
 	`CREATE TABLE IF NOT EXISTS account (
 		id             TEXT NOT NULL PRIMARY KEY,
 		address        TEXT NOT NULL UNIQUE,
 		password_hash  TEXT NOT NULL,
+		blob_key       TEXT NOT NULL,
 		created_at     INTEGER NOT NULL,
 		modseq         INTEGER NOT NULL,
 		trimmed_modseq INTEGER NOT NULL DEFAULT 0,
@@ -61,7 +63,8 @@ var schema = []string{
 	) WITHOUT ROWID`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS mailbox_role ON mailbox (account_id, role) WHERE role IS NOT NULL`,
 
-	// blob is the SHA-256 of the raw message; the blob key adds the account.
+	// blob is the SHA-256 of the raw message, which with the account names
+	// the blob file.
 	// The header fields are cached here for lists and sorting.
 	`CREATE TABLE IF NOT EXISTS email (
 		account_id     TEXT NOT NULL,

@@ -1,5 +1,6 @@
 // Package store holds all mail state: accounts, mailboxes, emails, threads
-// and the change log in rqlite, and the raw messages in a blob store.
+// and the change log in rqlite, and the raw messages as encrypted files in a
+// blob store.
 //
 // rqlite has no interactive transactions, so every write here is one batch of
 // statements that rqlite runs atomically. A batch cannot read, decide in Go
@@ -18,6 +19,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/mikepage/robinmail/internal/blob"
@@ -52,17 +54,22 @@ const (
 	RoleTrash  = "trash"
 )
 
-// Store is safe for concurrent use and keeps no state of its own: any number
-// of nodes can work on the same rqlite and blob store.
+// Store is safe for concurrent use. Its only state is a cache of account
+// keys, which never change, so any number of nodes can work on the same
+// rqlite.
 type Store struct {
-	db    *rqlite.Client
-	blobs blob.Store
+	db     *rqlite.Client
+	blobs  blob.Store
+	master *blob.MasterKey
+	keys   sync.Map // account id -> []byte, the unwrapped blob key
 	// Now is the clock, replaceable in tests.
 	Now func() time.Time
 }
 
-func New(db *rqlite.Client, blobs blob.Store) *Store {
-	return &Store{db: db, blobs: blobs, Now: time.Now}
+// New returns a store. master wraps the keys that encrypt each account's
+// blobs; every node of a cluster needs the same one.
+func New(db *rqlite.Client, blobs blob.Store, master *blob.MasterKey) *Store {
+	return &Store{db: db, blobs: blobs, master: master, Now: time.Now}
 }
 
 // Email, Mailbox and Thread ids are per-account counters. To the outside they
