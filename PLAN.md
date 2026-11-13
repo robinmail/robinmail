@@ -134,11 +134,26 @@ send the FCrDNS hostname, score headers need
 
 Estimates assume focused work. About 15 weeks in total.
 
-### Phase 0: spike — 1 day
+### Phase 0: spike — done
 
-- rqlite: write the delivery batch (counters, thread lookup, UID, change log)
-  as one atomic request and confirm it holds under concurrent deliveries.
-- Exit: a short note in this file, and the decisions table corrected.
+Question: can a delivery be one atomic rqlite request? Yes.
+`spike/rqlite/main.go` shows how; phase 1 turns it into `internal/store` and
+deletes it.
+
+- One `POST /db/request?transaction` holds the whole delivery: insert the
+  `delivered` key, bump the account counters, insert the email with its thread
+  chosen by a subquery on `thread_ref`, take `uidnext`, write `changes`, and a
+  final `SELECT` that returns the new ids.
+- A statement error rolls the whole batch back. A repeated delivery key fails
+  on the first statement with `UNIQUE constraint failed`, which is how a retry
+  is recognised.
+- Tested on rqlite 10.7.1, one node in Docker: 600 replies from 32 workers,
+  each sent twice. 600 stored, 600 refused, ids, UIDs and modseq without gaps
+  or doubles, every reply in its parent's thread.
+- Not measured: speed on a three-node cluster. The 2500 requests a second seen
+  here is one node on a laptop. Phase 4 measures it.
+- Unused counter values: every delivery takes a thread id, also when it joins
+  an existing thread. Thread ids have gaps; Email ids and UIDs do not.
 
 ### Phase 1: store and ported packages — 2 weeks
 
@@ -198,6 +213,5 @@ Estimates assume focused work. About 15 weeks in total.
 
 ## Open questions
 
-- The spike in phase 0.
 - Which S3 store to run in the cluster test: Garage is assumed.
 - Where phase 5 gets tested against real providers: which host and domain.
