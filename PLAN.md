@@ -29,9 +29,11 @@ This is a learning project. There is no production target yet.
 | Spam and mail auth | Rspamd over HTTP | As in owl, including its lessons (below). |
 | Config | JSON | As in owl. |
 | Passwords | Argon2id, PHC string | As in owl. |
+| Accounts and login | Built in. App passwords for IMAP and SMTP, TOTP for web login, optional OIDC login for the webmail (phase 7). No Keycloak or other identity service required | Mail clients log in with a password and do not speak OIDC, so robinmail needs its own accounts anyway. OIDC stays generic, so Keycloak, Authentik or Zitadel can be plugged in. |
 
-Not in scope: POP3, Sieve, CalDAV/CardDAV, quotas, full-text search (first
-version filters on indexed columns only), migration tooling.
+Not in scope: POP3, CalDAV/CardDAV, migration tooling. Sieve, quotas and
+full-text search wait for phase 8; until then queries filter on indexed
+columns only.
 
 Accepted trade-off: every write goes through the one rqlite leader, also from
 another zone. Fine at this scale. If it ever is not, accounts can be spread
@@ -152,9 +154,17 @@ the Rspamd lessons: defer on greylist only when the `GREYLIST` symbol fired,
 send the FCrDNS hostname, score headers need
 `contrib/rspamd/local.d/milter_headers.conf`.
 
+Every protocol package also gets tests written from the RFC, not from our
+own behaviour. Each names the RFC and section it checks and uses the RFC's
+examples or test vectors where it has them. A known deviation keeps a test
+that states it and why.
+
 ## Phases
 
-Estimates assume focused work. About 16 weeks in total.
+Each phase is built by its own session and ends in something shown working.
+The week estimates from owl's plan are gone: phases 0 and 1 took well under
+an hour of session time each. What takes real time is review and testing
+against real providers.
 
 ### Phase 0: spike — done
 
@@ -217,29 +227,29 @@ Built as follows, where it differs from the above:
 - Not built: the blob sweeper (see open questions), mailbox destroy, and
   leader following and blob replication (phase 4). `serve` is phase 2.
 
-### Phase 2: inbound SMTP, Rspamd, delivery — 4 days
+### Phase 2: inbound SMTP, Rspamd, delivery
 
 - `serve` with the ported SMTP listener, Rspamd scan, delivery to Inbox or Junk.
 - Exit: owl's end-to-end test passes here: `swaks` mail lands with score
   headers, GTUBE gets `550`.
 
-### Phase 3: JMAP read side and webmail — 5 weeks
+### Phase 3: JMAP read side and webmail
 
-- `internal/jmap`, 2 weeks: session, request handling with result references
+- `internal/jmap`: session, request handling with result references
   and limits, `Mailbox/get|changes|query`, `Thread/get`,
   `Email/get|query|changes`, `Email/set` for keywords, `mailboxIds` and
   destroy, `Mailbox/set`, blob download.
-- `internal/message`, 1 week: MIME to body structure, charsets through
+- `internal/message`: MIME to body structure, charsets through
   `x/text`, sanitised HTML view for a sandboxed iframe (allowlist on
   `x/net/html`, CSP, remote images off by default).
 - `internal/web`: login, sessions, `Origin` check, serving the embedded app
   (in development Vite's dev server proxies the API paths to Go instead).
-- `web/`, 2 weeks: login, mailbox list, message list, thread view, labels,
+- `web/`: login, mailbox list, message list, thread view, labels,
   attachment download, mark read, flag, move, delete.
 - Exit: browse and manage mail in the browser; the same session answers raw
   JMAP from `curl`.
 
-### Phase 4: cluster and blob replication — 2 weeks
+### Phase 4: cluster and blob replication
 
 - Three rqlite nodes and three robinmail nodes in Docker Compose.
 - robinmail follows rqlite leader changes and retries safely.
@@ -253,7 +263,7 @@ Built as follows, where it differs from the above:
   catches up on the blobs it missed, and the webmail keeps working on another
   node.
 
-### Phase 5: outbound, submission, compose — 3 weeks
+### Phase 5: outbound, submission, compose
 
 - Submission on 465 and 587, outbound through Rspamd for DKIM, queue in
   `submission` (a node claims a row for a limited time), MX delivery with
@@ -263,12 +273,35 @@ Built as follows, where it differs from the above:
 - Exit: send between two robinmail clusters; an unreachable host is retried
   and bounces; a killed node does not lose queued mail.
 
-### Phase 6: push and IMAP — 3 weeks
+### Phase 6: push and IMAP
 
 - JMAP push over EventSource. A node polls `modseq` for the accounts that have
   a connection open on it.
 - IMAP4rev1 on 993 with `IDLE`, `UIDPLUS`, `MOVE`, `SPECIAL-USE`, `CONDSTORE`.
 - Exit: Thunderbird and iOS Mail sync, move, flag and see new mail arrive.
+
+### Phase 7: auth
+
+- App passwords: one per device, for IMAP and SMTP submission, revocable.
+  The account password then only opens the webmail.
+- TOTP (RFC 6238) for web login, with recovery codes.
+- Optional OIDC login for the webmail against any provider: authorization
+  code flow with PKCE, ID token checked with our own JWT and JWKS code.
+- Login rate limits kept in rqlite so they hold across nodes.
+- Exit: Thunderbird logs in with an app password and not with the account
+  password; web login asks for TOTP; a Keycloak container logs a user in
+  through OIDC.
+
+### Phase 8: completeness
+
+- Aliases and catch-all addresses.
+- JMAP `VacationResponse`.
+- Filters: Sieve (RFC 5228) run at delivery, managed over JMAP (RFC 9661).
+- Full-text search behind `Email/query` and IMAP `SEARCH`.
+- Quotas (RFC 9425).
+- MTA-STS policy serving, TLS-RPT, client autoconfig.
+- Admin commands, backup and restore of rqlite plus blobs.
+- Exit: each item shown working with a test.
 
 ## Open questions
 
