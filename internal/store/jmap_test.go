@@ -159,6 +159,21 @@ func TestQueryEmails(t *testing.T) {
 		t.Error("unknown sort accepted")
 	}
 
+	// Emails that tie on every comparator come in id order, in the direction
+	// of the first comparator: three emails of one second, newest first.
+	tie := account(t, s)
+	var tied []int64
+	for i := 0; i < 3; i++ {
+		tied = append(tied, deliver(t, s, tie, Message{ReceivedAt: day(1), Raw: msg(fmt.Sprintf("tie%d@x", i), "same")}).ID)
+	}
+	res, err := s.QueryEmails(ctx, tie.ID, EmailQuery{Limit: -1, Sort: []Sort{{Property: "receivedAt"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want(t, "ties, descending", res.IDs, []int64{tied[2], tied[1], tied[0]})
+	res, _ = s.QueryEmails(ctx, tie.ID, EmailQuery{Limit: -1, Sort: []Sort{{Property: "subject", Ascending: true}}})
+	want(t, "ties, ascending", res.IDs, tied)
+
 	// collapseThreads: of e1 and e3 only the one that sorts first stays.
 	want(t, "collapsed, newest first", ids(EmailQuery{CollapseThreads: true}), list(e4, e3, e2))
 	want(t, "collapsed, oldest first", ids(EmailQuery{CollapseThreads: true, Sort: []Sort{{Property: "receivedAt", Ascending: true}}}),
@@ -166,7 +181,7 @@ func TestQueryEmails(t *testing.T) {
 	want(t, "collapsed after filter", ids(EmailQuery{CollapseThreads: true, Filter: &Filter{NotKeyword: ptr("$seen")}}), list(e2, e1))
 
 	// Window and total.
-	res, err := s.QueryEmails(ctx, a.ID, EmailQuery{Offset: 1, Limit: 2, Total: true})
+	res, err = s.QueryEmails(ctx, a.ID, EmailQuery{Offset: 1, Limit: 2, Total: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,16 +447,26 @@ func TestChangesOf(t *testing.T) {
 	wantErr(t, "unknown account", err, ErrNoAccount)
 
 	// After trimming, a state the log no longer covers cannot be answered.
-	s.Now = func() time.Time { return time.Now().Add(40 * 24 * time.Hour) }
-	deliver(t, s, a, Message{Raw: msg("c9@x", "late")})
-	s.Now = time.Now
-	if _, err := s.TrimChanges(ctx, time.Now().Add(24*time.Hour)); err != nil {
-		t.Fatal(err)
+	// Only this account is trimmed: the database is shared with other tests.
+	n, err := s.TrimAccountChanges(ctx, a.ID, time.Now().Add(time.Hour))
+	if err != nil || n == 0 {
+		t.Fatalf("trim: %d %v", n, err)
 	}
 	_, _, _, err = s.ChangesOf(ctx, a.ID, "Email", start, 0)
 	wantErr(t, "trimmed", err, ErrCannotCalculateChanges)
+	_, _, _, err = s.ChangesOf(ctx, a.ID, "Email", end-1, 0)
+	wantErr(t, "just before the trim point", err, ErrCannotCalculateChanges)
 	if _, _, _, err = s.ChangesOf(ctx, a.ID, "Email", end, 0); err != nil {
 		t.Errorf("from the trim point: %v", err)
+	}
+	// Another account keeps its log.
+	other := account(t, s)
+	deliver(t, s, other, Message{Raw: msg("keep@x", "keep")})
+	if n, err := s.TrimAccountChanges(ctx, a.ID, time.Now().Add(time.Hour)); err != nil || n != 0 {
+		t.Errorf("second trim: %d %v", n, err)
+	}
+	if _, _, _, err = s.ChangesOf(ctx, other.ID, "Email", 1, 0); err != nil {
+		t.Errorf("the other account was trimmed: %v", err)
 	}
 }
 

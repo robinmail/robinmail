@@ -101,12 +101,23 @@ func (s *Store) Changes(ctx context.Context, account string, since int64) (Chang
 // all accounts, and returns how many. Each account remembers the highest
 // modseq it lost, so Changes can refuse a state from before that.
 func (s *Store) TrimChanges(ctx context.Context, before time.Time) (int64, error) {
+	return s.trimChanges(ctx, "", before)
+}
+
+// TrimAccountChanges is TrimChanges for one account.
+func (s *Store) TrimAccountChanges(ctx context.Context, account string, before time.Time) (int64, error) {
+	return s.trimChanges(ctx, account, before)
+}
+
+// trimChanges trims one account, or all of them when account is empty.
+func (s *Store) trimChanges(ctx context.Context, account string, before time.Time) (int64, error) {
 	t := before.Unix()
 	res, err := s.db.Execute(ctx,
 		rqlite.Stmt(`UPDATE account SET trimmed_modseq = max(trimmed_modseq,
 				(SELECT max(c.modseq) FROM changes c WHERE c.account_id = account.id AND c.at < ?))
-			WHERE EXISTS (SELECT 1 FROM changes c WHERE c.account_id = account.id AND c.at < ?)`, t, t),
-		rqlite.Stmt(`DELETE FROM changes WHERE at < ?`, t))
+			WHERE (? = '' OR id = ?)
+				AND EXISTS (SELECT 1 FROM changes c WHERE c.account_id = account.id AND c.at < ?)`, t, account, account, t),
+		rqlite.Stmt(`DELETE FROM changes WHERE at < ? AND (? = '' OR account_id = ?)`, t, account, account))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}

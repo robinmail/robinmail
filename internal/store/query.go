@@ -193,8 +193,9 @@ func (b *sqlBuilder) where(f *Filter) (string, error) {
 	return "(" + strings.Join(c, " AND ") + ")", nil
 }
 
-// orderBy turns comparators into an ORDER BY list. The id comes last, so
-// the order is total and a window is stable between calls.
+// orderBy turns comparators into an ORDER BY list. The id comes last, in
+// the direction of the first comparator, so the order is total and a
+// window is stable between calls.
 func (b *sqlBuilder) orderBy(sorts []Sort) (string, error) {
 	if len(sorts) == 0 {
 		return `e.received_at DESC, e.id DESC`, nil
@@ -224,6 +225,11 @@ func (b *sqlBuilder) orderBy(sorts []Sort) (string, error) {
 			expr += ` DESC`
 		}
 		parts = append(parts, expr)
+	}
+	// Ids go up with arrival, and several emails arrive within one second:
+	// a list that is newest first should be so among those too.
+	if !sorts[0].Ascending {
+		return strings.Join(parts, ", ") + `, e.id DESC`, nil
 	}
 	return strings.Join(parts, ", ") + `, e.id`, nil
 }
