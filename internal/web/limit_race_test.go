@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -66,5 +67,26 @@ func TestCodeRateLimitHoldsForABurst(t *testing.T) {
 	wg.Wait()
 	if n := refused.Load(); n > maxFailsPerCode {
 		t.Errorf("%d codes were tried in one burst; the limit is %d per window", n, maxFailsPerCode)
+	}
+}
+
+// The limit per IP counts an IPv6 /64 as one client: whoever has one
+// address in it has them all.
+func TestLoginRateLimitCountsAnIPv6Prefix(t *testing.T) {
+	st := newSite(t)
+	refused := 0
+	for i := 0; i < maxFailsPerIP+10; i++ {
+		// A new address of the same /64 and a new name with every guess.
+		rec := st.login(tlsBase, fmt.Sprintf("user%d@example.test", i), "a guess", from(fmt.Sprintf("[2001:db8:1:2::%x]:4000", i+1)))
+		if rec.Code == http.StatusTooManyRequests {
+			refused++
+		}
+	}
+	if refused != 10 {
+		t.Errorf("%d of the guesses past the limit were refused, want 10", refused)
+	}
+	// Another /64 is another client.
+	if rec := st.login(tlsBase, "anna@example.test", "a guess", from("[2001:db8:1:3::1]:4000")); rec.Code != http.StatusUnauthorized {
+		t.Errorf("a guess from another /64: %d", rec.Code)
 	}
 }

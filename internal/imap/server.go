@@ -28,6 +28,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+
+	"github.com/mikepage/robinmail/internal/ipkey"
 	"github.com/mikepage/robinmail/internal/metrics"
 	"log/slog"
 	"net"
@@ -152,6 +154,8 @@ func (s *Server) Serve(l net.Listener) error {
 		delay = 0
 		metrics.IMAPConnections.Inc()
 		ip := remoteIP(nc)
+		// The limit per address counts an IPv6 /64 as one client.
+		limitKey := ipkey.Of(ip)
 		s.mu.Lock()
 		var refuse string
 		switch {
@@ -159,14 +163,14 @@ func (s *Server) Serve(l net.Listener) error {
 			refuse = "the server is shutting down"
 		case len(s.conns) >= s.MaxConnections:
 			refuse = "too many connections"
-		case s.perIP[ip] >= s.MaxConnsPerIP:
+		case s.perIP[limitKey] >= s.MaxConnsPerIP:
 			refuse = "too many connections from your address"
 		}
 		var c *conn
 		if refuse == "" {
 			c = newConn(s, nc, ip)
 			s.conns[c] = struct{}{}
-			s.perIP[ip]++
+			s.perIP[limitKey]++
 			s.wg.Add(1)
 		}
 		s.mu.Unlock()
@@ -185,8 +189,8 @@ func (s *Server) Serve(l net.Listener) error {
 			c.serve()
 			s.mu.Lock()
 			delete(s.conns, c)
-			if s.perIP[ip]--; s.perIP[ip] <= 0 {
-				delete(s.perIP, ip)
+			if s.perIP[limitKey]--; s.perIP[limitKey] <= 0 {
+				delete(s.perIP, limitKey)
 			}
 			if c.countedUser != "" {
 				if s.perUser[c.countedUser]--; s.perUser[c.countedUser] <= 0 {

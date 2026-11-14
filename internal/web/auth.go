@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mikepage/robinmail/internal/address"
+	"github.com/mikepage/robinmail/internal/ipkey"
 	"github.com/mikepage/robinmail/internal/store"
 	"github.com/mikepage/robinmail/internal/users"
 )
@@ -136,7 +137,12 @@ func (s *Server) limitMail(key string) limit {
 func (s *Server) limitCode(key string) limit {
 	return limit{s.byCode, key, codeKey(key), maxFailsPerCode}
 }
-func (s *Server) limitIP(ip string) limit { return limit{s.byIP, ip, ipKey(ip), maxFailsPerIP} }
+
+// limitIP is the limit for a client address. An IPv6 /64 counts as one.
+func (s *Server) limitIP(ip string) limit {
+	ip = ipkey.Of(ip)
+	return limit{s.byIP, ip, ipKey(ip), maxFailsPerIP}
+}
 
 // blocked asks whether any of the limits is reached, and for how long. It
 // also returns what the shared counters hold, for cleared.

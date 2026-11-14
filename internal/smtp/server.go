@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/mikepage/robinmail/internal/ipkey"
 	"github.com/mikepage/robinmail/internal/metrics"
 	"io"
 	"log/slog"
@@ -245,6 +246,8 @@ func (s *Server) handle(c net.Conn) {
 	defer c.Close()
 	ip := remoteIP(c)
 	key := ip.String()
+	// The limit per address counts an IPv6 /64 as one client.
+	limitKey := ipkey.Of(key)
 
 	select {
 	case s.sem <- struct{}{}:
@@ -267,7 +270,7 @@ func (s *Server) handle(c net.Conn) {
 		implicit = &st
 	}
 	s.mu.Lock()
-	if s.perIP[key] >= s.MaxConnsPerIP {
+	if s.perIP[limitKey] >= s.MaxConnsPerIP {
 		s.mu.Unlock()
 		c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		io.WriteString(c, "421 4.7.0 Too many connections from your address\r\n")
@@ -276,13 +279,13 @@ func (s *Server) handle(c net.Conn) {
 	sess := &session{srv: s, ip: ip, log: s.Logger.With("remote", key)}
 	sess.setConn(c)
 	sess.tls = implicit
-	s.perIP[key]++
+	s.perIP[limitKey]++
 	s.sessions[sess] = struct{}{}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		if s.perIP[key]--; s.perIP[key] <= 0 {
-			delete(s.perIP, key)
+		if s.perIP[limitKey]--; s.perIP[limitKey] <= 0 {
+			delete(s.perIP, limitKey)
 		}
 		delete(s.sessions, sess)
 		s.mu.Unlock()
