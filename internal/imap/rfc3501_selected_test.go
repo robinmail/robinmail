@@ -10,7 +10,9 @@ import (
 // More of RFC 3501: the commands of the selected state (6.4.4 to 6.4.8),
 // the data of 7.4.2, and the syntax rules of sections 4 and 9.
 
-func day1994(d int, month time.Month) time.Time { return time.Date(1994, month, d, 12, 0, 0, 0, time.UTC) }
+func day1994(d int, month time.Month) time.Time {
+	return time.Date(1994, month, d, 12, 0, 0, 0, time.UTC)
+}
 
 // searchBox is a mailbox whose messages differ in what SEARCH looks at.
 func searchBox(e *env) {

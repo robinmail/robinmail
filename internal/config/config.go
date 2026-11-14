@@ -33,6 +33,7 @@ type Config struct {
 	Rspamd        Rspamd     `json:"rspamd"`
 	Submission    Submission `json:"submission"`
 	Outbound      Outbound   `json:"outbound"`
+	IMAP          IMAP       `json:"imap"`
 	Dev           Dev        `json:"dev"`
 }
 
@@ -47,6 +48,9 @@ type Dev struct {
 	// of the outbound client, without message content and without
 	// credentials.
 	SMTPTrace bool `json:"smtp_trace"`
+	// IMAPTrace logs every IMAP command and tagged reply, without
+	// literals and without the arguments of LOGIN and AUTHENTICATE.
+	IMAPTrace bool `json:"imap_trace"`
 }
 
 // The domains the server accepts mail for are not in this file: the nodes of
@@ -119,6 +123,22 @@ type Submission struct {
 	// UndoSeconds is how long a message submitted over JMAP waits before
 	// it is sent, so the user can still cancel it. [10]; 0 sends at once.
 	UndoSeconds *int `json:"undo_seconds"`
+}
+
+// IMAP configures the IMAP listeners. Both need a certificate (tls):
+// nobody can log in without TLS. Without a listener IMAP is off.
+type IMAP struct {
+	// ListenTLS is the listener with TLS from the first byte, usually
+	// ":993". It is the one to give to mail clients (RFC 8314).
+	ListenTLS string `json:"listen_tls"`
+	// Listen is the listener that starts in the clear and offers
+	// STARTTLS, usually ":143". Until STARTTLS it announces LOGINDISABLED.
+	Listen string `json:"listen"`
+	// Limits on connections: in all [1000], from one address [20], logged
+	// in as one user [20].
+	MaxConnections        int `json:"max_connections"`
+	MaxConnectionsPerIP   int `json:"max_connections_per_ip"`
+	MaxConnectionsPerUser int `json:"max_connections_per_user"`
 }
 
 // Outbound configures the queue that delivers to other servers.
@@ -262,6 +282,12 @@ func Load(path string) (*Config, error) {
 	if c.Submission.UndoSeconds == nil {
 		ten := 10
 		c.Submission.UndoSeconds = &ten
+	}
+	if (c.IMAP.Listen != "" || c.IMAP.ListenTLS != "") && !c.TLS.ACME && c.TLS.CertFile == "" {
+		return nil, errors.New(path + ": imap listeners need a certificate (tls)")
+	}
+	if c.IMAP.MaxConnections < 0 || c.IMAP.MaxConnectionsPerIP < 0 || c.IMAP.MaxConnectionsPerUser < 0 {
+		return nil, errors.New(path + ": limits cannot be negative")
 	}
 	if c.Outbound.Concurrency < 0 || c.Outbound.PerDestination < 0 || c.Dev.RetrySeconds < 0 {
 		return nil, errors.New(path + ": limits cannot be negative")

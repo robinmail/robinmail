@@ -42,6 +42,13 @@
     "max_recipients_per_hour": 300,
     "undo_seconds": 10
   },
+  "imap": {
+    "listen_tls": ":993",
+    "listen": "",
+    "max_connections": 1000,
+    "max_connections_per_ip": 20,
+    "max_connections_per_user": 20
+  },
   "outbound": {
     "concurrency": 8,
     "per_destination": 2,

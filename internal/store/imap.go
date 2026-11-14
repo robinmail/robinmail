@@ -515,3 +515,9 @@ func (s *Store) expunge(ctx context.Context, account string, mailbox int64, rang
 	}
 	return asInt(res[len(res)-1].Values[0][0]), nil
 }
+
+// MailboxUIDValidity returns a mailbox's UIDVALIDITY.
+func (s *Store) MailboxUIDValidity(ctx context.Context, account string, mailbox int64) (uint32, error) {
+	r, err := s.targetOnly(ctx, account, mailbox)
+	return r.UIDValidity, err
+}

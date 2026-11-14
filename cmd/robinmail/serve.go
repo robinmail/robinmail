@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mikepage/robinmail/internal/delivery"
+	"github.com/mikepage/robinmail/internal/imap"
 	"github.com/mikepage/robinmail/internal/jmap"
 	"github.com/mikepage/robinmail/internal/notify"
 	"github.com/mikepage/robinmail/internal/queue"
@@ -33,6 +34,9 @@ var (
 	// onSubmissionListen is told the STARTTLS and the implicit TLS
 	// submission listener, each nil without one.
 	onSubmissionListen func(starttls, implicit net.Addr)
+	// onIMAPListen is told the STARTTLS and the implicit TLS IMAP
+	// listener, each nil without one.
+	onIMAPListen func(starttls, implicit net.Addr)
 	// queueSetup lets a test give the outbound worker its own DNS, dialer
 	// and clock before it starts.
 	queueSetup func(*queue.Worker)
@@ -211,6 +215,53 @@ func (a *app) serve(stop func()) error {
 		}
 	}
 
+	// IMAP: 993 with TLS from the start, 143 with STARTTLS. One server, so
+	// the limits hold for both together.
+	var imapServer *imap.Server
+	imapErrc := make(chan error, 2)
+	if a.cfg.IMAP.Listen != "" || a.cfg.IMAP.ListenTLS != "" {
+		if tc == nil {
+			return errors.New("imap listeners need a certificate")
+		}
+		maxMessage := a.cfg.SMTP.MaxMessageBytes
+		if maxMessage == 0 {
+			maxMessage = 25 << 20
+		}
+		imapServer = &imap.Server{
+			Hostname:        a.cfg.Hostname,
+			Backend:         &imapBackend{st: a.store, hub: hub, login: site.Login, maxMessage: maxMessage},
+			TLSConfig:       tc,
+			Logger:          log,
+			MaxMessageBytes: maxMessage,
+			MaxConnections:  a.cfg.IMAP.MaxConnections,
+			MaxConnsPerIP:   a.cfg.IMAP.MaxConnectionsPerIP,
+			MaxConnsPerUser: a.cfg.IMAP.MaxConnectionsPerUser,
+			Trace:           a.cfg.Dev.IMAPTrace,
+		}
+		var plain, implicit net.Addr
+		if addr := a.cfg.IMAP.Listen; addr != "" {
+			il, err := net.Listen("tcp", addr)
+			if err != nil {
+				return err
+			}
+			plain = il.Addr()
+			log.Info("imap listening", "addr", plain.String(), "tls", "starttls")
+			go func() { imapErrc <- imapServer.Serve(il) }()
+		}
+		if addr := a.cfg.IMAP.ListenTLS; addr != "" {
+			il, err := net.Listen("tcp", addr)
+			if err != nil {
+				return err
+			}
+			implicit = il.Addr()
+			log.Info("imap listening", "addr", implicit.String(), "tls", "implicit")
+			go func() { imapErrc <- imapServer.Serve(tls.NewListener(il, tc)) }()
+		}
+		if onIMAPListen != nil {
+			onIMAPListen(plain, implicit)
+		}
+	}
+
 	// The outbound queue. Every node works it; a row belongs to whoever
 	// holds its claim.
 	worker := &queue.Worker{
@@ -294,6 +345,8 @@ func (a *app) serve(stop func()) error {
 		return err
 	case err := <-subErr:
 		return err
+	case err := <-imapErrc:
+		return err
 	case <-a.ctx.Done():
 	}
 	stop()
@@ -316,6 +369,11 @@ func (a *app) serve(stop func()) error {
 	if submission != nil {
 		if err := submission.Shutdown(sctx); err != nil {
 			log.Warn("closed submission sessions that did not finish in time")
+		}
+	}
+	if imapServer != nil {
+		if err := imapServer.Shutdown(sctx); err != nil {
+			log.Warn("closed imap sessions that did not finish in time")
 		}
 	}
 	// An attempt that is under way is cut off; its claim runs out and the
