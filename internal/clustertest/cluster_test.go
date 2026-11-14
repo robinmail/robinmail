@@ -34,6 +34,7 @@ func TestCluster(t *testing.T) {
 	t.Run("h: a quota under concurrent delivery through three nodes", quotaAcrossNodes)
 	t.Run("i: Sieve under concurrent delivery through three nodes", sieveAcrossNodes)
 	t.Run("j: a scrub replaces a damaged blob file from another node", scrubRepairs)
+	t.Run("k: rqlite is closed to whoever has no login or no certificate", rqliteClosed)
 }
 
 func report(t *testing.T, st *stream, d time.Duration) {

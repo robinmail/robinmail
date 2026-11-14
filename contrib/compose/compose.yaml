@@ -24,6 +24,13 @@
 # remove them, and their servers' queue workers take any row they find,
 # so nothing a person looks at lives there. To empty them:
 #   docker compose -f contrib/compose/compose.yaml up -d --force-recreate rqlite rqlite-b
+#
+# These rqlite services stay simple on purpose: no login and no TLS,
+# published on 127.0.0.1 only. That is the one setup in which robinmail does
+# not warn about its connection to rqlite: whoever reaches rqlite's HTTP
+# port owns every account, and here that is whoever is on this machine. A
+# deployment locks rqlite down (PLAN.md, "rqlite, locked down");
+# contrib/compose/cluster.yaml shows how.
 name: robinmail
 
 services:

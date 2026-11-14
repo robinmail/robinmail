@@ -170,6 +170,19 @@ func rqliteHost(n int) string { return fmt.Sprintf("rqlite-%d-db", n+1) }
 // checked against the cluster's CA, with the login of the given secrets
 // file, or none for "".
 func rqliteDo(from string, n int, method, path, authFile string, body []byte) (int, []byte, error) {
+	user, pass := "", ""
+	if authFile != "" {
+		var err error
+		if user, pass, err = login(authFile); err != nil {
+			return 0, nil, err
+		}
+	}
+	return rqliteDoAs(from, n, method, path, user, pass, body)
+}
+
+// rqliteDoAs is rqliteDo with a user and password given; an empty user
+// sends no login.
+func rqliteDoAs(from string, n int, method, path, user, pass string, body []byte) (int, []byte, error) {
 	pool, err := rqliteCA()
 	if err != nil {
 		return 0, nil, err
@@ -197,11 +210,7 @@ func rqliteDo(from string, n int, method, path, authFile string, body []byte) (i
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if authFile != "" {
-		user, pass, err := login(authFile)
-		if err != nil {
-			return 0, nil, err
-		}
+	if user != "" {
 		req.SetBasicAuth(user, pass)
 	}
 	resp, err := hc.Do(req)

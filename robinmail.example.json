@@ -4,7 +4,9 @@
   "master_key_file": "master.key",
   "rqlite": {
     "url": "http://127.0.0.1:4001",
-    "urls": []
+    "urls": [],
+    "auth_file": "",
+    "ca_file": ""
   },
   "node": {
     "id": "",

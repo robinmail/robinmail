@@ -21,6 +21,7 @@ This is a learning project. There is no production target yet.
 | Metadata | One rqlite cluster (SQLite replicated with Raft), one database for all accounts | Self-hosted, replicated, automatic leader failover. No replication, lease or consensus code of our own. |
 | Message files | Immutable blobs on the local disk of every node, named by account and SHA-256 of the plaintext | No storage service to run. robinmail replicates blobs itself (phase 4): every node holds every blob, a write is acknowledged once 2 nodes have it, and a background check fetches missing ones. |
 | Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has. What rqlite holds is not encrypted by robinmail: the cached header fields and previews, and since phase 8 the full-text index, from which the words of every message can be read | Protects the blobs against stolen disks and backups. Does not protect against a compromised running server, which holds the master key, nor does it cover rqlite's files: those need an encrypted disk. |
+| Access to rqlite | rqlite stays a separate service, locked down: one rqlite next to each robinmail node with its HTTP API on loopback, a login on that API with only the permissions robinmail needs, and mutual TLS between rqlite nodes (phase 8, "rqlite, locked down") | Whoever reaches rqlite's HTTP port without a login reads and writes every account and can admit a node. Embedding the database in robinmail would take the port away altogether; it was considered and put off, because it needs dependencies beyond the standard library and `golang.org/x` (SQLite and a Raft implementation) and a new proof of replication, which phase 4 gave for rqlite. |
 | Nodes | Not stateless: metadata is in rqlite, blobs are on each node's disk. Any node serves any account | No owner per account and no forwarding. rqlite's leader orders the writes. |
 | Between nodes | Nodes find each other through the `node` table in rqlite and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates whose fingerprint is in that table | No CA and no shared secret to distribute. Who may join is decided by who can write to rqlite, which holds everything anyway. |
 | Mailboxes | An Email can be in several mailboxes (labels) | Full JMAP `mailboxIds`. |
@@ -675,8 +676,6 @@ Built as follows:
   - JMAP writes other than delivery are not sent again after an unknown
     outcome: a client can see `serverFail` during a leader change and has
     to sync and retry.
-  - rqlite in `cluster.yaml` has no authentication and no TLS. Production
-    needs both, since the node table is what admits a node.
   - Clock differences between nodes: `received_at`, session expiry and the
     blob grace period use each node's own clock.
 
@@ -1973,7 +1972,7 @@ Test runs at the end of the phase: `go vet` and `go test -race ./...`
 clean; `make`; the browser suite 27 passed (one earlier run had one
 failure in `mail.spec.ts`, the step that loads remote images, which
 passed alone and in the next full run: a flake that is not understood);
-the cluster suite a to j; the lab suite with `TestPhase8` and
+the cluster suite a to j (a to k after the lockdown); the lab suite with `TestPhase8` and
 `TestThunderbirdAutoconfig`; JMAP-TestSuite 119 pass, 7 fail.
 
 Built as follows:
@@ -2663,6 +2662,99 @@ Built as follows:
     `user remove` is one large batch for a large account. The periodic
     scrub has no rate limit. `/metrics` has no histograms: no latencies.
     No alerting; `health` is what a monitor calls.
+
+- **rqlite, locked down.** Added to the phase after the rest: whoever
+  reaches rqlite's HTTP port without a login owns every account (the
+  password hashes, the wrapped keys, the index of every message's words,
+  the sessions) and, through the `node` table, can admit a node that the
+  others then send blobs to.
+  - **The deployment model.** Checked against rqlite 10.7.1's own flags
+    and answers, not from memory.
+    - One rqlite next to each robinmail node, and a robinmail node talks
+      to its own (`rqlite.url`). rqlite's HTTP API listens on loopback
+      (`-http-addr 127.0.0.1:4001`) and is not reachable from the
+      network. A write on a follower reaches the leader inside rqlite,
+      over the connection between the rqlite nodes.
+    - The HTTP API wants a login (`-auth <file>`). The file names a
+      user for robinmail with the permissions `execute`, `query`,
+      `backup` and `load` and no other: with it one cannot ask about or
+      change the members of the cluster (`status`, `join`, `remove`). A
+      second user with `join` is what an rqlite node joins as
+      (`-join-as`). An operator's user is separate.
+    - robinmail takes its login from a file (`rqlite.auth_file`, one
+      line `user:password`, for its owner only, like a key file): not
+      from a command line, and it is in no log and no error. A URL with
+      a password still works and is discouraged.
+    - rqlite nodes talk to each other (Raft and what they forward) over
+      mutual TLS: `-node-cert`, `-node-key`, `-node-ca-cert`,
+      `-node-verify-client`, with certificates of a CA of the cluster's
+      own. That port is the only one of rqlite's on the network.
+    - Where loopback is not possible, the API is HTTPS (`-http-cert`,
+      `-http-key`; `rqlite.ca_file` on robinmail's side) besides the
+      login.
+  - **In `contrib/compose/cluster.yaml`** containers have no loopback
+    to share, so each rqlite and its robinmail share a network of their
+    own, and rqlite's API listens on its name there only: not published,
+    not on the network the nodes share. It is HTTPS with a login on top,
+    which also exercises `ca_file`. `cluster.sh` makes the CA, a
+    certificate per rqlite node (for its Raft name and its API name,
+    server and client), the auth file with random passwords, and
+    robinmail's login file. rqlite's container runs as its own user and
+    reads its files through a mount, so those are world-readable in a
+    directory of their own: right for a developer's machine only.
+  - **What it costs.** Before, every robinmail node listed all three
+    rqlite nodes and used another when its own was away. Now a
+    robinmail node whose rqlite is down cannot work until it is back;
+    the other nodes carry on. In the cluster test that kills the rqlite
+    leader, the node next to it took 870 of 6094 deliveries and the
+    other two the rest; nothing was lost or doubled.
+  - **`internal/rqlite`.** Credentials go with every request to a node
+    of the config and nowhere else. With credentials a redirect is
+    followed only to a configured node (same scheme, host and port);
+    another target is an error that names it, and nothing is sent
+    there. Without credentials redirects are followed as before.
+    Credentials in a URL are taken out of it when the client is made,
+    so no error that names a node can show them. 401 and 403 are final
+    (not tried again, no other node asked) and say which setting to
+    look at. HTTPS with `ca_file` checks the nodes against that CA only.
+  - **What robinmail says.** `health` and `status` have a line `rqlite
+    link`: whether rqlite refuses a request without a login (robinmail
+    asks, with one unauthenticated read), whether the connection is
+    HTTPS, and whether it stays on this machine. `serve` logs the same
+    at start, as a warning when rqlite answers without a login or when a
+    plain connection leaves the machine. rqlite on loopback without a
+    login draws no warning: that is the development setup, and
+    `contrib/compose/compose.yaml` says so.
+  - **Tests.** `internal/rqlite`: a request without credentials, with a
+    wrong password and with a wrong user is refused, for reads, writes,
+    backup and load, once and with nothing served; nothing reaches a
+    foreign redirect target and the redirect is not followed; no error
+    of the client holds the password (a dead node, a timeout, URLs that
+    do not parse, a refusal); the CA; the credentials file and its
+    mode. `cmd/robinmail`: `auth_file` and `ca_file` reach the client;
+    the wording of the link in every case. **Cluster (k):** from a
+    container on the shared network the API of another node's rqlite
+    cannot be connected to, and the Raft port answers `certificate
+    required`; where the API is, no login, a wrong password and an
+    unknown user get 401 for query, execute, request, backup, nodes,
+    status and remove, and the write was not applied; robinmail's login
+    reads and writes and gets 401 for nodes, status and remove; an
+    rqlite node without TLS, one with a self-signed certificate, and one
+    with a certificate of the CA and no login all fail to join, and the
+    cluster has its three nodes afterwards. The whole cluster suite, a
+    to k, passes on this setup.
+  - **Not handled.** No client certificate from robinmail to rqlite
+    (rqlite's `-http-verify-client`): the login is the only thing the
+    API asks for. Passwords in rqlite's auth file are in the clear in
+    this cluster; rqlite also takes bcrypt hashes. No rotation of the
+    login or of the certificates without restarts. The "sink" server of
+    the cluster test keeps an rqlite without a login, on a network of
+    its own with its robinmail. The lab's rqlite has no login either and
+    is on the lab's one network, where every container of the lab
+    reaches it: the lab tests mail between servers, not this. robinmail
+    warns about both at start. With rqlite on loopback, anybody with a shell on the node is
+    still inside: the login then is what stands between a local user
+    and the database.
 
 - **Lab and cluster cases of phase 8.**
   - **Lab** (`TestPhase8`, `internal/labtest/phase8_test.go`), with

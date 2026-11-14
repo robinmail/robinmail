@@ -28,6 +28,9 @@ why. That file is the design document and the record of what was built and teste
   JMAP, the web login and the webmail. Standard library plus `golang.org/x`, nothing else.
 - **Metadata in rqlite** (SQLite replicated with Raft), reached over HTTP. Every write is
   one atomic batch; there are no interactive transactions.
+  Whoever reaches rqlite's HTTP port without a login owns every account, so a deployment
+  keeps it on loopback next to each node, with a login and with TLS between rqlite nodes
+  (PLAN.md, "rqlite, locked down"). The development services have neither.
 - **Messages as files** on each node's own disk, encrypted with a key per account. Nodes
   copy them to each other over mutual TLS. No object store.
 - **Any node serves any account.** A cluster is several robinmail nodes on one rqlite
