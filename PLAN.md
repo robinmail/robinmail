@@ -21,6 +21,7 @@ This is a learning project. There is no production target yet.
 | Message files | Immutable blobs on the local disk of every node, named by account and SHA-256 of the plaintext | No storage service to run. robinmail replicates blobs itself (phase 4): every node holds every blob, a write is acknowledged once 2 nodes have it, and a background check fetches missing ones. |
 | Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has | Protects against stolen disks and backups. Does not protect against a compromised running server, which holds the master key. |
 | Nodes | Not stateless: metadata is in rqlite, blobs are on each node's disk. Any node serves any account | No owner per account and no forwarding. rqlite's leader orders the writes. |
+| Between nodes | Nodes find each other through the `node` table in rqlite and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates whose fingerprint is in that table | No CA and no shared secret to distribute. Who may join is decided by who can write to rqlite, which holds everything anyway. |
 | Mailboxes | An Email can be in several mailboxes (labels) | Full JMAP `mailboxIds`. |
 | IMAP | Last phase, but UIDs exist from day one | No store migration later. |
 | Webmail | Vue single-page app in `web/`: plain Vite, Vue Router, Nuxt UI (without Nuxt). Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. Nuxt UI is MIT and has the dashboard and inbox components a mail client needs. |
@@ -72,8 +73,10 @@ Every mail table starts with `account_id`.
 | `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
 | `submission` | id, email_id, envelope, state, next_try, claimed_by, claimed_until | outbound queue (phase 5) |
 | `acme` | key, value | ACME account and certificates, shared by nodes (not built yet) |
+| `node` | id, address, cert, started_at, seen_at | the robinmail nodes: where the others reach each, the SHA-256 of its certificate, its heartbeat |
+| `login_failure` | key, started, count | failed logins per address and per IP in a 15 minute window, for all nodes together |
 | `guard` | ok | always empty; how a batch checks a precondition (below) |
-| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3) |
+| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3 and 3 to 4) |
 
 Rules:
 
@@ -105,7 +108,12 @@ Rules:
   row without a blob. A sweeper on every node removes that node's
   unreferenced blob files older than a day. It claims a file by renaming it
   aside, then looks at its age again and asks rqlite once more, so a
-  delivery of the same content at that moment keeps its blob.
+  delivery of the same content at that moment keeps its blob. In a cluster
+  each node sweeps only its own disk. A delivery on another node rewrites
+  the file, and so renews its time, on every node its push reaches, and is
+  only acknowledged when 2 nodes hold such a fresh copy; a node the push
+  missed may sweep its old copy and gets the blob back like any blob it
+  never had.
 - **Blob file format.** A 27-byte header (magic `RMB1`, chunk size, random
   nonce prefix), then the plaintext in 64 KiB chunks, each sealed on its own.
   The chunk's position and whether it is the last are part of its nonce;
@@ -118,8 +126,18 @@ Rules:
   partial failure makes no second copy (owl did). The key is the SHA-256 of
   the envelope sender and the message as received. It cannot be our queue id:
   a retry gets a new one.
-- **Reads** use rqlite's `weak` consistency. Change polling for push may use
-  `none` with a freshness bound.
+- **Reads** use rqlite's `weak` consistency: no Raft round trip, and a
+  leader that was just cut off can answer from slightly old data for about
+  a second. The sweeper's "is this blob still referenced" decides a
+  deletion and uses `strong`. The login failure counters use `none` with a
+  freshness bound of 5 seconds, so a login never waits for the leader.
+  Change polling for push may use `none` too.
+- **Writes and retries.** When a leader dies mid-write rqlite cannot say
+  whether the batch was applied. A batch is sent again only if a second run
+  is harmless: a delivery (its `delivered` row refuses the second run as a
+  whole), deletes and trims, rows set to given values. Everything that
+  takes a counter or carries a guard fails with "outcome unknown" instead
+  and the caller decides. The list is at `run` in `internal/store`.
 
 ## Layout
 
@@ -132,8 +150,10 @@ internal/smtp        ESMTP server, later client         port as is
 internal/rspamd      Rspamd client                      port as is
 internal/users       Argon2id hash and verify           port the hashing; storage moves to rqlite
 internal/delivery    recipient to mailbox               port; talks to a store interface, mailbox by role
-internal/rqlite      rqlite HTTP client                 new
-internal/blob        encrypted blob files on disk       new
+internal/rqlite      rqlite HTTP client for a cluster   new
+internal/blob        encrypted blob files on disk, replicated between nodes   new
+internal/cluster     node table, mutual TLS, blob transfer between nodes      new
+internal/clustertest tests against the Docker cluster   new; "make cluster-test"
 internal/store       schema and all mail operations     new, replaces owl's store
 internal/message     MIME to JMAP body structure, HTML view   new
 internal/jmap        JMAP core and mail, protocol only  new
@@ -142,8 +162,10 @@ internal/queue       outbound delivery                  new
 internal/imap        IMAP server                        new
 web/                 Vue webmail (Vite, Nuxt UI); src/jmap is the client, e2e the browser test
 Makefile             web build, binary with the webmail, tests, dev
+Dockerfile           the binary with the webmail in an image
 contrib/rspamd       Rspamd config                      port as is
 contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
+                     cluster.yaml, cluster.sh: three rqlite and three robinmail nodes
 contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev
 ```
 
@@ -245,8 +267,8 @@ Built as follows, where it differs from or adds to the above:
 - Accepted domains come from the `domain` table: `domain add|list|remove`.
   `domains` is gone from the config. `user add` needs the domain to exist
   and `domain remove` refuses one that still has users; both checks are
-  guards inside the batch. Delivery reads the table at most once per 30
-  seconds and keeps the last list when rqlite does not answer.
+  guards inside the batch. Delivery read the table at most once per 30
+  seconds; since phase 4 it reads it for every RCPT.
 - `<Postmaster>` without a domain goes to the first domain, by name, that
   has a `postmaster` account. owl used the first domain in the config.
 - Shutdown: on SIGINT or SIGTERM the listener closes, a session waiting for
@@ -476,7 +498,7 @@ Built as follows (the webmail in `web/`):
 - Not built: compose, reply, drafts (phase 5); push (phase 6); search in
   bodies (phase 8); drag and drop; an undo for delete.
 
-### Phase 4: cluster and blob replication
+### Phase 4: cluster and blob replication — done
 
 - Three rqlite nodes and three robinmail nodes in Docker Compose.
 - robinmail follows rqlite leader changes and retries safely.
@@ -489,6 +511,138 @@ Built as follows (the webmail in `web/`):
   acknowledged blob is readable from a surviving node, the killed node
   catches up on the blobs it missed, and the webmail keeps working on another
   node.
+
+Built as follows:
+
+- **rqlite client.** `rqlite.urls` lists several nodes, the nearest first.
+  The client stays with the node that answered last and moves on when it
+  stops answering. rqlite nodes hand a request to the leader themselves; a
+  redirect, if one comes, is followed with method and body kept. Tried
+  again, with a backoff of 50 ms to 1 s, for at most 15 seconds: every
+  read, and every request that provably never reached the log (connection
+  not made, redirect, "leader not found"). A write whose outcome is unknown
+  is sent again only when its batch is idempotent or guarded (rule "Writes
+  and retries"). 2 seconds to connect, 10 seconds per attempt. The client
+  does not learn who leads: a request through a follower costs one hop
+  inside rqlite.
+- **Membership.** `node` in the config: `id`, `listen`, `address`,
+  `blob_copies` (2), `repair_interval_seconds` (300). A node writes its row
+  at start and renews `seen_at` every 5 seconds. The row stays when the
+  node stops, so the others keep counting it; `node list`, `node remove`.
+  Without a `node` section an instance runs alone, as before.
+- **Between nodes: mutual TLS, pinned through the node table.** Each node
+  makes an ECDSA P-256 key and self-signed certificate once and keeps them
+  in its data directory (`node.key`, `node.crt`), so the server and the
+  commands on a node are the same node. Calls are HTTP over TLS 1.3 with a
+  certificate on both sides. A server accepts a client only if the
+  SHA-256 of its certificate is in the node table; a client accepts a
+  server only if it shows the certificate registered for the node it
+  called. Chosen over a shared secret: nothing to distribute, and rqlite
+  is already the place that must not be writable by strangers. An unknown
+  certificate makes a node read the table again, at most once a second.
+  Tested: no certificate, an unknown one, plain HTTP and a removed node get
+  no answer; a server with the wrong certificate gets no blob.
+- **Blob replication** (`blob.Replicated`). A write goes to the local disk
+  and is pushed, as the encrypted file it is, to all other registered nodes
+  at once (`PUT /v1/blob/<account>/<sha256>`). It returns when `blob_copies`
+  nodes, this one included, have it durably; with fewer nodes registered,
+  all of them. The pushes still running finish in the background. Too few
+  copies fails the write: SMTP answers `451` and the sender retries. A
+  node whose push failed is left out for 3 seconds, unless the write cannot
+  succeed without it. A read that finds no local file asks the other nodes
+  one by one (`GET`), keeps the file and serves it.
+- **Verification.** A received file, pushed or fetched, gets its name only
+  after the receiver decrypted it with the account's key and found the
+  SHA-256 of the plaintext equal to the name. A check without a key was
+  not worth having: every node holds the master key anyway.
+- **Anti-entropy.** At start and every `repair_interval_seconds` a node
+  lists, per account, the blobs emails refer to, compares that with its
+  disk and fetches what is missing. This is how a new node fills up, how a
+  node that was away or lost its disk catches up, and what covers a failed
+  push. Unreferenced files are not fetched. Command: `repair`.
+- **Per-node state that is now shared.** Login failures are counted in
+  `login_failure` as well as in memory, with the same limits; a login
+  without failures behind it costs one read the nearest rqlite node
+  answers from its own copy, and no write. The in-memory counters remain
+  as the fallback when rqlite does not answer. The domain list is no
+  longer cached: every RCPT reads it. Trim and sweep run on every node
+  unchanged (rule "Blobs" for why the sweep is safe). This was listed
+  under phase 7.
+- **Cluster in Docker.** `Dockerfile` builds the binary with the webmail.
+  `contrib/compose/cluster.yaml` runs three rqlite and three robinmail
+  nodes; `contrib/compose/cluster.sh up` makes a master key and a
+  certificate, starts them and adds a domain and four users. Rspamd is an
+  optional profile.
+- **Exit tests** (`internal/clustertest`, `make cluster-test`, skipped
+  without `ROBINMAIL_TEST_CLUSTER`). Senders deliver through all three
+  nodes to four accounts and send the very same message again, to the next
+  node, until it gets `250`. Run on rqlite 10.7.1, Docker Desktop on a
+  laptop:
+  - (a) rqlite leader killed for 15 seconds and started again: 6623
+    messages got `250` in 26 seconds, none got `4xx`; the longest time
+    without any `250` was 2.1 seconds, while robinmail waited for the new
+    leader. Every one of them is stored exactly once and reads back as
+    sent through each of the three robinmail nodes.
+  - (b) a robinmail node killed: 5101 messages got `250`, 132
+    attempts to the dead node got no answer and were sent again elsewhere;
+    0 lost, 0 doubled, read back through both survivors while the node was
+    still dead. Each survivor held a blob for every email. The session
+    cookie from a login on the killed node worked on the other two
+    (session, `Mailbox/get`, `Email/query`, `Email/get`, `Email/set`). By
+    the time the restarted node answered and was counted it had all 11724
+    blobs, and everything read back through it.
+  - (c) a node whose blob directory was removed: 17 seconds
+    later it had exactly the 11724 referenced blobs again (the pass ran
+    every 15 seconds in this cluster); then the other two robinmail nodes
+    were killed and it read all 11724 messages from its own disk.
+  - (d) a blob file removed on one node and the message read through that
+    node at once: answered in 5 ms with the message as sent, the file was back
+    on disk and the node logged the fetch from a peer.
+  - (e) throughput, each delivery a whole SMTP transaction that ends with
+    the blob on two nodes and one Raft write: 239
+    deliveries a second with 3 senders, 381 with 12, 469 with 48, with
+    about 3000 to 4000 emails per account. Phase 0 saw 2500 bare requests
+    a second on one rqlite node.
+- **What a network partition does.**
+  - A robinmail node that cannot reach a majority of rqlite: every write
+    waits 15 seconds and fails, so SMTP answers `451` and nothing is
+    acknowledged; reads fail too (logins, JMAP: 503). Nothing is served
+    from a stale copy, except the login failure counters for 5 seconds.
+  - A robinmail node that reaches rqlite but no other robinmail node:
+    it cannot put a blob on a second node, so it answers `451` and writes
+    no row. It still serves the mail whose blobs it has; a message whose
+    blob it lacks fails to open until a peer is back.
+  - Two robinmail nodes and an rqlite majority on one side: that side
+    works as a cluster with one node down. The third catches up through
+    the repair pass when it is back.
+  - An rqlite leader that was just cut off answers `weak` reads for about
+    a second from data that misses the newest writes (rule "Reads"). Its
+    own writes cannot commit.
+  - No side can acknowledge mail the other side does not get to know:
+    acknowledging needs a Raft majority and a second blob copy.
+- **Not handled.**
+  - A blob that was acknowledged on 2 nodes and whose 2 disks are both
+    lost before the third node fetched it is gone. `blob_copies: 3` closes
+    that at the price of refusing mail whenever one node is down.
+  - Damage to a file that is in place: the repair pass looks at names, not
+    content. A read of a damaged file fails and does not fall back to
+    another node. `verify` finds such files; removing the file and running
+    `repair` fixes it. There is no periodic scrub.
+  - A node that is gone for good stays in the node table until `node
+    remove`. That is harmless (2 of the remaining nodes still acknowledge)
+    but nothing does it automatically.
+  - While only one node has registered, it acknowledges with one copy.
+    Start the first two nodes before taking mail.
+  - Mail in flight on a node that dies is not lost only because the sender
+    retries. That is SMTP's contract, and phase 5's own queue needs the
+    same care.
+  - JMAP writes other than delivery are not sent again after an unknown
+    outcome: a client can see `serverFail` during a leader change and has
+    to sync and retry.
+  - rqlite in `cluster.yaml` has no authentication and no TLS. Production
+    needs both, since the node table is what admits a node.
+  - Clock differences between nodes: `received_at`, session expiry and the
+    blob grace period use each node's own clock.
 
 ### Phase 5: outbound, submission, compose
 
@@ -514,7 +668,6 @@ Built as follows (the webmail in `web/`):
 - TOTP (RFC 6238) for web login, with recovery codes.
 - Optional OIDC login for the webmail against any provider: authorization
   code flow with PKCE, ID token checked with our own JWT and JWKS code.
-- Login rate limits kept in rqlite so they hold across nodes.
 - Exit: Thunderbird logs in with an app password and not with the account
   password; web login asks for TOTP; a Keycloak container logs a user in
   through OIDC.
@@ -549,8 +702,6 @@ Built as follows (the webmail in `web/`):
   without those two inputs. Good enough, or wrap Argon2 ourselves?
 - `<Postmaster>` without a domain picks one domain's postmaster. With
   several domains of different owners that may be the wrong person.
-- The domain list is cached for 30 seconds per node, so a removed domain
-  still gets mail for that long.
 - The Decisions say the name of a blob "is also the JMAP blobId". That
   holds for a message. A body part needs a blobId too and has no file of
   its own, so its id is `<message blob>-<partId>`. Phase 5's upload will
@@ -565,9 +716,21 @@ Built as follows (the webmail in `web/`):
 - `Email/query` sorts all matches of an account before it cuts the window,
   and `Mailbox/get` counts emails and threads on every call. Fine for
   thousands of messages; phase 4 should measure it with more.
-- Login limits and the Basic auth memory are per node and in memory until
-  phase 7. A changed password keeps working over Basic for up to five
-  minutes on a node that remembered the old one.
+- The Basic auth memory is per node. A changed password keeps working
+  over Basic for up to five minutes on a node that remembered the old one.
+- The repair pass reads the blob list of every account and lists every
+  blob directory on each node every five minutes. Fine for the 20,000
+  emails of the cluster test; with millions it wants to work from the
+  change log instead ("what was delivered since my last pass").
+- Every RCPT now reads the domain table and every node writes a heartbeat
+  every 5 seconds. Both are small; at a real load a short cache that is
+  invalidated through a version row would bring the domain read back to
+  one per change.
+- A delivery through an rqlite follower is forwarded to the leader inside
+  rqlite. The client could ask who leads and go there directly.
+- Reads at `weak` can be about a second stale right after a leader was cut
+  off. If that ever matters for a read (it does not for any today),
+  `linearizable` costs one round trip to a quorum.
 - On the plain listener the session cookie has no `Secure` flag. That
   listener only binds to loopback, but a TLS-terminating proxy in front of
   it would get cookies a browser also sends over HTTP. The plan has no
