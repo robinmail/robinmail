@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mikepage/robinmail/internal/address"
 	"github.com/mikepage/robinmail/internal/blob"
 	"github.com/mikepage/robinmail/internal/rqlite"
 	"github.com/mikepage/robinmail/internal/store"
@@ -36,6 +37,8 @@ type env struct {
 	user  User
 	ctx   context.Context
 	local *blob.Local
+	// refuse is what send answers instead of queueing.
+	refuse *SendError
 }
 
 func newEnv(t *testing.T) *env {
@@ -67,8 +70,25 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &env{t: t, st: st, h: &Handler{Store: st}, acct: acct, ctx: ctx, local: local,
+	e := &env{t: t, st: st, h: &Handler{Store: st, Hostname: "mail.example.test"}, acct: acct, ctx: ctx, local: local,
 		user: User{AccountID: acct.ID, Username: acct.Address}}
+	e.h.Send = e.send
+	return e
+}
+
+// send stands in for the Submitter that cmd/robinmail wires up: it checks
+// the envelope sender and queues, with an hour in which to cancel. refuse
+// makes it refuse instead.
+func (e *env) send(ctx context.Context, u User, o Outgoing) (store.Submission, *SendError, error) {
+	if e.refuse != nil {
+		return store.Submission{}, e.refuse, nil
+	}
+	if o.MailFrom != "" && !address.Owns(u.Username, o.MailFrom) {
+		return store.Submission{}, &SendError{Type: "forbiddenMailFrom", Description: "not your address"}, nil
+	}
+	sub, err := e.st.Submit(ctx, u.AccountID, store.NewSubmission{EmailID: o.EmailID, IdentityID: o.IdentityID, Raw: o.Raw,
+		MailFrom: o.MailFrom, Rcpts: o.RcptTo, SendAt: e.st.Now().Add(time.Hour), IfInState: o.IfInState})
+	return sub, nil, err
 }
 
 // do runs method calls and returns methodResponses. "$A" in the calls is
@@ -80,7 +100,7 @@ func (e *env) do(calls string) []any {
 
 func (e *env) doWith(members string) []any {
 	e.t.Helper()
-	body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` + strings.ReplaceAll(members, "$A", e.acct.ID) + `}`
+	body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],` + strings.ReplaceAll(members, "$A", e.acct.ID) + `}`
 	req := httptest.NewRequest("POST", "https://mail.example.test/jmap/api", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(WithUser(req.Context(), e.user))

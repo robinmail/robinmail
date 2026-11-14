@@ -166,22 +166,19 @@ func writePart(b *bytes.Buffer, p *BuildPart, depth int) {
 			b.WriteString("\r\n")
 			enc = enc[76:]
 		}
-		if enc != "" {
-			b.WriteString(enc)
-			b.WriteString("\r\n")
-		}
+		b.WriteString(enc)
 	case "quoted-printable":
 		w := quotedprintable.NewWriter(b)
 		w.Write(body)
 		w.Close()
-		if n := b.Len(); n < 2 || !bytes.HasSuffix(b.Bytes(), []byte("\r\n")) {
-			b.WriteString("\r\n")
-		}
 	default:
 		b.Write(body)
-		if len(body) > 0 && !bytes.HasSuffix(body, []byte("\r\n")) {
-			b.WriteString("\r\n")
-		}
+	}
+	// A part inside a multipart ends where the line break of the next
+	// delimiter begins (RFC 2046 5.1.1): adding one here would add it to
+	// the content. Only the message as a whole is made to end in CRLF.
+	if depth == 0 && len(body) > 0 && !bytes.HasSuffix(b.Bytes(), []byte("\r\n")) {
+		b.WriteString("\r\n")
 	}
 }
 
