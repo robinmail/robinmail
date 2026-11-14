@@ -63,8 +63,7 @@ for (const [size, viewport] of Object.entries(sizes)) {
       await shot('6-reply')
       await page.getByTestId('composer').last().getByTestId('composer-discard').click()
       // A message that was sent: one recipient gets it, one does not exist.
-      // (An address at another domain would show "Queued", and stay in the
-      // development queue for five days: it is routed to a dead port.)
+      // (An address at another domain goes to Mailpit and shows as "Sent".)
       const subject = `Shots sent ${size} ${scheme} ${Date.now()}`
       // On a phone the list, with its button for a new message, is behind the thread.
       if (size === 'phone') await page.getByRole('button', { name: 'Back to the list' }).click()

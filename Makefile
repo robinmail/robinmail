@@ -33,7 +33,10 @@
 # http://127.0.0.1:8080. The first time: cd web && npx playwright install chromium
 # It takes about three minutes: the tests that send mail wait for the
 # server's undo time and its queue. Mail goes between the two users of the
-# instance (dev@ and other@robinmail.test) and nowhere else.
+# instance (dev@ and other@robinmail.test); one test sends to an outside
+# address, which the instance routes to Mailpit from contrib/compose
+# (http://127.0.0.1:8025), and is skipped when Mailpit is not running.
+# Nothing leaves loopback or the Docker network.
 
 GO ?= go
 NPM ?= npm

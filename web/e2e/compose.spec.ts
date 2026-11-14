@@ -3,10 +3,13 @@
 // see what the server says became of it. It runs against a real robinmail
 // (see playwright.config.ts) with the two users of contrib/dev/seed.sh.
 // Nothing leaves the machine: robinmail.test is delivered inside the
-// server and every other domain is routed to a dead port.
+// server and every other domain is routed to Mailpit, a mail catcher in
+// Docker that passes nothing on (contrib/compose/compose.yaml).
 //
 // A send takes a while on purpose: the server holds a message for
 // undo_seconds (10) and its queue looks every 5 seconds.
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { expect, test, type Browser, type Locator, type Page } from '@playwright/test'
 import { OTHER, PASSWORD, USER, cleanUp, deliver, emailsBySubject, jmap, login } from './dev'
 
@@ -465,6 +468,138 @@ test('an expired session keeps what was typed and saves it after the login', asy
   await c.getByTestId('composer-discard').click()
   await c.getByTestId('composer-discard').click()
   await expect.poll(async () => (await emailsBySubject(page, subject)).length).toBe(0)
+})
+
+// Mailpit's HTTP API. The test below is skipped when Mailpit does not
+// answer or the development instance does not route outside mail to it.
+const MAILPIT = process.env.ROBINMAIL_MAILPIT_URL ?? 'http://127.0.0.1:8025'
+
+function routedToMailpit(): boolean {
+  try {
+    const config = JSON.parse(readFileSync(fileURLToPath(new URL('../../dev/robinmail.json', import.meta.url)), 'utf8'))
+    return /:1025$/.test(config.outbound?.routes?.['*'] ?? '')
+  } catch {
+    return false
+  }
+}
+
+test('mail to an outside address reaches Mailpit as a well-formed message', async ({ browser, baseURL, request }) => {
+  const up = await request.get(`${MAILPIT}/api/v1/info`, { timeout: 2000 }).then((r) => r.ok(), () => false)
+  test.skip(!up, `Mailpit does not answer on ${MAILPIT}: docker compose -f contrib/compose/compose.yaml up -d`)
+  test.skip(!routedToMailpit(), 'dev/robinmail.json does not route "*" to Mailpit (127.0.0.1:1025)')
+
+  const stamp = Date.now()
+  const subject = `E2E naar buiten ${stamp}: één “lang” onderwerp — met tekens die niet in ASCII passen, en lang genoeg om te vouwen`
+  const notes = 'line one\nline two, with LF line ends\n\tand a tab\n'
+  const { page, problems } = await open(browser, USER, baseURL!)
+
+  await page.getByTestId('compose').click()
+  const c = composer(page)
+  await to(c).fill('"Zoë Example, PhD" <zoe@outside.example>, plain@elsewhere.example')
+  await c.getByRole('button', { name: 'Add Cc and Bcc' }).click()
+  await c.getByLabel('Bcc', { exact: true }).fill('hidden@outside.example')
+  await subjectOf(c).fill(subject)
+  await c.getByTestId('composer-rich').click()
+  const rich = c.getByTestId('rich-body')
+  await rich.click()
+  await c.getByRole('button', { name: 'Bold' }).click()
+  await page.keyboard.type('Beste Zoë,')
+  await c.getByRole('button', { name: 'Bold' }).click()
+  await page.keyboard.press('Enter')
+  await page.keyboard.type(`A line that is long enough to need folding or encoding somewhere on its way: ${'woord '.repeat(30)}einde.`)
+  await page.keyboard.press('Enter')
+  await c.getByRole('button', { name: 'Bulleted list' }).click()
+  await page.keyboard.type('first')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('second = 2 & <third>')
+  await rich.evaluate((el) => {
+    const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), (ch) => ch.charCodeAt(0))
+    const data = new DataTransfer()
+    data.items.add(new File([png], 'pixel.png', { type: 'image/png' }))
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  })
+  await expect(rich.locator('img')).toHaveCount(1)
+  await c.getByTestId('composer-file').setInputFiles({ name: 'notities één.txt', mimeType: 'text/plain', buffer: Buffer.from(notes) })
+  await expect(c.getByTestId('composer-attachment')).toHaveCount(2)
+  await expect(c.locator('[data-testid="composer-attachment"][data-state="done"]')).toHaveCount(2)
+  await c.getByTestId('composer-send').click()
+  await expect(page.getByTestId('composer')).toHaveCount(0)
+
+  // Mailpit has it twice: the queue makes one SMTP transaction per domain,
+  // one for outside.example (two recipients) and one for elsewhere.example.
+  let found: { ID: string; MessageID: string; Bcc: unknown[] | null }[] = []
+  await expect(async () => {
+    const r = await (await request.get(`${MAILPIT}/api/v1/search`, { params: { query: `subject:"E2E naar buiten ${stamp}"` } })).json()
+    expect(r.messages).toHaveLength(2)
+    found = r.messages
+  }).toPass({ timeout: DELIVERY })
+  expect(found[0]!.MessageID).toBe(found[1]!.MessageID)
+  const id = found.find((x) => x.Bcc?.length)!.ID
+  const m = await (await request.get(`${MAILPIT}/api/v1/message/${id}`)).json()
+  expect(m.Subject).toBe(subject)
+  expect(m.From).toEqual({ Name: '', Address: USER })
+  expect(m.To).toEqual([{ Name: 'Zoë Example, PhD', Address: 'zoe@outside.example' }, { Name: '', Address: 'plain@elsewhere.example' }])
+  // The hidden recipient got it (the envelope) and is not named in it (the header).
+  expect(m.Bcc).toEqual([{ Name: '', Address: 'hidden@outside.example' }])
+  expect(m.ReturnPath).toBe(USER)
+
+  const headers: Record<string, string[]> = await (await request.get(`${MAILPIT}/api/v1/message/${id}/headers`)).json()
+  expect(Object.keys(headers).map((h) => h.toLowerCase())).not.toContain('x-robinmail-draft')
+  expect(headers['Mime-Version']).toEqual(['1.0'])
+  expect(headers['Message-Id']![0]).toMatch(/^<[^<>@\s]+@mail\.robinmail\.test>$/)
+  expect(Math.abs(Date.parse(headers.Date![0]!) - Date.now())).toBeLessThan(120_000)
+  expect(headers['Content-Type']![0]).toMatch(/^multipart\/mixed;/)
+  // Our Received line says nothing about the computer the mail was written on.
+  const ours = headers.Received!.find((r) => r.includes('(robinmail)'))!
+  expect(ours).toMatch(/^by mail\.robinmail\.test \(robinmail\) \(JMAP\)/)
+  expect(ours).not.toMatch(/from |127\.0\.0\.1/)
+
+  // Both bodies, the image inline by its Content-ID, the file as it was.
+  expect(m.Text).toContain('Beste Zoë,')
+  expect(m.Text).toContain(`${'woord '.repeat(30)}einde.`)
+  expect(m.Text.replace(/\r\n/g, '\n')).toContain('- first\n- second = 2 & <third>')
+  expect(m.HTML).toContain('<b>Beste Zoë,</b>')
+  expect(m.HTML).toContain('</p><ul><li>first</li><li>second = 2 &amp; &lt;third&gt;<img src="cid:')
+  expect(m.Inline).toHaveLength(1)
+  expect(m.Inline[0]).toMatchObject({ ContentType: 'image/png', FileName: 'pixel.png' })
+  expect(m.HTML).toContain(`<img src="cid:${m.Inline[0].ContentID}"`)
+  expect(m.Attachments).toHaveLength(1)
+  expect(m.Attachments[0]).toMatchObject({ FileName: 'notities één.txt', ContentType: 'text/plain', Size: Buffer.byteLength(notes) })
+  const file = await request.get(`${MAILPIT}/api/v1/message/${id}/part/${m.Attachments[0].PartID}`)
+  expect((await file.body()).toString()).toBe(notes)
+  const image = await request.get(`${MAILPIT}/api/v1/message/${id}/part/${m.Inline[0].PartID}`)
+  expect((await image.body()).subarray(0, 8).toString('latin1')).toBe('\x89PNG\r\n\x1a\n')
+
+  // On the wire: mixed[alternative[text, related[html, image]], file], CRLF
+  // line ends, nothing 8-bit, no line over 998 octets.
+  // Mailpit puts three fields of its own on top: Bcc (from the envelope),
+  // Return-Path and Received. What robinmail sent starts at our Received.
+  const raw = await (await request.get(`${MAILPIT}/api/v1/message/${id}/raw`)).body()
+  const all = raw.toString('latin1')
+  const wire = all.slice(all.indexOf('Received: by mail.robinmail.test'))
+  expect(all.slice(0, all.length - wire.length)).toMatch(/^Bcc: hidden@outside\.example\r?\nReturn-Path: <dev@robinmail\.test>\r?\nReceived: [^\n]*\n(\s[^\n]*\n)*$/)
+  // The hidden recipient is in no header we wrote.
+  expect(wire).not.toMatch(/^bcc:/im)
+  expect(wire).not.toContain('hidden@outside.example')
+  expect(raw.every((b) => b < 0x80)).toBe(true)
+  expect(wire.replace(/\r\n/g, '')).not.toMatch(/[\r\n]/)
+  expect(Math.max(...wire.split('\r\n').map((l) => l.length))).toBeLessThanOrEqual(998)
+  const types = [...wire.matchAll(/^Content-Type: ([a-z]+\/[a-z0-9-]+)/gim)].map((x) => x[1])
+  expect(types).toEqual(['multipart/mixed', 'multipart/alternative', 'text/plain', 'multipart/related', 'text/html', 'image/png', 'text/plain'])
+
+  // The webmail shows it as sent, with the other server's reply.
+  await nav(page, 'sent').click()
+  await row(page, `E2E naar buiten ${stamp}`).getByRole('link').click()
+  const status = page.getByTestId('delivery').locator('li')
+  await expect(status).toHaveCount(3)
+  for (const li of await status.all()) {
+    await expect(li).toHaveAttribute('data-delivery', 'Sent', { timeout: DELIVERY })
+    await expect(li).toContainText('250')
+  }
+
+  expect(problems).toEqual([])
+  await cleanUp(page, `E2E naar buiten ${stamp}`)
+  await request.delete(`${MAILPIT}/api/v1/messages`, { data: { IDs: found.map((x) => x.ID) } })
 })
 
 test('on a phone the composer fills the screen', async ({ browser, baseURL }) => {

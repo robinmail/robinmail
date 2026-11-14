@@ -9,13 +9,19 @@
 #
 # Then JMAP is on http://127.0.0.1:8080 and SMTP on 127.0.0.1:2525, without
 # TLS and without Rspamd. Mail sent from it to robinmail.test is delivered
-# in the instance itself; mail to any other domain goes nowhere: the config
-# routes it to a port nothing listens on ("outbound": {"routes": {"*":
-# "127.0.0.1:1"}}), so a development instance never sends real mail. It
-# stays in the queue and bounces after five days. The binary built here has no webmail in it: for
-# that use "make dev" (Vite on http://localhost:5173, live reload) or
-# "make" and run ./robinmail with the same config (see the Makefile). Run it again any time: it rebuilds the binary and
-# leaves an existing user and their mail alone.
+# in the instance itself. Mail to any other domain goes to Mailpit, a mail
+# catcher from the same compose file: the config routes every domain that
+# is not ours to it ("outbound": {"routes": {"*": "127.0.0.1:1025"}}), and
+# Mailpit shows what it got on http://127.0.0.1:8025 and passes nothing on.
+# So a development instance never sends real mail. Without Mailpit running
+# such mail stays in the queue and bounces after five days.
+#
+# The binary built here has no webmail in it: for that use "make dev" (Vite
+# on http://localhost:5173, live reload) or "make" and run ./robinmail with
+# the same config (see the Makefile). Run this script again any time: it
+# rebuilds the binary and leaves an existing user and their mail alone. An
+# existing dev/robinmail.json is left alone too: one from before Mailpit
+# still routes to the dead port 127.0.0.1:1 until that line is changed.
 #
 # The user is dev@robinmail.test. A second one, other@robinmail.test, has
 # no mail: it is there to send mail to and to answer from (the end-to-end

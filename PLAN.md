@@ -789,7 +789,11 @@ Built as follows (the Go side):
   values that are long or not ASCII.
 - **Commands and files.** `robinmail dns`; `contrib/dev/send-demo.sh`
   (two local servers, `curl`); the development instance of `seed.sh`
-  routes every other domain to a dead port, so it cannot send real mail; `compose.yaml` has a second rqlite
+  routes every domain that is not its own to Mailpit, a mail catcher in
+  `compose.yaml` (SMTP on 127.0.0.1:1025, its page on
+  http://127.0.0.1:8025) that keeps what it gets and has no relay, so the
+  instance cannot send real mail. The rule for development and tests
+  stays: nothing leaves loopback or the Docker network. `compose.yaml` has a second rqlite
   (`rqlite-b`, port 4003) and mounts the DKIM config; `cluster.yaml` has
   `robinmail-sink`, a robinmail with its own database for the cluster to
   exchange mail with. Schema version 5; the migration replaces the unused
@@ -976,12 +980,21 @@ Built as follows (the webmail in `web/`):
   forward both ways, `mailto:`, an identity with its signature, an
   expired session with a composer open, phone width. One domain is
   enough for all of it; two servers stay with `TestSendBetweenTwoServers`
-  and `send-demo.sh`. `e2e/compose-shots.spec.ts` takes the screenshots.
+  and `send-demo.sh`. A ninth test, skipped when Mailpit does not answer
+  or the instance does not route to it, sends a rich message with an
+  inline image, a text file, a hidden recipient and a subject and name
+  outside ASCII to two outside domains, and reads it back through
+  Mailpit's HTTP API: someone else's parser finds the same headers, both
+  bodies, the image by its Content-ID and the file byte for byte; the
+  bytes on the wire are 7-bit, CRLF, at most 998 a line, shaped
+  mixed[alternative[text, related[html, image]], file]; `Bcc` is in the
+  envelope and in no header; our `Received` line names no client. `e2e/compose-shots.spec.ts` takes the screenshots.
 - **The tests found and fixed**: the text attachment that came back with
   other line ends (Go, above); the notice with "Undo" never showed,
   because the composer that should announce the send was gone by then;
   a stored single-part text gains a line end, which a reopened draft now
-  drops.
+  drops; the editor wrote a list inside a paragraph (`<p><ul>`), as the
+  browser builds it, which HTML does not allow (the Mailpit test).
 - **Not built.** No address book or completion of addresses. No
   formatting beyond the six buttons (no fonts, colours, tables). An
   HTML signature. Scheduling a send. A read receipt. A draft is not

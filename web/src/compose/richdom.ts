@@ -14,6 +14,9 @@ const keep: Record<string, string> = {
 // Elements that go with everything in them.
 const drop = new Set(['SCRIPT', 'STYLE', 'HEAD', 'TITLE', 'TEMPLATE', 'SVG', 'MATH', 'NOSCRIPT', 'OBJECT', 'IFRAME', 'EMBED', 'FORM', 'LINK', 'META'])
 
+// Elements a paragraph cannot hold.
+const blocksInside = new Set(['UL', 'OL', 'BLOCKQUOTE', 'PRE', 'P', 'DIV'])
+
 // What mail programs show a quote as; without it a blockquote is only indented.
 const QUOTE_STYLE = 'margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex'
 
@@ -104,6 +107,10 @@ export function exportHtml(root: Node): string {
         if (href) out += `<a href="${escapeHtml(href)}">`
         walk(el)
         if (href) out += '</a>'
+      } else if (name === 'p' && [...el.children].some((c) => blocksInside.has(c.tagName.toUpperCase()))) {
+        // The browser puts a list or a quote made on a line inside that
+        // line's paragraph, where HTML does not allow one.
+        walk(el)
       } else {
         out += name === 'blockquote' ? `<blockquote style="${QUOTE_STYLE}">` : `<${name}>`
         walk(el)

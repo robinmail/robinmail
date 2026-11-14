@@ -1,6 +1,6 @@
-# Development services for robinmail: rqlite for metadata and Rspamd for
-# spam scanning. Both listen on 127.0.0.1 only and keep their data in the
-# container, so "down" starts from nothing.
+# Development services for robinmail: rqlite for metadata, Rspamd for spam
+# scanning and Mailpit to catch outgoing mail. All listen on 127.0.0.1 only
+# and keep their data in the container, so "down" starts from nothing.
 #
 #   docker compose -f contrib/compose/compose.yaml up -d
 #
@@ -28,6 +28,21 @@ services:
     image: rqlite/rqlite:10.7.1
     ports:
       - "127.0.0.1:4003:4001"
+
+  # Mailpit takes every message the development instance sends to a domain
+  # that is not its own (contrib/dev/robinmail.dev.json routes "*" to it)
+  # and shows it on http://127.0.0.1:8025. It delivers nothing: mail that
+  # reaches it stays in the container. No relay is configured, so it
+  # cannot be made to release a message either.
+  mailpit:
+    image: axllent/mailpit:v1.33
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+    environment:
+      MP_MAX_MESSAGES: "500"
+      # Mailpit asks GitHub for its newest version otherwise.
+      MP_DISABLE_VERSION_CHECK: "true"
 
   # Rspamd runs without Redis, so greylisting, rate limits and Bayes are off.
   # It does look up DNS blocklists, so a scan can take a few seconds.
