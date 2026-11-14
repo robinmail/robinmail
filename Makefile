@@ -5,6 +5,7 @@
 #   make test       go vet, the Go tests, type check and unit tests of web/
 #   make e2e        the browser test against ./robinmail and the dev instance
 #   make dev        a development instance with live reload on :5173
+#   make cluster-test   the cluster tests on three rqlite and three robinmail nodes in Docker
 #   make clean
 #
 # A plain "go build ./cmd/robinmail" needs no Node and no make: that binary
@@ -31,7 +32,7 @@ GO ?= go
 NPM ?= npm
 WEB_SRC := $(shell find web/src web/public web/index.html web/package.json web/package-lock.json web/vite.config.ts web/tsconfig.json -type f 2>/dev/null)
 
-.PHONY: all build web test test-go test-web e2e dev clean
+.PHONY: all build web test test-go test-web e2e dev clean cluster-test
 
 all: build
 
@@ -72,6 +73,15 @@ dev: web/node_modules
 	contrib/dev/seed.sh
 	@trap 'kill 0' EXIT; dev/robinmail -config dev/robinmail.json serve & \
 		cd web && $(NPM) run dev
+
+# Builds the image, starts the cluster of contrib/compose/cluster.yaml, runs
+# the tests in internal/clustertest (they kill and restart containers) and
+# removes the cluster again, also when a test failed. About four minutes
+# after the first build. KEEP=1 leaves the cluster running.
+cluster-test:
+	contrib/compose/cluster.sh up
+	@ROBINMAIL_TEST_CLUSTER=1 $(GO) test -count=1 -v -timeout 30m ./internal/clustertest; s=$$?; \
+		[ -n "$(KEEP)" ] || contrib/compose/cluster.sh down; exit $$s
 
 clean:
 	rm -rf robinmail web/dist internal/web/dist
