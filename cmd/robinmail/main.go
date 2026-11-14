@@ -306,7 +306,7 @@ func optional(args []string, i int, def string) string {
 // serving is true for the server, which announces itself as running; a
 // command only makes sure the other nodes know its certificate.
 func open(ctx context.Context, cfg *config.Config, serving bool) (*app, error) {
-	db, err := rqlite.NewCluster(cfg.Rqlite.Nodes(), nil)
+	db, err := openRqlite(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +314,7 @@ func open(ctx context.Context, cfg *config.Config, serving bool) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w (make one with \"robinmail key generate\")", err)
 	}
-	a := &app{cfg: cfg, local: blob.NewLocal(cfg.BlobDir()), master: master}
+	a := &app{cfg: cfg, db: db, local: blob.NewLocal(cfg.BlobDir()), master: master}
 	limits := store.Limits{Bytes: cfg.Quota.DefaultBytes, Messages: cfg.Quota.DefaultMessages}
 	if cfg.Node.ID == "" {
 		a.store = store.New(db, a.local, master)
@@ -340,9 +340,37 @@ func open(ctx context.Context, cfg *config.Config, serving bool) (*app, error) {
 	return a, nil
 }
 
+// openRqlite makes the client for the rqlite of the config: with the
+// credentials of rqlite.auth_file and the CA of rqlite.ca_file when those
+// are set.
+func openRqlite(cfg *config.Config) (*rqlite.Client, error) {
+	db, err := rqlite.NewCluster(cfg.Rqlite.Nodes(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Rqlite.AuthFile != "" {
+		user, password, err := rqlite.LoadCredentials(cfg.Rqlite.AuthFile)
+		if err != nil {
+			return nil, err
+		}
+		db.SetCredentials(user, password)
+	}
+	if cfg.Rqlite.CAFile != "" {
+		pool, err := rqlite.LoadCA(cfg.Rqlite.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		if err := db.TrustCA(pool); err != nil {
+			return nil, err
+		}
+	}
+	return db, nil
+}
+
 type app struct {
 	ctx    context.Context
 	cfg    *config.Config
+	db     *rqlite.Client
 	store  *store.Store
 	master *blob.MasterKey
 	stdin  io.Reader

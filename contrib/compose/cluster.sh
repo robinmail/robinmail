@@ -10,8 +10,10 @@
 #   cluster.sh down          stop and remove the containers and their volumes
 #   cluster.sh ps|logs ...   passed on to docker compose
 #
-# The secrets (a master key all nodes share and self-signed certificates
-# for mail.robinmail.test and mail.sink.test) are made once in contrib/compose/cluster/secrets,
+# The secrets (a master key all nodes share, self-signed certificates
+# for mail.robinmail.test and mail.sink.test, and what locks rqlite down: a
+# CA, a certificate per rqlite node, rqlite's auth file and robinmail's
+# login for it) are made once in contrib/compose/cluster/secrets,
 # which git ignores. The users' password is for this local cluster only; set
 # ROBINMAIL_CLUSTER_PASSWORD to use another.
 set -eu
@@ -44,6 +46,48 @@ if [ ! -f "$SECRETS/sink.crt" ]; then
 		-subj "/CN=mail.sink.test" -addext "subjectAltName=DNS:mail.sink.test" \
 		-keyout "$SECRETS/sink.key" -out "$SECRETS/sink.crt" 2>/dev/null)
 fi
+
+# rqlite, locked down (cluster.yaml says how). A CA of the cluster's own,
+# and for every rqlite node a certificate for the two names it has: the
+# one the other rqlite nodes reach it under (Raft, mutual TLS: so it is a
+# server and a client certificate) and the one its robinmail does (HTTPS).
+RQ="$SECRETS/rqlite"
+mkdir -p "$RQ"
+EC="-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes"
+if [ ! -f "$RQ/ca.crt" ]; then
+	openssl req -x509 $EC -days 3650 -subj "/CN=robinmail cluster rqlite CA" \
+		-addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+		-keyout "$SECRETS/rqlite-ca.key" -out "$RQ/ca.crt" 2>/dev/null
+	chmod 600 "$SECRETS/rqlite-ca.key"
+fi
+for n in 1 2 3; do
+	[ -f "$RQ/rqlite-$n.crt" ] && continue
+	openssl req -new $EC -subj "/CN=rqlite-$n" -keyout "$RQ/rqlite-$n.key" -out "$RQ/rqlite-$n.csr" 2>/dev/null
+	printf 'subjectAltName=DNS:rqlite-%s,DNS:rqlite-%s-db\nbasicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\n' "$n" "$n" > "$RQ/rqlite-$n.ext"
+	openssl x509 -req -in "$RQ/rqlite-$n.csr" -CA "$RQ/ca.crt" -CAkey "$SECRETS/rqlite-ca.key" -CAcreateserial \
+		-days 825 -extfile "$RQ/rqlite-$n.ext" -out "$RQ/rqlite-$n.crt" 2>/dev/null
+	rm -f "$RQ/rqlite-$n.csr" "$RQ/rqlite-$n.ext" "$RQ/ca.srl"
+done
+# The logins. rqlite's auth file names three users: robinmail with what
+# robinmail needs and no more, node for an rqlite node that joins, admin
+# for the operator (the tests use it to look at rqlite). Random passwords,
+# written to files and never shown or put on a command line.
+if [ ! -f "$RQ/auth.json" ]; then
+	secret() { head -c 24 /dev/urandom | base64 | tr -d '=+/\n'; }
+	robinmail_pw=$(secret); node_pw=$(secret); admin_pw=$(secret)
+	(umask 077
+	printf 'robinmail:%s\n' "$robinmail_pw" > "$SECRETS/rqlite.auth"
+	printf 'admin:%s\n' "$admin_pw" > "$SECRETS/rqlite-admin.auth")
+	cat > "$RQ/auth.json" <<AUTH
+[
+  {"username": "robinmail", "password": "$robinmail_pw", "perms": ["execute", "query", "backup", "load"]},
+  {"username": "node", "password": "$node_pw", "perms": ["join"]},
+  {"username": "admin", "password": "$admin_pw", "perms": ["all"]}
+]
+AUTH
+fi
+# rqlite's container runs as its own user and reads these through a mount.
+chmod 644 "$RQ"/*
 
 PROFILE=
 if [ "${2:-}" = rspamd ]; then

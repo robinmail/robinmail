@@ -9,7 +9,6 @@
 #
 # Ports on the host, for node 1, 2 and 3:
 #
-#   rqlite HTTP      4011  4012  4013
 #   SMTP             2531  2532  2533
 #   HTTPS (webmail)  8441  8442  8443    https://mail.robinmail.test, self-signed
 #
@@ -25,9 +24,34 @@
 #
 #   curl -k --resolve mail.robinmail.test:8441:127.0.0.1 https://mail.robinmail.test:8441/
 #
-# Each robinmail node lists all three rqlite nodes, its "own" first. Nodes
-# reach each other on port 7443 inside the compose network (mutual TLS, see
-# internal/cluster); that port is not published.
+# rqlite is locked down, the way PLAN.md ("rqlite, locked down") says a
+# deployment should be: whoever reaches rqlite's HTTP port without a login
+# owns every account and can admit a node.
+#
+#   - One rqlite next to each robinmail node. The two share a network of
+#     their own (db1, db2, db3: what loopback is on a real machine), and
+#     rqlite's HTTP API listens there and nowhere else: -http-addr is the
+#     name it has on that network only. The port is not published and not
+#     on the network the nodes share. A robinmail node talks to its own
+#     rqlite; writes reach the leader inside rqlite.
+#   - The HTTP API is HTTPS and wants a login (-auth, secrets/rqlite/auth.json):
+#     "robinmail" may execute, query, backup and load, and nothing else;
+#     "node" may join; "admin" is the operator's, for the tests. robinmail
+#     reads its login from secrets/rqlite.auth (rqlite.auth_file) and
+#     checks the certificate against the cluster's CA (rqlite.ca_file).
+#   - rqlite nodes talk to each other (Raft, port 4002, on the shared
+#     network) over mutual TLS with certificates of that CA
+#     (-node-cert, -node-ca-cert, -node-verify-client), and a node joins
+#     with a login (-join-as).
+#
+# cluster.sh makes the CA, the certificates and the passwords. rqlite's
+# container runs as its own user, so the files it reads are world-readable
+# in a directory of their own (secrets/rqlite): fine for a cluster on one
+# developer's machine, not for a real one, where they belong to rqlite's
+# user alone.
+#
+# Nodes reach each other on port 7443 inside the compose network (mutual
+# TLS, see internal/cluster); that port is not published.
 #
 # Rspamd is optional: "cluster.sh up rspamd" starts one and points the nodes
 # at it. Without it mail is delivered unscanned, which is what the tests use.
@@ -35,15 +59,12 @@ name: robinmail-cluster
 
 x-rqlite: &rqlite
   image: rqlite/rqlite:10.7.1
-  # Three voters that find each other by name. A node that restarts keeps its
-  # data (the container's own disk) and rejoins by itself.
-  command: ["-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
+  volumes: ["./cluster/secrets/rqlite:/secrets:ro"]
 
 x-robinmail: &robinmail
   image: robinmail-cluster
   build:
     context: ../..
-  depends_on: [rqlite-1, rqlite-2, rqlite-3]
   restart: "no"
   stop_grace_period: 35s
 
@@ -51,41 +72,83 @@ services:
   rqlite-1:
     <<: *rqlite
     hostname: rqlite-1
-    environment: {NODE_ID: "1"}
-    ports: ["127.0.0.1:4011:4001"]
+    # Three voters that find each other by name. A node that restarts keeps
+    # its data (the container's own disk) and rejoins by itself.
+    command: ["-node-id", "1",
+      "-http-addr", "rqlite-1-db:4001", "-http-adv-addr", "rqlite-1-db:4001",
+      "-http-cert", "/secrets/rqlite-1.crt", "-http-key", "/secrets/rqlite-1.key",
+      "-raft-addr", "0.0.0.0:4002", "-raft-adv-addr", "rqlite-1:4002",
+      "-node-ca-cert", "/secrets/ca.crt", "-node-cert", "/secrets/rqlite-1.crt", "-node-key", "/secrets/rqlite-1.key",
+      "-node-verify-client",
+      "-auth", "/secrets/auth.json", "-join-as", "node",
+      "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
+    networks:
+      cluster: {}
+      db1: {aliases: [rqlite-1-db]}
   rqlite-2:
     <<: *rqlite
     hostname: rqlite-2
-    environment: {NODE_ID: "2"}
-    ports: ["127.0.0.1:4012:4001"]
+    # Three voters that find each other by name. A node that restarts keeps
+    # its data (the container's own disk) and rejoins by itself.
+    command: ["-node-id", "2",
+      "-http-addr", "rqlite-2-db:4001", "-http-adv-addr", "rqlite-2-db:4001",
+      "-http-cert", "/secrets/rqlite-2.crt", "-http-key", "/secrets/rqlite-2.key",
+      "-raft-addr", "0.0.0.0:4002", "-raft-adv-addr", "rqlite-2:4002",
+      "-node-ca-cert", "/secrets/ca.crt", "-node-cert", "/secrets/rqlite-2.crt", "-node-key", "/secrets/rqlite-2.key",
+      "-node-verify-client",
+      "-auth", "/secrets/auth.json", "-join-as", "node",
+      "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
+    networks:
+      cluster: {}
+      db2: {aliases: [rqlite-2-db]}
   rqlite-3:
     <<: *rqlite
     hostname: rqlite-3
-    environment: {NODE_ID: "3"}
-    ports: ["127.0.0.1:4013:4001"]
+    # Three voters that find each other by name. A node that restarts keeps
+    # its data (the container's own disk) and rejoins by itself.
+    command: ["-node-id", "3",
+      "-http-addr", "rqlite-3-db:4001", "-http-adv-addr", "rqlite-3-db:4001",
+      "-http-cert", "/secrets/rqlite-3.crt", "-http-key", "/secrets/rqlite-3.key",
+      "-raft-addr", "0.0.0.0:4002", "-raft-adv-addr", "rqlite-3:4002",
+      "-node-ca-cert", "/secrets/ca.crt", "-node-cert", "/secrets/rqlite-3.crt", "-node-key", "/secrets/rqlite-3.key",
+      "-node-verify-client",
+      "-auth", "/secrets/auth.json", "-join-as", "node",
+      "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
+    networks:
+      cluster: {}
+      db3: {aliases: [rqlite-3-db]}
 
   robinmail-1:
     <<: *robinmail
+    depends_on: [rqlite-1]
     hostname: robinmail-1
     command: ["-config", "/etc/robinmail/n1.json", "serve"]
     volumes: ["./cluster:/etc/robinmail:ro", "blobs-1:/var/lib/robinmail"]
     ports: ["127.0.0.1:2531:25", "127.0.0.1:8441:443"]
+    networks: [cluster, db1]
   robinmail-2:
     <<: *robinmail
+    depends_on: [rqlite-2]
     hostname: robinmail-2
     command: ["-config", "/etc/robinmail/n2.json", "serve"]
     volumes: ["./cluster:/etc/robinmail:ro", "blobs-2:/var/lib/robinmail"]
     ports: ["127.0.0.1:2532:25", "127.0.0.1:8442:443"]
+    networks: [cluster, db2]
   robinmail-3:
     <<: *robinmail
+    depends_on: [rqlite-3]
     hostname: robinmail-3
     command: ["-config", "/etc/robinmail/n3.json", "serve"]
     volumes: ["./cluster:/etc/robinmail:ro", "blobs-3:/var/lib/robinmail"]
     ports: ["127.0.0.1:2533:25", "127.0.0.1:8443:443"]
+    networks: [cluster, db3]
 
+  # The other side keeps the simple setup of a single node: its rqlite has
+  # no login and no TLS, and is on a network that only its robinmail is on.
   rqlite-sink:
     image: rqlite/rqlite:10.7.1
     hostname: rqlite-sink
+    networks: [dbsink]
   robinmail-sink:
     <<: *robinmail
     depends_on: [rqlite-sink]
@@ -93,6 +156,7 @@ services:
     command: ["-config", "/etc/robinmail/sink.json", "serve"]
     volumes: ["./cluster:/etc/robinmail:ro", "blobs-sink:/var/lib/robinmail"]
     ports: ["127.0.0.1:8444:443"]
+    networks: [cluster, dbsink]
 
   rspamd:
     profiles: [rspamd]
@@ -103,9 +167,20 @@ services:
       - ./rspamd/dkim:/var/lib/rspamd/dkim:ro
       - ./rspamd/override.d/milter_headers.conf:/etc/rspamd/override.d/milter_headers.conf:ro
       - ./rspamd/local.d/options.inc:/etc/rspamd/local.d/options.inc:ro
+    networks: [cluster]
 
 volumes:
   blobs-1:
   blobs-2:
   blobs-3:
   blobs-sink:
+
+networks:
+  # What the nodes share: SMTP between the two sides, blobs between
+  # robinmail nodes, Raft between rqlite nodes.
+  cluster:
+  # One per node: robinmail and its rqlite, and nobody else.
+  db1: {internal: true}
+  db2: {internal: true}
+  db3: {internal: true}
+  dbsink: {internal: true}

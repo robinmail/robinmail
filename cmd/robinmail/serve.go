@@ -383,6 +383,19 @@ func (a *app) serve(stop func()) error {
 		}()
 	}
 
+	// Whoever reaches rqlite without a login owns every account and can
+	// admit a node. Say so when that is how this node reaches it.
+	{
+		ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+		link := a.rqliteLink(ctx)
+		cancel()
+		if p := link.problem(); p != "" {
+			log.Warn("the connection to rqlite is not locked down", "link", link.String(), "problem", p)
+		} else {
+			log.Info("rqlite", "link", link.String())
+		}
+	}
+
 	// The metrics, for a collector on this machine.
 	if a.cfg.Metrics.Listen != "" {
 		ml, err := net.Listen("tcp", a.cfg.Metrics.Listen)

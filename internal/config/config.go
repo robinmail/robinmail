@@ -186,6 +186,15 @@ type Rqlite struct {
 	// first is tried first, so put the nearest one there; when it stops
 	// answering the others are used.
 	URLs []string `json:"urls"`
+	// AuthFile holds the user and password robinmail gives rqlite, as one
+	// line "user:password", readable by its owner only. It is the way to
+	// give credentials: a URL with a password ends up in process lists and
+	// shell histories. The user needs rqlite's permissions execute and
+	// query, and backup and load for the commands of those names.
+	AuthFile string `json:"auth_file"`
+	// CAFile holds the CA certificate (PEM) that signed the certificates
+	// of the rqlite nodes, for https URLs. Empty: the system's CAs.
+	CAFile string `json:"ca_file"`
 }
 
 // Nodes returns the configured rqlite URLs, nearest first.
@@ -379,6 +388,12 @@ func Load(path string) (*Config, error) {
 		return nil, errors.New(path + ": tls needs both cert_file and key_file")
 	}
 	// Like the other files the config names, relative to the config file.
+	if c.Rqlite.AuthFile != "" && !filepath.IsAbs(c.Rqlite.AuthFile) {
+		c.Rqlite.AuthFile = filepath.Join(dir, c.Rqlite.AuthFile)
+	}
+	if c.Rqlite.CAFile != "" && !filepath.IsAbs(c.Rqlite.CAFile) {
+		c.Rqlite.CAFile = filepath.Join(dir, c.Rqlite.CAFile)
+	}
 	if c.TLS.CertFile != "" && !filepath.IsAbs(c.TLS.CertFile) {
 		c.TLS.CertFile = filepath.Join(dir, c.TLS.CertFile)
 	}

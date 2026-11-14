@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -43,8 +44,7 @@ var (
 		{"robinmail-2", "127.0.0.1:2532", "127.0.0.1:8442", "/etc/robinmail/n2.json"},
 		{"robinmail-3", "127.0.0.1:2533", "127.0.0.1:8443", "/etc/robinmail/n3.json"},
 	}
-	rqliteHTTP = []string{"127.0.0.1:4011", "127.0.0.1:4012", "127.0.0.1:4013"}
-	users      = []string{"user1@" + domain, "user2@" + domain, "user3@" + domain, "user4@" + domain}
+	users = []string{"user1@" + domain, "user2@" + domain, "user3@" + domain, "user4@" + domain}
 )
 
 func password() string {
@@ -87,30 +87,183 @@ func blobCount(t testing.TB, n int) int {
 	return c
 }
 
+// rqlite is locked down in this cluster (contrib/compose/cluster.yaml): its
+// HTTP API listens only on the network a node shares with its robinmail,
+// is HTTPS and wants a login. The tests reach it the way an operator on
+// that node would: from inside, with the admin login of the cluster's
+// secrets.
+
+const secretsDir = "../../contrib/compose/cluster/secrets"
+
+// execConn is a connection to a port inside the cluster, carried by
+// "docker compose exec <service> nc <host> <port>".
+type execConn struct {
+	cmd *exec.Cmd
+	in  io.WriteCloser
+	out io.ReadCloser
+}
+
+func dialIn(service, host, port string) (*execConn, error) {
+	cmd := exec.Command("docker", "compose", "-f", "../../contrib/compose/cluster.yaml", "exec", "-T", service, "nc", host, port)
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &execConn{cmd: cmd, in: in, out: out}, nil
+}
+
+func (c *execConn) Read(p []byte) (int, error)  { return c.out.Read(p) }
+func (c *execConn) Write(p []byte) (int, error) { return c.in.Write(p) }
+func (c *execConn) Close() error {
+	c.in.Close()
+	c.cmd.Process.Kill()
+	go c.cmd.Wait()
+	return nil
+}
+func (c *execConn) LocalAddr() net.Addr              { return execAddr{} }
+func (c *execConn) RemoteAddr() net.Addr             { return execAddr{} }
+func (c *execConn) SetDeadline(time.Time) error      { return nil }
+func (c *execConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *execConn) SetWriteDeadline(time.Time) error { return nil }
+
+type execAddr struct{}
+
+func (execAddr) Network() string { return "exec" }
+func (execAddr) String() string  { return "docker compose exec" }
+
+// rqliteCA is the CA that signed the rqlite nodes' certificates.
+func rqliteCA() (*x509.CertPool, error) {
+	pem, err := os.ReadFile(secretsDir + "/rqlite/ca.crt")
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, errors.New("no certificate in the cluster's rqlite CA file")
+	}
+	return pool, nil
+}
+
+// login reads "user:password" from a file of the cluster's secrets.
+func login(file string) (user, pass string, err error) {
+	data, err := os.ReadFile(secretsDir + "/" + file)
+	if err != nil {
+		return "", "", err
+	}
+	user, pass, _ = strings.Cut(strings.TrimSpace(string(data)), ":")
+	return user, pass, nil
+}
+
+// rqliteHost is the name rqlite node n has on the network it shares with
+// its robinmail.
+func rqliteHost(n int) string { return fmt.Sprintf("rqlite-%d-db", n+1) }
+
+// rqliteDo sends a request to rqlite node n from inside container "from"
+// (which must be on that node's network to get anywhere), over HTTPS
+// checked against the cluster's CA, with the login of the given secrets
+// file, or none for "".
+func rqliteDo(from string, n int, method, path, authFile string, body []byte) (int, []byte, error) {
+	pool, err := rqliteCA()
+	if err != nil {
+		return 0, nil, err
+	}
+	host := rqliteHost(n)
+	hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+		DisableKeepAlives: true,
+		DialTLSContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			raw, err := dialIn(from, host, "4001")
+			if err != nil {
+				return nil, err
+			}
+			conn := tls.Client(raw, &tls.Config{ServerName: host, RootCAs: pool})
+			if err := conn.HandshakeContext(ctx); err != nil {
+				raw.Close()
+				return nil, err
+			}
+			return conn, nil
+		},
+	}}
+	req, err := http.NewRequest(method, "https://"+host+":4001"+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if authFile != "" {
+		user, pass, err := login(authFile)
+		if err != nil {
+			return 0, nil, err
+		}
+		req.SetBasicAuth(user, pass)
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, data, err
+}
+
+// rqliteAdmin asks rqlite node n as the operator, from its own container.
+func rqliteAdmin(n int, method, path string, body []byte) ([]byte, error) {
+	code, data, err := rqliteDo(fmt.Sprintf("rqlite-%d", n+1), n, method, path, "rqlite-admin.auth", body)
+	if err != nil {
+		return nil, err
+	}
+	if code != 200 {
+		return nil, fmt.Errorf("rqlite-%d: HTTP %d %s", n+1, code, bytes.TrimSpace(data))
+	}
+	return data, nil
+}
+
+// rqliteNodes is what a node says about the cluster's nodes, asking
+// whichever answers.
+func rqliteNodes() (map[string]struct {
+	Leader    bool `json:"leader"`
+	Reachable bool `json:"reachable"`
+}, error) {
+	var last error
+	for n := range robin {
+		data, err := rqliteAdmin(n, "GET", "/nodes", nil)
+		if err != nil {
+			last = err
+			continue
+		}
+		var nodes map[string]struct {
+			Leader    bool `json:"leader"`
+			Reachable bool `json:"reachable"`
+		}
+		if err := json.Unmarshal(data, &nodes); err != nil {
+			last = err
+			continue
+		}
+		return nodes, nil
+	}
+	return nil, last
+}
+
 // rqliteLeader returns the index of the rqlite node that leads, asking
 // whichever node answers.
 func rqliteLeader(t testing.TB) int {
 	t.Helper()
 	for end := time.Now().Add(30 * time.Second); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
-		for _, addr := range rqliteHTTP {
-			resp, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + addr + "/nodes")
-			if err != nil {
-				continue
-			}
-			var nodes map[string]struct {
-				Leader    bool `json:"leader"`
-				Reachable bool `json:"reachable"`
-			}
-			err = json.NewDecoder(resp.Body).Decode(&nodes)
-			resp.Body.Close()
-			if err != nil {
-				continue
-			}
-			for id, n := range nodes {
-				if n.Leader && n.Reachable {
-					i, _ := strconv.Atoi(id)
-					return i - 1
-				}
+		nodes, err := rqliteNodes()
+		if err != nil {
+			continue
+		}
+		for id, n := range nodes {
+			if n.Leader && n.Reachable {
+				i, _ := strconv.Atoi(id)
+				return i - 1
 			}
 		}
 	}
@@ -120,28 +273,17 @@ func rqliteLeader(t testing.TB) int {
 
 // rqliteReachable is how many rqlite nodes the cluster sees as reachable.
 func rqliteReachable() int {
-	for _, addr := range rqliteHTTP {
-		resp, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + addr + "/nodes")
-		if err != nil {
-			continue
-		}
-		var nodes map[string]struct {
-			Reachable bool `json:"reachable"`
-		}
-		err = json.NewDecoder(resp.Body).Decode(&nodes)
-		resp.Body.Close()
-		if err != nil {
-			continue
-		}
-		n := 0
-		for _, x := range nodes {
-			if x.Reachable {
-				n++
-			}
-		}
-		return n
+	nodes, err := rqliteNodes()
+	if err != nil {
+		return 0
 	}
-	return 0
+	n := 0
+	for _, x := range nodes {
+		if x.Reachable {
+			n++
+		}
+	}
+	return n
 }
 
 func waitFor(t testing.TB, what string, limit time.Duration, ok func() bool) time.Duration {
@@ -550,8 +692,8 @@ func (j *jmap) loginAs(t testing.TB, user string) session {
 func rqliteRows(t testing.TB, sql string) [][]any {
 	t.Helper()
 	var last error
-	for _, addr := range rqliteHTTP {
-		resp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http://" + addr + "/db/query?level=weak&q=" + url.QueryEscape(sql))
+	for n := range robin {
+		data, err := rqliteAdmin(n, "GET", "/db/query?level=weak&q="+url.QueryEscape(sql), nil)
 		if err != nil {
 			last = err
 			continue
@@ -562,10 +704,8 @@ func rqliteRows(t testing.TB, sql string) [][]any {
 				Error  string  `json:"error"`
 			} `json:"results"`
 		}
-		err = json.NewDecoder(resp.Body).Decode(&out)
-		resp.Body.Close()
-		if err != nil || len(out.Results) != 1 || out.Results[0].Error != "" {
-			last = fmt.Errorf("rqlite %s: %v %+v", addr, err, out)
+		if err := json.Unmarshal(data, &out); err != nil || len(out.Results) != 1 || out.Results[0].Error != "" {
+			last = fmt.Errorf("rqlite-%d: %v %+v", n+1, err, out)
 			continue
 		}
 		return out.Results[0].Values

@@ -12,6 +12,8 @@ package rqlite
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -147,9 +150,17 @@ var ErrStale = errors.New("rqlite: this node's copy is stale")
 //
 // A statement that SQLite refused (*Error) is an answer, not a failure: it
 // is never tried again.
+//
+// Credentials (basic auth) go with every request to a node of the
+// configured list and nowhere else: a redirect to a host that is not on
+// the list is not followed when there are credentials to lose. They are
+// never part of an error.
 type Client struct {
 	nodes  []*url.URL
 	client *http.Client
+	// user and pass are the credentials; set is whether there are any.
+	user, pass string
+	set        bool
 	// Wait is how long one call keeps trying before it gives up. [15s]
 	Wait time.Duration
 
@@ -174,11 +185,21 @@ func NewCluster(urls []string, httpClient *http.Client) (*Client, error) {
 	for _, raw := range urls {
 		u, err := url.Parse(raw)
 		if err != nil {
-			return nil, fmt.Errorf("rqlite: %w", err)
+			// The error of url.Parse quotes the URL, password and all.
+			return nil, errors.New("rqlite: a node URL does not parse")
 		}
 		if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return nil, fmt.Errorf("rqlite: %q is not an http(s) URL", raw)
+			u.User = nil
+			return nil, fmt.Errorf("rqlite: %q is not an http(s) URL", u.String())
 		}
+		// Credentials in a URL become the client's and leave the URL,
+		// so that no error or log line that names a node has them.
+		if u.User != nil && !c.set {
+			c.user = u.User.Username()
+			c.pass, _ = u.User.Password()
+			c.set = true
+		}
+		u.User = nil
 		c.nodes = append(c.nodes, u)
 	}
 	if c.client == nil {
@@ -197,6 +218,134 @@ func NewCluster(urls []string, httpClient *http.Client) (*Client, error) {
 	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	c.client = &cp
 	return c, nil
+}
+
+// SetCredentials makes the client send this user and password, as basic
+// auth, with every request to a configured node. Call it before the client
+// is used.
+func (c *Client) SetCredentials(user, password string) {
+	c.user, c.pass, c.set = user, password, true
+}
+
+// TrustCA makes the client verify the nodes' HTTPS certificates against
+// the certificates in pool instead of the system's. Call it before the
+// client is used.
+func (c *Client) TrustCA(pool *x509.CertPool) error {
+	t, ok := c.client.Transport.(*http.Transport)
+	if !ok {
+		return errors.New("rqlite: this HTTP client has no transport to give a CA to")
+	}
+	t = t.Clone()
+	if t.TLSClientConfig == nil {
+		t.TLSClientConfig = &tls.Config{}
+	}
+	t.TLSClientConfig.RootCAs = pool
+	t.TLSClientConfig.MinVersion = tls.VersionTLS12
+	cp := *c.client
+	cp.Transport = t
+	c.client = &cp
+	return nil
+}
+
+// Security says how the client talks to the cluster: whether every
+// configured node is reached over HTTPS, and whether it sends credentials.
+func (c *Client) Security() (encrypted, credentials bool) {
+	encrypted = true
+	for _, n := range c.nodes {
+		if n.Scheme != "https" {
+			encrypted = false
+		}
+	}
+	return encrypted, c.set
+}
+
+// Hosts returns the host names of the configured nodes, without ports.
+func (c *Client) Hosts() []string {
+	out := make([]string, len(c.nodes))
+	for i, n := range c.nodes {
+		out[i] = n.Hostname()
+	}
+	return out
+}
+
+// RequiresAuth asks a node for one row without credentials and reports
+// whether it refused: whether the cluster is closed to whoever reaches
+// its port. It is a read and changes nothing.
+func (c *Client) RequiresAuth(ctx context.Context) (bool, error) {
+	var lastErr error
+	start := c.preferred()
+	for i := range c.nodes {
+		target := *c.nodes[(start+i)%len(c.nodes)]
+		target.Path = strings.TrimSuffix(target.Path, "/") + "/db/query"
+		target.RawQuery = "q=" + url.QueryEscape("SELECT 1")
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+		if err != nil {
+			return false, fmt.Errorf("rqlite: %w", err)
+		}
+		resp, err := c.client.Do(req)
+		if err != nil {
+			lastErr = redact(err)
+			continue
+		}
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return true, nil
+		case http.StatusOK:
+			return false, nil
+		}
+		lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return false, fmt.Errorf("rqlite: %w", lastErr)
+}
+
+// ErrUnauthorized is in the error chain when a node refused the request
+// for want of credentials it accepts (HTTP 401 or 403).
+var ErrUnauthorized = errors.New("the node refused the credentials")
+
+// refused words a 401 or 403. It says what to look at and never what was
+// sent.
+func (c *Client) refused(status int) error {
+	if c.set {
+		return fmt.Errorf("rqlite: HTTP %d: %w: the user or password of rqlite.auth_file is not in rqlite's auth file, or lacks a permission (execute, query; backup and load for those commands)", status, ErrUnauthorized)
+	}
+	return fmt.Errorf("rqlite: HTTP %d: %w: rqlite wants a user and password, and none is configured (rqlite.auth_file)", status, ErrUnauthorized)
+}
+
+// configured reports whether a URL is one of the nodes of the config:
+// same scheme, same host and port.
+func (c *Client) configured(u *url.URL) bool {
+	for _, n := range c.nodes {
+		if n.Scheme == u.Scheme && strings.EqualFold(n.Host, u.Host) {
+			return true
+		}
+	}
+	return false
+}
+
+// authorize puts the credentials on a request, if it goes to a configured
+// node.
+func (c *Client) authorize(req *http.Request) {
+	if c.set && c.configured(req.URL) {
+		req.SetBasicAuth(c.user, c.pass)
+	}
+}
+
+// follow decides about a redirect: the URL to go to next, or an error.
+// With credentials only a configured node is followed to, since the
+// credentials would otherwise go to wherever a node, or somebody
+// answering in its place, points.
+func (c *Client) follow(from *url.URL, location string, status int) (*url.URL, error) {
+	next, err := from.Parse(location)
+	if err != nil || location == "" || (next.Scheme != "http" && next.Scheme != "https") {
+		return nil, fmt.Errorf("HTTP %d without a usable Location", status)
+	}
+	next.User = nil
+	if c.set && !c.configured(next) {
+		return nil, fmt.Errorf("HTTP %d to %s://%s, which is not a node of the config: not followed, the credentials stay here (list every node in rqlite.urls)", status, next.Scheme, next.Host)
+	}
+	return next, nil
 }
 
 // Execute runs the statements as one transaction and returns one result per
@@ -348,6 +497,7 @@ func (c *Client) attempt(ctx context.Context, target *url.URL, body []byte, want
 			return nil, done, fmt.Errorf("rqlite: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		c.authorize(req)
 		resp, err := c.client.Do(req)
 		if err != nil {
 			err = redact(err)
@@ -372,17 +522,19 @@ func (c *Client) attempt(ctx context.Context, target *url.URL, body []byte, want
 			return decode(data, want)
 		case http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
 			// "Not me, ask the leader": the node did nothing with it.
-			next, err := target.Parse(resp.Header.Get("Location"))
-			if err != nil || resp.Header.Get("Location") == "" || hop == maxRedirects ||
-				(next.Scheme != "http" && next.Scheme != "https") {
-				return nil, notSent, fmt.Errorf("HTTP %d without a usable Location", resp.StatusCode)
+			if hop == maxRedirects {
+				return nil, notSent, fmt.Errorf("HTTP %d: too many redirects", resp.StatusCode)
 			}
-			if next.User == nil {
-				next.User = target.User
+			next, err := c.follow(target, resp.Header.Get("Location"), resp.StatusCode)
+			if err != nil {
+				return nil, notSent, err
 			}
 			target = next
 			continue
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusBadRequest:
+		case http.StatusUnauthorized, http.StatusForbidden:
+			// No other node will think otherwise: they share the file.
+			return nil, done, c.refused(resp.StatusCode)
+		case http.StatusBadRequest:
 			// No other node will think otherwise.
 			return nil, done, fmt.Errorf("rqlite: HTTP %d: %s", resp.StatusCode, clip(data))
 		}
@@ -508,6 +660,7 @@ func (c *Client) transfer(ctx context.Context, method, path, contentType string,
 				req.ContentLength = size
 				req.Header.Set("Content-Type", contentType)
 			}
+			c.authorize(req)
 			resp, err := c.stream().Do(req)
 			if err != nil {
 				lastErr = redact(err)
@@ -524,17 +677,17 @@ func (c *Client) transfer(ctx context.Context, method, path, contentType string,
 			case http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
 				loc := resp.Header.Get("Location")
 				resp.Body.Close()
-				next, err := target.Parse(loc)
-				if err != nil || loc == "" || (next.Scheme != "http" && next.Scheme != "https") {
-					lastErr = fmt.Errorf("HTTP %d without a usable Location", resp.StatusCode)
+				next, err := c.follow(&target, loc, resp.StatusCode)
+				if err != nil {
+					lastErr = err
 					hop = maxRedirects
 					continue
 				}
-				if next.User == nil {
-					next.User = target.User
-				}
 				target = *next
 				continue
+			case http.StatusUnauthorized, http.StatusForbidden:
+				resp.Body.Close()
+				return c.refused(resp.StatusCode)
 			}
 			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
@@ -596,4 +749,49 @@ func (c *Client) Load(ctx context.Context, r io.ReadSeeker) error {
 		}
 		return nil
 	})
+}
+
+// LoadCredentials reads the user and password for rqlite from a file with
+// one line, "user:password". Like a key file it must be readable by its
+// owner only. The password may hold colons; the user may not.
+func LoadCredentials(path string) (user, password string, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", fmt.Errorf("rqlite credentials: %w", err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", "", fmt.Errorf("rqlite credentials: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return "", "", fmt.Errorf("rqlite credentials: %s is not a regular file", path)
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		return "", "", fmt.Errorf("rqlite credentials: %s has mode %04o, want 0600", path, perm)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 4096))
+	if err != nil {
+		return "", "", fmt.Errorf("rqlite credentials: %w", err)
+	}
+	line := strings.TrimRight(string(data), "\r\n")
+	user, password, ok := strings.Cut(line, ":")
+	if !ok || user == "" || password == "" || strings.ContainsAny(line, "\r\n") {
+		// Nothing of the file's content goes into the error.
+		return "", "", fmt.Errorf("rqlite credentials: %s does not hold one line \"user:password\"", path)
+	}
+	return user, password, nil
+}
+
+// LoadCA reads the certificates of a PEM file into a pool for TrustCA.
+func LoadCA(path string) (*x509.CertPool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("rqlite CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("rqlite CA: %s holds no certificate", path)
+	}
+	return pool, nil
 }

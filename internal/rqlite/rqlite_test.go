@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -274,13 +278,21 @@ func TestFollowsRedirect(t *testing.T) {
 		follower := newNode(t, func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, leader.URL+r.URL.RequestURI(), code)
 		})
-		c := cluster(t, strings.Replace(follower.URL, "http://", "http://user:secret@", 1))
+		// The leader is a node of the config: the credentials go along.
+		c := cluster(t, strings.Replace(follower.URL, "http://", "http://user:secret@", 1), leader.URL)
 		method, body = "", ""
 		if _, err := c.Execute(context.Background(), Stmt("INSERT")); err != nil {
 			t.Fatal(err)
 		}
 		if method != "POST" || body != `[["INSERT"]]` || auth != "user" {
 			t.Errorf("%d: the leader got %s %q, user %q", code, method, body, auth)
+		}
+		// Without credentials a redirect is followed wherever it leads,
+		// as before: there is nothing to lose.
+		c = cluster(t, follower.URL)
+		method, auth = "", "x"
+		if _, err := c.Execute(context.Background(), Stmt("INSERT")); err != nil || method != "POST" || auth != "" {
+			t.Errorf("%d without credentials: %v, the leader got %s, user %q", code, err, method, auth)
 		}
 	}
 	// A node that redirects to itself for ever is given up on.
@@ -493,5 +505,350 @@ func TestBackupReal(t *testing.T) {
 	// format, section 1.3).
 	if !bytes.HasPrefix(got.Bytes(), []byte("SQLite format 3\x00")) || got.Len() < 4096 {
 		t.Errorf("the backup is %d bytes and starts %q", got.Len(), got.Bytes()[:min(got.Len(), 16)])
+	}
+}
+
+// secretTransport notes every request that leaves the client: where it
+// went and whether it carried credentials.
+type sentRequest struct {
+	host string
+	auth bool
+}
+
+type recorder struct {
+	mu   sync.Mutex
+	sent []sentRequest
+}
+
+func (rec *recorder) wrap(c *Client) {
+	inner := c.client.Transport
+	cp := *c.client
+	cp.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
+		_, _, has := r.BasicAuth()
+		rec.mu.Lock()
+		rec.sent = append(rec.sent, sentRequest{r.URL.Host, has})
+		rec.mu.Unlock()
+		return inner.RoundTrip(r)
+	})
+	c.client = &cp
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// authNode is an rqlite with an auth file: 401 without the right user and
+// password, as rqlite 10.7 answers (checked against the real one: an empty
+// body, 401 also for a user that lacks the permission).
+func authNode(t *testing.T, user, password string, got *atomic.Int64) *node {
+	return newNode(t, func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		u, p, ok := r.BasicAuth()
+		if !ok || u != user || p != password {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if got != nil {
+			got.Add(1)
+		}
+		io.WriteString(w, `{"results":[{"columns":["1"],"values":[[1]]}]}`)
+	})
+}
+
+const testSecret = "s3cr3t-of-the-test-0nly"
+
+// A cluster that wants credentials: without them, and with wrong ones, a
+// request is refused at once and for good (no other node is asked and
+// nothing is tried again), and the error says what to look at without
+// saying what was sent.
+func TestCredentials(t *testing.T) {
+	var served atomic.Int64
+	n := authNode(t, "robinmail", testSecret, &served)
+	ctx := context.Background()
+
+	c := cluster(t, n.URL)
+	c.SetCredentials("robinmail", testSecret)
+	if _, err := c.Query(ctx, Strong, Stmt("SELECT 1")); err != nil {
+		t.Fatalf("with the right credentials: %v", err)
+	}
+	if _, err := c.Execute(ctx, Stmt("INSERT")); err != nil {
+		t.Fatalf("a write with the right credentials: %v", err)
+	}
+	// From the URL, as the config also allows.
+	c = cluster(t, strings.Replace(n.URL, "http://", "http://robinmail:"+testSecret+"@", 1))
+	if _, err := c.Query(ctx, Strong, Stmt("SELECT 1")); err != nil {
+		t.Fatalf("with credentials in the URL: %v", err)
+	}
+	if enc, creds := c.Security(); enc || !creds {
+		t.Errorf("Security: encrypted %v, credentials %v", enc, creds)
+	}
+
+	for name, set := range map[string]func(*Client){
+		"no credentials":   func(*Client) {},
+		"a wrong password": func(c *Client) { c.SetCredentials("robinmail", "not-"+testSecret) },
+		"a wrong user":     func(c *Client) { c.SetCredentials("someone", testSecret) },
+	} {
+		c := cluster(t, n.URL)
+		set(c)
+		before, hits := served.Load(), n.hits.Load()
+		start := time.Now()
+		for what, call := range map[string]func() error{
+			"Query":             func() error { _, err := c.Query(ctx, Strong, Stmt("SELECT 1")); return err },
+			"Execute":           func() error { _, err := c.Execute(ctx, Stmt("INSERT")); return err },
+			"ExecuteIdempotent": func() error { _, err := c.ExecuteIdempotent(ctx, Stmt("INSERT")); return err },
+			"Backup":            func() error { return c.Backup(ctx, io.Discard) },
+			"Load":              func() error { return c.Load(ctx, bytes.NewReader([]byte("x"))) },
+		} {
+			err := call()
+			if !errors.Is(err, ErrUnauthorized) {
+				t.Errorf("%s with %s: %v, want ErrUnauthorized", what, name, err)
+				continue
+			}
+			if strings.Contains(err.Error(), testSecret) || !strings.Contains(err.Error(), "rqlite.auth_file") {
+				t.Errorf("%s with %s: the error is %q", what, name, err)
+			}
+		}
+		if served.Load() != before {
+			t.Errorf("%s: a request was served", name)
+		}
+		// Five calls, five requests: a refusal is an answer, not a
+		// failure to try again.
+		if got := n.hits.Load() - hits; got != 5 || time.Since(start) > time.Second {
+			t.Errorf("%s: %d requests in %s, want 5 at once", name, got, time.Since(start))
+		}
+	}
+
+	// RequiresAuth: whether the cluster is closed to whoever reaches it.
+	c = cluster(t, n.URL)
+	c.SetCredentials("robinmail", testSecret)
+	if closed, err := c.RequiresAuth(ctx); err != nil || !closed {
+		t.Errorf("RequiresAuth on a node with an auth file: %v %v", closed, err)
+	}
+	open := newNode(t, ok)
+	c = cluster(t, open.URL)
+	c.SetCredentials("robinmail", testSecret) // sent, and nobody asks for them
+	if closed, err := c.RequiresAuth(ctx); err != nil || closed {
+		t.Errorf("RequiresAuth on an open node: %v %v", closed, err)
+	}
+}
+
+// Credentials go to the nodes of the config and nowhere else. A node, or
+// whoever answers in its place, that redirects to another host does not
+// get them sent there: with credentials such a redirect is not followed.
+func TestCredentialsStayHome(t *testing.T) {
+	ctx := context.Background()
+	var foreignAuth atomic.Value
+	foreignAuth.Store("")
+	var foreignHits atomic.Int64
+	foreign := newNode(t, func(w http.ResponseWriter, r *http.Request) {
+		foreignHits.Add(1)
+		if h := r.Header.Get("Authorization"); h != "" {
+			foreignAuth.Store(h)
+		}
+		io.Copy(io.Discard, r.Body)
+		io.WriteString(w, `{"results":[{"rows_affected":1}]}`)
+	})
+	redirecting := newNode(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, foreign.URL+r.URL.RequestURI(), http.StatusMovedPermanently)
+	})
+	for name, make := range map[string]func() *Client{
+		"SetCredentials": func() *Client { c := cluster(t, redirecting.URL); c.SetCredentials("robinmail", testSecret); return c },
+		"the URL": func() *Client {
+			return cluster(t, strings.Replace(redirecting.URL, "http://", "http://robinmail:"+testSecret+"@", 1))
+		},
+	} {
+		c := make()
+		c.Wait = 200 * time.Millisecond
+		rec := &recorder{}
+		rec.wrap(c)
+		for what, call := range map[string]func() error{
+			"Execute": func() error { _, err := c.Execute(ctx, Stmt("INSERT")); return err },
+			"Query":   func() error { _, err := c.Query(ctx, Strong, Stmt("SELECT 1")); return err },
+			"Backup":  func() error { return c.Backup(ctx, io.Discard) },
+			"Load":    func() error { return c.Load(ctx, bytes.NewReader([]byte("x"))) },
+		} {
+			err := call()
+			if err == nil || !strings.Contains(err.Error(), "not a node of the config") {
+				t.Errorf("credentials from %s, %s: %v", name, what, err)
+			}
+			if err != nil && strings.Contains(err.Error(), testSecret) {
+				t.Errorf("credentials from %s, %s: the error has the password: %v", name, what, err)
+			}
+		}
+		if foreignHits.Load() != 0 || foreignAuth.Load() != "" {
+			t.Errorf("credentials from %s: the foreign host got %d requests, Authorization %q", name, foreignHits.Load(), foreignAuth.Load())
+		}
+		rec.mu.Lock()
+		for _, r := range rec.sent {
+			if r.host != redirecting.Listener.Addr().String() {
+				t.Errorf("credentials from %s: a request left for %s", name, r.host)
+			}
+		}
+		rec.mu.Unlock()
+	}
+
+	// The same host with another scheme or port is another host.
+	c := cluster(t, redirecting.URL)
+	c.SetCredentials("robinmail", testSecret)
+	for _, loc := range []string{"https://" + redirecting.Listener.Addr().String() + "/db/request", "http://" + redirecting.Listener.Addr().String() + "0/db/request",
+		"//evil.example/db/request", "http://robinmail:x@evil.example/"} {
+		if next, err := c.follow(c.nodes[0], loc, 301); err == nil {
+			t.Errorf("a redirect to %s is followed, to %s", loc, next)
+		}
+	}
+	if next, err := c.follow(c.nodes[0], "/db/request?x=1", 307); err != nil || next.Host != c.nodes[0].Host {
+		t.Errorf("a redirect on the same node: %v %v", next, err)
+	}
+}
+
+// Nothing the client says holds the password: not the errors of a node
+// that is away, of a URL that does not parse, of a refused login, and not
+// what it logs (it logs nothing).
+func TestNoSecretInErrors(t *testing.T) {
+	ctx := context.Background()
+	dead := httptest.NewServer(nil)
+	dead.Close()
+	withSecret := func(u string) string { return strings.Replace(u, "http://", "http://robinmail:"+testSecret+"@", 1) }
+	var errs []error
+	c := cluster(t, withSecret(dead.URL))
+	c.Wait = 100 * time.Millisecond
+	_, err := c.Execute(ctx, Stmt("INSERT"))
+	errs = append(errs, err)
+	_, err = c.Query(ctx, Weak, Stmt("SELECT 1"))
+	errs = append(errs, err, c.Backup(ctx, io.Discard))
+	_, err = c.RequiresAuth(ctx)
+	errs = append(errs, err)
+	slow := newNode(t, func(w http.ResponseWriter, r *http.Request) { time.Sleep(300 * time.Millisecond) })
+	c = cluster(t, withSecret(slow.URL))
+	c.client.Timeout = 50 * time.Millisecond
+	c.Wait = 100 * time.Millisecond
+	_, err = c.Query(ctx, Weak, Stmt("SELECT 1"))
+	errs = append(errs, err)
+	for _, bad := range []string{"http://robinmail:" + testSecret + "@host:port:4001", "ftp://robinmail:" + testSecret + "@host/", "http://robinmail:" + testSecret + "@%zz/"} {
+		_, err := NewCluster([]string{bad}, nil)
+		errs = append(errs, err)
+	}
+	for i, err := range errs {
+		if err == nil {
+			t.Errorf("call %d: no error", i)
+		} else if strings.Contains(err.Error(), testSecret) || strings.Contains(fmt.Sprintf("%#v %+v", err, err), testSecret) {
+			t.Errorf("call %d: the error has the password: %v", i, err)
+		}
+	}
+	// And the node list the client keeps has no user in it.
+	c = cluster(t, withSecret(slow.URL))
+	for _, n := range c.nodes {
+		if n.User != nil || strings.Contains(n.String(), testSecret) {
+			t.Errorf("a node URL kept its credentials: %s", n.Redacted())
+		}
+	}
+}
+
+// HTTPS with a CA of one's own: the node's certificate is checked against
+// it, and a node with another certificate is not talked to.
+func TestTrustCA(t *testing.T) {
+	ctx := context.Background()
+	var served atomic.Int64
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		if u, p, _ := r.BasicAuth(); u != "robinmail" || p != testSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		served.Add(1)
+		io.WriteString(w, `{"results":[{"columns":["1"],"values":[[1]]}]}`)
+	}))
+	defer srv.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+
+	c := cluster(t, srv.URL)
+	c.Wait = 200 * time.Millisecond
+	c.SetCredentials("robinmail", testSecret)
+	// Without the CA the certificate is unknown and nothing is sent.
+	if _, err := c.Query(ctx, Weak, Stmt("SELECT 1")); err == nil || served.Load() != 0 {
+		t.Errorf("an unknown certificate: %v, %d served", err, served.Load())
+	}
+	if err := c.TrustCA(pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Query(ctx, Weak, Stmt("SELECT 1")); err != nil || served.Load() != 1 {
+		t.Errorf("with the CA: %v, %d served", err, served.Load())
+	}
+	if err := c.Backup(ctx, io.Discard); err != nil {
+		t.Errorf("Backup with the CA: %v", err)
+	}
+	if enc, creds := c.Security(); !enc || !creds {
+		t.Errorf("Security: encrypted %v, credentials %v", enc, creds)
+	}
+	// Another server, with a certificate of another CA: refused.
+	other := httptest.NewUnstartedServer(http.HandlerFunc(ok))
+	other.StartTLS()
+	defer other.Close()
+	// httptest gives every server the same certificate; a pool without
+	// it stands for "another CA".
+	c2 := cluster(t, other.URL)
+	c2.Wait = 200 * time.Millisecond
+	if err := c2.TrustCA(x509.NewCertPool()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c2.Query(ctx, Weak, Stmt("SELECT 1")); err == nil {
+		t.Error("a certificate that the CA did not sign is accepted")
+	}
+	// One node over http makes the cluster "not encrypted".
+	mixed := cluster(t, srv.URL, "http://127.0.0.1:1")
+	if enc, _ := mixed.Security(); enc {
+		t.Error("a cluster with a plain http node counts as encrypted")
+	}
+}
+
+// The credentials file: one line "user:password", for its owner only. What
+// is wrong with it is said without quoting it.
+func TestLoadCredentials(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string, mode os.FileMode) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(p, mode)
+		return p
+	}
+	for content, want := range map[string][2]string{
+		"robinmail:" + testSecret + "\n":   {"robinmail", testSecret},
+		"robinmail:" + testSecret:          {"robinmail", testSecret},
+		"robinmail:" + testSecret + "\r\n": {"robinmail", testSecret},
+		"u:pass:with:colons\n":             {"u", "pass:with:colons"},
+		"u: a password with spaces \n":     {"u", " a password with spaces "},
+	} {
+		user, pass, err := LoadCredentials(write("ok", content, 0o600))
+		if err != nil || user != want[0] || pass != want[1] {
+			t.Errorf("%q: %q %q %v", content, user, pass, err)
+		}
+	}
+	for name, content := range map[string]string{
+		"empty": "", "no colon": testSecret + "\n", "no user": ":" + testSecret + "\n", "no password": "robinmail:\n",
+		"two lines": "robinmail:" + testSecret + "\nother:" + testSecret + "\n",
+	} {
+		_, _, err := LoadCredentials(write("bad", content, 0o600))
+		if err == nil || strings.Contains(err.Error(), testSecret) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// Readable by others: refused, like a key file.
+	for _, mode := range []os.FileMode{0o644, 0o640, 0o604} {
+		_, _, err := LoadCredentials(write("open", "robinmail:"+testSecret+"\n", mode))
+		if err == nil || !strings.Contains(err.Error(), "0600") || strings.Contains(err.Error(), testSecret) {
+			t.Errorf("mode %04o: %v", mode, err)
+		}
+	}
+	if _, _, err := LoadCredentials(filepath.Join(dir, "absent")); err == nil {
+		t.Error("a missing file")
+	}
+	if _, _, err := LoadCredentials(dir); err == nil {
+		t.Error("a directory")
+	}
+	if _, err := LoadCA(write("ca", "not a certificate\n", 0o644)); err == nil {
+		t.Error("a CA file without a certificate")
 	}
 }

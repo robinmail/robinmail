@@ -51,6 +51,77 @@ func certificateExpiry(path string) (time.Time, error) {
 	}
 }
 
+// loopbackHost reports whether a host name or address is this machine.
+func loopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+// rqliteLink describes the connection to rqlite: whether it is encrypted,
+// whether rqlite asks for credentials, and whether it leaves this machine.
+// Whoever reaches rqlite's HTTP port without a login owns every account,
+// so a connection that leaves the machine wants both.
+type rqliteLink struct {
+	encrypted, credentials, required, local bool
+	probeErr                                error
+}
+
+func (a *app) rqliteLink(ctx context.Context) rqliteLink {
+	var l rqliteLink
+	l.encrypted, l.credentials = a.db.Security()
+	l.local = true
+	for _, h := range a.db.Hosts() {
+		if !loopbackHost(h) {
+			l.local = false
+		}
+	}
+	l.required, l.probeErr = a.db.RequiresAuth(ctx)
+	return l
+}
+
+func (l rqliteLink) String() string {
+	enc, auth := "not encrypted (http)", "rqlite asks for no login"
+	if l.encrypted {
+		enc = "encrypted (https)"
+	}
+	switch {
+	case l.probeErr != nil:
+		auth = "could not ask whether rqlite wants a login"
+		if l.credentials {
+			auth += "; credentials are sent"
+		}
+	case l.required:
+		auth = "authenticated"
+	case l.credentials:
+		auth = "credentials are sent, but rqlite asks for none: it answers anybody"
+	}
+	where := "on this machine"
+	if !l.local {
+		where = "over the network"
+	}
+	return auth + ", " + enc + ", " + where
+}
+
+// problem is what is wrong with the link, or "". A connection that stays
+// on this machine may be plain and without a login: the port is then the
+// operator's to keep closed.
+func (l rqliteLink) problem() string {
+	var p []string
+	if l.probeErr == nil && !l.required {
+		p = append(p, "rqlite answers without a login (give it an auth file and set rqlite.auth_file)")
+	}
+	if !l.encrypted && !l.local {
+		p = append(p, "the connection is not encrypted (use https and rqlite.ca_file, or keep rqlite on loopback)")
+	}
+	if l.local && l.probeErr == nil && !l.required {
+		return "" // loopback, no login: the simple setup of development
+	}
+	return strings.Join(p, "; ")
+}
+
 // certificateWarning is how long before its end a certificate fails the
 // check.
 const certificateWarning = 7 * 24 * time.Hour
@@ -70,6 +141,17 @@ func (a *app) checks(ctx context.Context, full bool) []check {
 		}
 	}
 	out = append(out, c)
+
+	if full {
+		// How the database is reached. Not a failure in itself: a warning
+		// in the detail, and in the log of "serve".
+		link := a.rqliteLink(ctx)
+		c = check{name: "rqlite link", detail: link.String()}
+		if p := link.problem(); p != "" {
+			c.detail += "; WARNING: " + p
+		}
+		out = append(out, c)
+	}
 
 	c = check{name: "master key"}
 	if !full {

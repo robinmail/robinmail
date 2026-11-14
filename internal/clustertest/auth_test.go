@@ -117,10 +117,7 @@ func ends(t *testing.T, what string, ended <-chan struct{}, since time.Time) {
 func authAcrossNodes(t *testing.T) {
 	// The cluster's containers all reach the nodes from one address: the
 	// counter of that address is this test's to reset.
-	if resp, err := http.Post("http://"+rqliteHTTP[0]+"/db/execute", "application/json",
-		strings.NewReader(`["DELETE FROM login_failure WHERE key LIKE 'i:%'"]`)); err == nil {
-		resp.Body.Close()
-	}
+	rqliteAdmin(0, "POST", "/db/execute", []byte(`["DELETE FROM login_failure WHERE key LIKE 'i:%'"]`))
 	user := fmt.Sprintf("auth%d@%s", time.Now().UnixNano()%1_000_000_000, domain)
 	pw := password()
 	sh(t, 0, fmt.Sprintf(`printf '%%s\n' '%s' | robinmail -config %s user add %s`, pw, robin[0].config, user))
