@@ -31,6 +31,9 @@ func TestCluster(t *testing.T) {
 	t.Run("e: throughput", func(t *testing.T) { throughput(t, sessions) })
 	t.Run("f: sending while a node that holds queue claims is killed", func(t *testing.T) { senderKilled(t, sessions) })
 	t.Run("g: logins, revocation and limits across the nodes", authAcrossNodes)
+	t.Run("h: a quota under concurrent delivery through three nodes", quotaAcrossNodes)
+	t.Run("i: Sieve under concurrent delivery through three nodes", sieveAcrossNodes)
+	t.Run("j: a scrub replaces a damaged blob file from another node", scrubRepairs)
 }
 
 func report(t *testing.T, st *stream, d time.Duration) {

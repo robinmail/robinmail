@@ -482,7 +482,8 @@ func (j *jmap) call(cookie, method string, args map[string]any) (map[string]any,
 	return res, nil
 }
 
-var usingAll = []string{"urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:submission"}
+var usingAll = []string{"urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:submission",
+	"urn:ietf:params:jmap:quota", "urn:ietf:params:jmap:sieve", "urn:ietf:params:jmap:vacationresponse"}
 
 // batch runs several method calls in one request and returns the
 // arguments of every response, in order. A method error fails it.

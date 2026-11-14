@@ -1943,7 +1943,7 @@ Built as follows:
 Built in this order, each item committed with its tests: 1 full-text
 search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas (done), 6 MTA-STS
 serving and TLS-RPT (done), 7 autoconfig (done), 8 operations (done), 9 README (done), 10 lab and
-cluster cases.
+cluster cases (done).
 
 Built as follows:
 
@@ -2622,13 +2622,48 @@ Built as follows:
     without a manifest, with a changed database file, into a database
     that is not empty; a backup that lacks a blob); `TestOperations`
     (health, status, `/healthz`, `/metrics`, the queue commands, user
-    show and remove, a scrub that finds a damaged file).
+    show and remove, a scrub that finds a damaged file). The cluster
+    test (j) repairs a damaged file from another node.
   - **Not handled.** No incremental backup and no restore of one
     account. No backup to anything but a directory. No reload of the key
     file without a restart. A master key is not kept in a KMS or HSM.
     `user remove` is one large batch for a large account. The periodic
     scrub has no rate limit. `/metrics` has no histograms: no latencies.
     No alerting; `health` is what a monitor calls.
+
+- **Lab and cluster cases of phase 8.**
+  - **Lab** (`TestPhase8`, `internal/labtest/phase8_test.go`), with
+    Postfix as the server mail comes from or goes on to, and Exim as
+    the third party where one is needed:
+
+    | case | result |
+    |---|---|
+    | alias for two accounts: both get the message from Postfix, envelope and body as sent; `+tag` on an alias; the catch-all | pass |
+    | alias forwards from Exim to Postfix: Postfix sees `MAIL FROM:<SRS0=hash=day=exim.test=alice@robin.test>`, the message untouched, the alias in `Delivered-To` | pass |
+    | forward to an unknown user at Postfix: Postfix's `550 5.1.1` comes back to the sender at Exim as a notification, through the rewritten address | pass |
+    | forwarding loop (the alias forwards to bob at Postfix, whose `.forward` sends it back): robinmail forwards once, refuses the return with `554 5.4.6`, the sender hears of it once | pass |
+    | vacation reply (JMAP `VacationResponse`) to Postfix: `Auto-Submitted: auto-replied`, `In-Reply-To` and `References` of the original, null envelope sender; no second reply to the same sender, none to a list (`List-Id`), none to an automatic message | pass |
+    | Sieve `redirect` to Postfix: the message unchanged with the rewritten sender and not kept; kept as well with `:copy`; the rest stays | pass |
+
+  - **Cluster** (`TestCluster` h, i, j, `internal/clustertest/phase8_test.go`),
+    three robinmail nodes on three rqlite nodes:
+    - **h, quota:** 90 deliveries at once through the three nodes into
+      room for 20: 20 got 250, 70 got `452`; 20 emails and `used` 20 on
+      every node; the counters equal the rows (messages and octets).
+      Five destroyed over JMAP while 30 more arrive: at most five get
+      in; filled up again to exactly 20.
+    - **i, Sieve:** 60 messages at once through the three nodes for an
+      account whose script does `fileinto :create` into two mailboxes
+      that do not exist, sets a flag and answers with `vacation`. Each
+      mailbox exists once, 20 messages in each and in the Inbox, the
+      flag on the right 20, on every node; the sender (the cluster's
+      "sink" server) has one reply and `vacation_sent` one row.
+    - **j, scrub:** one byte of a blob file changed on one node:
+      `robinmail scrub` there reports 1 corrupt, 1 repaired among about
+      15 000 files; the file is again what the other nodes have and the
+      message reads through that node.
+  - **Playwright**, one spec per new screen: `search`, `aliases`,
+    `filters`, `vacation`, `quota`, `mailapps`.
 
 ## Open questions
 
