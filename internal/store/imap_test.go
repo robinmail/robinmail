@@ -477,3 +477,61 @@ func TestMailboxStatuses(t *testing.T) {
 		t.Errorf("no such account: %v", err)
 	}
 }
+
+// A move of messages into the mailbox they are in gives them new UIDs, in
+// the order they had, above every UID the mailbox gave out before.
+func TestMoveWithinMailbox(t *testing.T) {
+	s := open(t)
+	a := account(t, s)
+	box, ids := imapBox(t, s, a.ID, "Self", 4)
+	before := state(t, s, a)
+	r, err := s.CopyMessages(ctx, a.ID, box.ID, []UIDRange{{1, 1}, {3, 3}}, box.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want(t, "state", r.State, before+1)
+	want(t, "pairs", r.Pairs, []UIDPair{{1, 5}, {3, 6}})
+	v := view(t, s, a.ID, box.ID, 0)
+	want(t, "uids", v.UIDs, []uint32{2, 4, 5, 6})
+	want(t, "uidnext", v.UIDNext, uint32(7))
+	want(t, "the same emails", []int64{v.Changed[2].EmailID, v.Changed[3].EmailID}, []int64{ids[0], ids[2]})
+	c := changesSince(t, s, a.ID, before)
+	want(t, "JMAP: updated", c.Email.Updated, []int64{ids[0], ids[2]})
+	// The next delivery comes after them.
+	e, err := s.Deliver(ctx, a.ID, Message{Raw: msg("<self-new@example.test>", "new"), MailboxID: box.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want(t, "uid of the next delivery", e.Mailboxes[box.ID], uint32(7))
+}
+
+// RFC 3501 2.3.1.1: "the combination of mailbox name, UIDVALIDITY, and UID
+// must refer to a single immutable message on that server forever". A
+// mailbox that is deleted and made again under its name, within the same
+// second, gets another UIDVALIDITY; so do all mailboxes made in a second.
+func TestUIDValidityIsNeverReused(t *testing.T) {
+	s := open(t)
+	a := account(t, s)
+	seen := map[uint32]bool{}
+	for i := 0; i < 5; i++ {
+		m, err := s.CreateMailbox(ctx, a.ID, 0, "Again")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[m.UIDValidity] {
+			t.Fatalf("UIDVALIDITY %d was given out twice", m.UIDValidity)
+		}
+		seen[m.UIDValidity] = true
+		if _, err := s.DestroyMailbox(ctx, a.ID, m.ID, true, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// It is still near the clock, and above the mailboxes the account
+	// was made with.
+	inbox := mailboxByRole(t, s, a.ID, RoleInbox)
+	for v := range seen {
+		if v <= inbox.UIDValidity || int64(v) > s.Now().Unix()+10 {
+			t.Errorf("UIDVALIDITY %d, the inbox has %d, now is %d", v, inbox.UIDValidity, s.Now().Unix())
+		}
+	}
+}

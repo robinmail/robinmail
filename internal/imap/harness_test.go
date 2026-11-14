@@ -209,6 +209,7 @@ func (s *memStore) Create(ctx context.Context, parent int64, name string) (int64
 		}
 	}
 	id := s.create(parent, name)
+	s.boxes[id].Subscribed = false // a client subscribes itself
 	s.changed()
 	return id, nil
 }
@@ -439,8 +440,20 @@ func (s *memStore) Copy(ctx context.Context, from int64, uids []UIDRange, to int
 	var modseq int64
 	for _, uid := range src.sorted(uids) {
 		id := src.uids[uid]
-		if from == to {
+		if from == to && !move {
 			pairs = append(pairs, UIDPair{uid, uid})
+			continue
+		}
+		if from == to {
+			// A move within the mailbox: a new UID.
+			if modseq == 0 {
+				modseq = s.changed()
+			}
+			s.msgs[id].modseq = modseq
+			delete(src.uids, uid)
+			src.uids[src.UIDNext] = id
+			pairs = append(pairs, UIDPair{uid, src.UIDNext})
+			src.UIDNext++
 			continue
 		}
 		if modseq == 0 {

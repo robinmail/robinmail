@@ -508,9 +508,14 @@ func TestRFC3501Subscribe(t *testing.T) {
 	c := e.login()
 	c.ok("CREATE news/comp/mail/mime")
 	c.ok("CREATE news/comp/mail/misc")
-	for _, name := range []string{"INBOX", "Drafts", "Sent", "Junk", "Trash", "news", "news/comp", "news/comp/mail"} {
+	// What CREATE makes is not subscribed; the mailboxes an account
+	// comes with are.
+	for _, name := range []string{"INBOX", "Drafts", "Sent", "Junk", "Trash"} {
 		c.expect("UNSUBSCRIBE "+name, "OK UNSUBSCRIBE completed")
 	}
+	c.expect(`LSUB "" *`, "OK LSUB completed")
+	c.expect("SUBSCRIBE news/comp/mail/mime", "OK SUBSCRIBE completed")
+	c.expect("SUBSCRIBE news/comp/mail/misc", "OK SUBSCRIBE completed")
 	c.expect(`LSUB "news/" "comp/mail/*"`,
 		`* LSUB () "/" news/comp/mail/mime`,
 		`* LSUB () "/" news/comp/mail/misc`,
@@ -741,7 +746,12 @@ func TestRFC3501ExpungeOnlyWhenAllowed(t *testing.T) {
 	// Once the session knows that the message is gone it has nothing to
 	// say about it, but its number stays taken.
 	c.expect("FETCH 2 UID", "OK FETCH completed")
-	c.expect("SEARCH ALL", "* SEARCH 1 3 4 5 6", "OK SEARCH completed")
+	// For the client message 2 is still there, and a search by what the
+	// session knows of it finds it; its text is gone with the message.
+	c.expect("SEARCH ALL", "* SEARCH 1 2 3 4 5 6", "OK SEARCH completed")
+	c.expect("SEARCH 2:3 UNSEEN SMALLER 5000", "* SEARCH 2 3", "OK SEARCH completed")
+	c.expect("SEARCH SUBJECT message", "* SEARCH 1 3 4 5", "OK SEARCH completed")
+	c.expect("SEARCH BODY message", "* SEARCH 1 3 4 5 6", "OK SEARCH completed")
 	c.expect(`STORE 2:3 +FLAGS (\Seen)`, `* 3 FETCH (FLAGS (\Seen))`, "OK STORE completed")
 	c.expect("FETCH 2 BODY.PEEK[]", "OK FETCH completed")
 	// NOOP may: the numbers move now.

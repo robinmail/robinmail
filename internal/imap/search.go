@@ -221,16 +221,28 @@ func (s *searcher) field(i int, name, remembered string, partial bool, needle st
 	if containsFold(remembered, needle) {
 		return true, nil
 	}
-	if !partial {
+	// What is remembered is the field as text. Cut short it may lack
+	// the match; with comments or quoting in it, an address may be
+	// written in pieces ("<user (the) @ example.org>"). Then the message
+	// decides, with its addresses read as addresses.
+	if !partial && !strings.ContainsAny(remembered, "(\"\\") {
 		return false, nil
 	}
 	e, err := s.open(i)
 	if err != nil {
 		return false, err
 	}
-	for _, t := range headerText(e, name) {
-		if containsFold(t, needle) {
+	for _, v := range message.All(e.hdr, name) {
+		if containsFold(message.Text(v), needle) {
 			return true, nil
+		}
+		if name == "Subject" {
+			continue
+		}
+		for _, a := range message.Addresses(v) {
+			if containsFold(a.Email, needle) || (a.Name != nil && containsFold(*a.Name, needle)) {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
@@ -354,26 +366,42 @@ func (s *searcher) match(k *searchKey, i int) (bool, error) {
 	case "SINCE":
 		return !day(m.date).Before(k.date), nil
 	case "SENTBEFORE", "SENTON", "SENTSINCE":
-		sent := sum.SentAt
-		if sent.IsZero() && sum.Partial {
-			e, err := s.open(i)
-			if err != nil {
-				return false, err
+		// The date of the Date field as it is written there,
+		// "disregarding time and timezone". The store remembers the
+		// moment, not the zone; the date written is that moment's UTC
+		// date or the day before or after. Only when those three do not
+		// agree is the message opened to read the field.
+		test := func(d time.Time) bool {
+			switch k.op {
+			case "SENTBEFORE":
+				return d.Before(k.date)
+			case "SENTON":
+				return sameDay(d, k.date)
 			}
-			if v, ok := e.get("Date"); ok {
-				sent, _ = message.Date(v)
-			}
+			return !d.Before(k.date)
 		}
-		if sent.IsZero() {
+		if sent := sum.SentAt; !sent.IsZero() {
+			d := day(sent)
+			if r := test(d); r == test(d.AddDate(0, 0, -1)) && r == test(d.AddDate(0, 0, 1)) {
+				return r, nil
+			}
+		} else if !sum.Partial {
+			return false, nil // no Date field that parses
+		}
+		e, err := s.open(i)
+		if err != nil {
+			return false, err
+		}
+		v, ok := e.get("Date")
+		if !ok {
 			return false, nil
 		}
-		switch k.op {
-		case "SENTBEFORE":
-			return day(sent).Before(k.date), nil
-		case "SENTON":
-			return sameDay(day(sent), k.date), nil
+		t, ok := message.Date(v)
+		if !ok {
+			return false, nil
 		}
-		return !day(sent).Before(k.date), nil
+		y, mo, d := t.Date()
+		return test(time.Date(y, mo, d, 0, 0, 0, 0, time.UTC)), nil
 	case "MODSEQ":
 		return m.modseq >= k.num, nil
 	case "FROM":
@@ -496,16 +524,14 @@ func (c *conn) cmdSearch(tag string, p *parser, uid bool) (reply, error) {
 		return reply{}, bad("there is no saved search result")
 	}
 	if usesModseq {
-		c.condstore = true
+		c.enableCondstore()
 	}
 	s := c.sel
 	sr := &searcher{c: c}
 	if needSummary && len(s.msgs) > 0 {
 		ids := make([]int64, 0, len(s.msgs))
 		for _, m := range s.msgs {
-			if !m.gone {
-				ids = append(ids, m.id)
-			}
+			ids = append(ids, m.id)
 		}
 		if sr.summaries, err = c.user.Summaries(c.ctx, ids); err != nil {
 			return reply{}, err
@@ -513,10 +539,14 @@ func (c *conn) cmdSearch(tag string, p *parser, uid bool) (reply, error) {
 	}
 	var hits []int
 	var highest int64
+	// A message that another session expunged and that this client has
+	// not been told about yet (no EXPUNGE may be sent during SEARCH) is
+	// still a message of the mailbox for the client. It is searched like
+	// the others by what the session holds: its number, UID, flags, size
+	// and dates. Its header and body can only be searched while the
+	// message still exists somewhere; one that is destroyed matches no
+	// key that needs them.
 	for i, m := range s.msgs {
-		if m.gone {
-			continue
-		}
 		ok, err := sr.match(prog, i)
 		if errors.Is(err, ErrNoMessage) {
 			s.dirty = true
@@ -600,6 +630,17 @@ func (c *conn) cmdSearch(tag string, p *parser, uid bool) (reply, error) {
 		b.WriteString(" COUNT " + strconv.Itoa(len(nums)))
 	}
 	if usesModseq && len(nums) > 0 {
+		// RFC 7162 3.1.5 (and RFC 4731 3.2): with only MIN, MAX or both,
+		// the MODSEQ is that of those messages, not of all that matched.
+		if !opts["ALL"] && !opts["COUNT"] && (opts["MIN"] || opts["MAX"]) {
+			highest = 0
+			if opts["MIN"] {
+				highest = s.msgs[hits[0]].modseq
+			}
+			if opts["MAX"] {
+				highest = max(highest, s.msgs[hits[len(hits)-1]].modseq)
+			}
+		}
 		b.WriteString(" MODSEQ " + strconv.FormatInt(highest, 10))
 	}
 	// RFC 5182 2.1: with only SAVE nothing needs to be returned.

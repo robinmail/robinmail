@@ -16,6 +16,7 @@
 #   10.77.25.3   web         nginx: https://mta-sts.<domain>/ and the gate
 #   10.77.25.4   rqlite      robinmail's database
 #   10.77.25.5   jmapsuite   Fastmail's JMAP-TestSuite, only with "lab.sh suite"
+#   10.77.25.6   imapclients Dovecot's ImapTest, mbsync and OfflineIMAP, run by the tests
 #   10.77.25.10  robinmail   mx.robin.test      robin.test
 #   10.77.25.11  postfix     mx.postfix.test    postfix.test, late.postfix.test
 #   10.77.25.12  exim        mx.exim.test       exim.test, late.exim.test
@@ -137,6 +138,17 @@ services:
       LAB_TLS: "no"
     volumes: *mounts
     networks: {lab: {ipv4_address: 10.77.25.15}}
+
+  # IMAP clients that are not ours: Dovecot's ImapTest, mbsync, OfflineIMAP.
+  # The container waits; the tests run the clients in it.
+  imapclients:
+    <<: *peer
+    image: robinmail-lab-imapclients
+    build: ./imapclients
+    hostname: clients
+    stop_grace_period: 2s
+    volumes: *mounts
+    networks: {lab: {ipv4_address: 10.77.25.6}}
 
   # Fastmail's JMAP-TestSuite against the lab's robinmail. Not started by
   # "up": "lab.sh suite" builds and runs it.

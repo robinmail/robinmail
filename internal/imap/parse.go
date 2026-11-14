@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -366,7 +365,7 @@ func (p *parser) number() (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	if n > math.MaxUint32 {
+	if n > 1<<32-1 {
 		return 0, bad("a number is too large")
 	}
 	return uint32(n), nil
@@ -388,8 +387,9 @@ func (p *parser) number64() (int64, error) {
 	return n, nil
 }
 
-// star is "*" in a sequence set: the highest number in use.
-const star = math.MaxUint32
+// star is "*" in a sequence set: the highest number in use. 0 is free
+// for it: no message has that number or UID.
+const star = 0
 
 // seqRange is one range of a sequence set, Lo <= Hi after resolve.
 type seqRange struct{ Lo, Hi uint32 }
@@ -409,7 +409,7 @@ func (p *parser) seqNumber() (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	if n == 0 {
+	if n == star {
 		return 0, bad("0 is not a message number")
 	}
 	return n, nil

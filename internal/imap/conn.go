@@ -164,6 +164,8 @@ func (c *conn) failure(what string, err error) reply {
 	switch {
 	case errors.Is(err, ErrNoMailbox):
 		return noCode("NONEXISTENT", "no such mailbox")
+	case errors.Is(err, errNotUTF7):
+		return noCode("CANNOT", "the mailbox name is not modified UTF-7")
 	case errors.Is(err, ErrExists):
 		return noCode("ALREADYEXISTS", "a mailbox with that name exists")
 	case errors.Is(err, ErrHasChildren):
@@ -686,6 +688,19 @@ func (c *conn) login(name, password string) reply {
 	c.state = stateAuth
 	c.srv.Logger.Info("imap: login", "user", user.Username(), "ip", c.ip)
 	return okCode("CAPABILITY "+c.capabilities(), "logged in")
+}
+
+// enableCondstore turns CONDSTORE on for the session. RFC 7162 3.1.2.1:
+// when a "CONDSTORE enabling command" does that while a mailbox is
+// selected, the client is told the mailbox's HIGHESTMODSEQ.
+func (c *conn) enableCondstore() {
+	if c.condstore {
+		return
+	}
+	c.condstore = true
+	if c.sel != nil {
+		c.printf("* OK [HIGHESTMODSEQ %d] the highest modseq", c.sel.modseq)
+	}
 }
 
 // cmdEnable is RFC 5161.

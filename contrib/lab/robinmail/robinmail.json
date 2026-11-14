@@ -24,6 +24,13 @@
     "max_recipients_per_hour": 100000,
     "undo_seconds": 0
   },
+  "imap": {
+    "listen_tls": ":993",
+    "listen": ":143",
+    "max_connections": 2000,
+    "max_connections_per_ip": 1000,
+    "max_connections_per_user": 1000
+  },
   "dev": {
     "retry_seconds": 5,
     "smtp_trace": true

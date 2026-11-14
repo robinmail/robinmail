@@ -24,6 +24,9 @@ versions() {
 	echo "postgrey  $($COMPOSE exec -T postfix dpkg-query -W -f '${Version}' postgrey)"
 	echo "swaks     $($COMPOSE exec -T postfix dpkg-query -W -f '${Version}' swaks)"
 	echo "ripmime   $($COMPOSE exec -T postfix dpkg-query -W -f '${Version}' ripmime)"
+	echo "ImapTest  $($COMPOSE exec -T imapclients sh -c 'echo "release latest, commit $(cat /lab/imaptest/commit 2>/dev/null || echo bc23019)"')"
+	echo "mbsync    $($COMPOSE exec -T imapclients mbsync --version)"
+	echo "OfflineIMAP $($COMPOSE exec -T imapclients offlineimap --version)"
 	echo "CoreDNS   $($COMPOSE exec -T dns /coredns -version 2>/dev/null | sed -n 's/^CoreDNS-//p')"
 	echo "nginx     $($COMPOSE exec -T web nginx -v 2>&1 | sed 's/.*\///')"
 	echo "rqlite    $($COMPOSE exec -T rqlite rqlited -version 2>&1 | awk '{print $2}')"
@@ -61,7 +64,9 @@ until robinmail domain list >/dev/null 2>&1; do
 	sleep 1
 done
 robinmail domain list | grep -qx robin.test || robinmail domain add robin.test
-for u in alice bob; do
+# alice and bob exchange mail with the peers; the others are the accounts of
+# the IMAP clients (imaptest, mbsync, offlineimap), one each.
+for u in alice bob imaptest mbsync offlineimap; do
 	robinmail user list | grep -q "^$u@robin.test" || printf '%s\n' "$PASSWORD" | robinmail user add "$u@robin.test"
 done
 

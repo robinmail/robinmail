@@ -91,8 +91,11 @@ func TestRFC3501Search(t *testing.T) {
 		{`TEXT lunch`, "2 3"}, {`TEXT example.org`, "1 2 3 4 5"},
 		{`HEADER X-Priority highest`, "4"}, {`HEADER X-Priority ""`, "4"}, {`HEADER Cc ""`, "4"}, {`HEADER X-Nothing ""`, ""},
 		{"BEFORE 3-Feb-1994", "1 2"}, {"ON 3-Feb-1994", "3"}, {"SINCE 3-Feb-1994", "3 4 5"}, {`ON "10-Jan-1994"`, "1"},
-		// The Date field of message 5 says the 5th, its internal date the 6th.
-		{"SENTBEFORE 3-Feb-1994", "1 2"}, {"SENTON 5-Feb-1994", ""}, {"SENTON 6-Feb-1994", "5"}, {"SENTSINCE 4-Feb-1994", "4 5"},
+		// The SENT keys go by the Date field "disregarding time and
+		// timezone": message 5 says "Sat, 5 Feb 1994 23:30:00 -0800",
+		// which is the 5th there and the 6th in UTC.
+		{"SENTBEFORE 3-Feb-1994", "1 2"}, {"SENTON 5-Feb-1994", "5"}, {"SENTON 6-Feb-1994", ""}, {"SENTSINCE 4-Feb-1994", "4 5"},
+		{"SENTBEFORE 6-Feb-1994", "1 2 3 4 5"}, {"SENTSINCE 6-Feb-1994", ""},
 		{"LARGER 1000", "4"}, {"SMALLER 1000", "1 2 3 5"},
 		{"1:2", "1 2"}, {"9", ""}, {"4:5000", "4 5"}, {"2,4:*", "2 4 5"}, {"*", "5"}, {"UID 3:*", "3 4 5"}, {"UID 7:*", "5"},
 		{"NOT FLAGGED", "4 5"}, {"NOT NOT SEEN", "1 4"},
@@ -144,6 +147,10 @@ func TestSearchOpensOnlyWhatItMust(t *testing.T) {
 		want   int
 	}{
 		{"SEARCH FLAGGED SINCE 1-Feb-1994 NOT FROM smith SUBJECT lunch SMALLER 5000", 0},
+		// A SENT date well away from every Date field needs no message;
+		// one a day from a Date field opens that message for its zone.
+		{"SEARCH SENTSINCE 1-Mar-1994", 0},
+		{"SEARCH SENTON 5-Feb-1994", 2},
 		{"SEARCH BODY sandwiches", 5},
 		{"SEARCH UNSEEN FLAGGED BODY sandwiches", 2},
 		{"SEARCH HEADER X-Priority 1", 5},

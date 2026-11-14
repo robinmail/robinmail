@@ -111,9 +111,15 @@ func (s *Store) NewMailbox(ctx context.Context, account string, n NewMailbox) (M
 		b.guard(ErrNoMailbox, `EXISTS (SELECT 1 FROM mailbox WHERE account_id = :a AND id = :parent)`, "parent", n.ParentID)
 	}
 	b.bump("next_mailbox")
+	// UIDVALIDITY is the time of creation, or one more than the last one
+	// the account gave out when that is not later: a mailbox deleted and
+	// made again in the same second must not get the value it had, or a
+	// client would take its cache of the old mailbox for the new one (RFC
+	// 3501 2.3.1.1).
+	b.add(`UPDATE account SET uidvalidity = max(uidvalidity + 1, :now) WHERE id = :a`)
 	b.unique(ErrMailboxExists)
 	b.add(`INSERT INTO mailbox (account_id, id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq, subscribed)
-		SELECT a.id, a.next_mailbox - 1, :parent, :name, NULL, :sort, :now, 1, a.modseq, :subscribed FROM account a WHERE a.id = :a`,
+		SELECT a.id, a.next_mailbox - 1, :parent, :name, NULL, :sort, a.uidvalidity, 1, a.modseq, :subscribed FROM account a WHERE a.id = :a`,
 		"parent", n.ParentID, "name", n.Name, "sort", n.SortOrder, "subscribed", boolInt(n.Subscribed))
 	b.change("Mailbox", `next_mailbox - 1 AS id, 'created' AS op FROM account WHERE id = :a`)
 	b.add(`SELECT ` + mailboxColumns + ` FROM mailbox m

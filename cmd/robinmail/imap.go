@@ -78,7 +78,9 @@ func (u *imapUser) Mailboxes(ctx context.Context) ([]imap.Mailbox, error) {
 }
 
 func (u *imapUser) Create(ctx context.Context, parent int64, name string) (int64, error) {
-	m, err := u.b.st.CreateMailbox(ctx, u.acct.ID, parent, name)
+	// Not subscribed: in IMAP a client subscribes to what it wants in its
+	// list (RFC 3501 6.3.6); JMAP's default for a new mailbox is the other.
+	m, err := u.b.st.NewMailbox(ctx, u.acct.ID, store.NewMailbox{ParentID: parent, Name: name, SortOrder: 10})
 	return m.ID, imapErr(err)
 }
 

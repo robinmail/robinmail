@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,7 +98,7 @@ func (c *conn) decodeName(wire string) (string, error) {
 	} else {
 		var err error
 		if name, err = decodeUTF7(wire); err != nil {
-			return "", bad("the mailbox name is not modified UTF-7")
+			return "", errNotUTF7
 		}
 	}
 	name = strings.TrimSuffix(name, delimiter)
@@ -132,6 +133,10 @@ func quoteName(s string, utf8ok bool) string {
 	}
 	return quote(s, utf8ok)
 }
+
+// errNotUTF7 is a mailbox name that is not modified UTF-7. The syntax of
+// the command is fine (the name is an astring), so the answer is NO.
+var errNotUTF7 = errors.New("imap: the mailbox name is not modified UTF-7")
 
 // mailboxArg reads a mailbox name argument as a path.
 func (c *conn) mailboxArg(p *parser) (string, error) {
@@ -370,29 +375,21 @@ func (c *conn) cmdList(tag string, p *parser) (reply, error) {
 		if !matches(b.path) {
 			continue
 		}
-		// RFC 5258 3.5: with RECURSIVEMATCH a mailbox that does not meet
-		// the selection but has a child that does is listed with CHILDINFO.
+		// RFC 5258 3.5: with RECURSIVEMATCH a mailbox that has a child
+		// that meets the selection and is not listed by the pattern
+		// itself is listed with CHILDINFO, also when the mailbox does
+		// not meet the selection.
 		childInfo := false
-		if opt.subscribed && !b.Subscribed {
-			if !opt.recursive {
-				continue
-			}
+		if opt.subscribed && opt.recursive {
 			for _, o := range list {
-				if o.Subscribed && strings.HasPrefix(o.path, b.path+delimiter) {
+				if o.Subscribed && strings.HasPrefix(o.path, b.path+delimiter) && !matches(o.path) {
 					childInfo = true
 					break
 				}
 			}
-			if !childInfo {
-				continue
-			}
-		} else if opt.subscribed && opt.recursive {
-			for _, o := range list {
-				if o.Subscribed && strings.HasPrefix(o.path, b.path+delimiter) {
-					childInfo = true
-					break
-				}
-			}
+		}
+		if opt.subscribed && !b.Subscribed && !childInfo {
+			continue
 		}
 		use := specialUse(b.Role)
 		if opt.specialUse && use == "" {
@@ -433,9 +430,11 @@ func (c *conn) decodePattern(wire string) (string, error) {
 		}
 		return wire, nil
 	}
+	// What is not modified UTF-7 is no name any mailbox has: it matches
+	// nothing. It stays as it is for that.
 	s, err := decodeUTF7(wire)
 	if err != nil {
-		return "", bad("the mailbox name is not modified UTF-7")
+		return wire, nil
 	}
 	return s, nil
 }
@@ -536,7 +535,7 @@ func (c *conn) statusItems(p *parser) ([]string, error) {
 		case "MESSAGES", "RECENT", "UIDNEXT", "UIDVALIDITY", "UNSEEN", "SIZE", "DELETED":
 		case "HIGHESTMODSEQ":
 			// RFC 7162 3.1: a "CONDSTORE enabling command".
-			c.condstore = true
+			c.enableCondstore()
 		default:
 			return nil, bad("unknown STATUS item %s", name)
 		}

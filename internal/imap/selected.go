@@ -678,7 +678,7 @@ func (c *conn) cmdStore(tag string, p *parser, uid bool) (reply, error) {
 		if err := p.space(); err != nil {
 			return reply{}, err
 		}
-		c.condstore = true
+		c.enableCondstore()
 	}
 	mode := FlagsReplace
 	switch {

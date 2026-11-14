@@ -417,13 +417,17 @@ func (e *entity) envelope(utf8ok bool) string {
 	}
 	addrs := func(name, fallback string) string {
 		v, ok := message.Get(e.hdr, name)
-		if !ok && fallback != "" {
-			v, ok = message.Get(e.hdr, fallback)
+		list := "NIL"
+		if ok {
+			list = addressList(v, utf8ok)
 		}
-		if !ok {
-			return "NIL"
+		// "absent ... or present but empty".
+		if list == "NIL" && fallback != "" {
+			if v, ok = message.Get(e.hdr, fallback); ok {
+				list = addressList(v, utf8ok)
+			}
 		}
-		return addressList(v, utf8ok)
+		return list
 	}
 	return "(" + strings.Join([]string{
 		field("Date"), field("Subject"),

@@ -378,7 +378,7 @@ func (c *conn) cmdFetch(tag string, p *parser, uid bool) (reply, error) {
 		items = append(items, fetchItem{kind: "MODSEQ", label: "MODSEQ"})
 	}
 	if has("MODSEQ") {
-		c.condstore = true
+		c.enableCondstore()
 	}
 	needMessage := false
 	for _, it := range items {

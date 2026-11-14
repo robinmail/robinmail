@@ -139,6 +139,9 @@ func TestCopyIsALabel(t *testing.T) {
 	c.expect("COPY 1 label", "OK [COPYUID 3857529051 1 1] COPY completed")
 	c.expect("COPY 1:2 label", "OK [COPYUID 3857529051 1:2 1:2] COPY completed")
 	c.expect("COPY 1 INBOX", "OK [COPYUID 3857529046 1 1] COPY completed")
+	// A move to where the message is gives it a new UID: for a client
+	// the old message is gone and a new one came.
+	c.expect("MOVE 2 INBOX", "* OK [COPYUID 3857529046 2 3] moved", "* 2 EXPUNGE", "* 2 EXISTS", "* 0 RECENT", "OK MOVE completed")
 	c.expect("STATUS label (MESSAGES)", "* STATUS label (MESSAGES 2)", "OK STATUS completed")
 
 	o := e.selected("label")
@@ -351,7 +354,8 @@ func TestRFC7162Condstore(t *testing.T) {
 	plainClient := e.selected("INBOX")
 	e.st.setFlag("INBOX", 2, "$answered", true)
 	plainClient.expect("NOOP", `* 2 FETCH (FLAGS (\Answered))`, "OK NOOP completed")
-	plainClient.expect("FETCH 2 MODSEQ", "* 2 FETCH (MODSEQ (16))", "OK FETCH completed")
+	// 3.1.2.1: the command that turns CONDSTORE on says HIGHESTMODSEQ.
+	plainClient.expect("FETCH 2 MODSEQ", "* OK [HIGHESTMODSEQ 16] the highest modseq", "* 2 FETCH (MODSEQ (16))", "OK FETCH completed")
 	e.st.setFlag("INBOX", 3, "$answered", true)
 	plainClient.expect("NOOP", `* 3 FETCH (FLAGS (\Answered) MODSEQ (17))`, "OK NOOP completed")
 
@@ -392,7 +396,9 @@ func TestRFC5258ListExtended(t *testing.T) {
 	c := e.login()
 	c.ok("CREATE Foo/Bar")
 	c.ok("CREATE Foo/Baz")
-	for _, name := range []string{"Drafts", "Sent", "Junk", "Trash", "Foo", "Foo/Baz"} {
+	// A mailbox made with CREATE is not subscribed until SUBSCRIBE.
+	c.ok("SUBSCRIBE Foo/Bar")
+	for _, name := range []string{"Drafts", "Sent", "Junk", "Trash"} {
 		c.ok("UNSUBSCRIBE " + name)
 	}
 	c.expect(`LIST (SUBSCRIBED) "" "*"`,
@@ -408,6 +414,9 @@ func TestRFC5258ListExtended(t *testing.T) {
 		`* LIST (\Subscribed \HasNoChildren) "/" Foo/Bar`,
 		`* LIST (\HasNoChildren) "/" Foo/Baz`,
 		"OK LIST completed")
+	// A child that the patterns list itself is no CHILDINFO of its parent.
+	c.expect(`LIST (SUBSCRIBED RECURSIVEMATCH) "" (Foo Foo/Bar)`, `* LIST (\Subscribed \HasNoChildren) "/" Foo/Bar`, "OK LIST completed")
+	c.expect(`LIST (SUBSCRIBED RECURSIVEMATCH) "" Foo`, `* LIST (\HasChildren) "/" Foo ("CHILDINFO" ("SUBSCRIBED"))`, "OK LIST completed")
 	// Several patterns (5, example 4).
 	c.expect(`LIST "" ("INBOX" "Drafts" "Foo/%")`,
 		`* LIST (\HasNoChildren \Drafts) "/" Drafts`,
@@ -531,7 +540,12 @@ func TestRFC4731Esearch(t *testing.T) {
 	run(`UID SEARCH RETURN (MAX MIN COUNT ALL) UNSEEN`, "* ESEARCH TAG UID MIN 2 MAX 5 ALL 2:3,5 COUNT 3")
 	c.expect("SEARCH RETURN (BEST) ALL", "BAD unknown SEARCH return option BEST")
 	// With CONDSTORE (RFC 7162 3.1.5): MODSEQ in the ESEARCH.
+	c.ok("FETCH 1 MODSEQ")
 	run(`SEARCH RETURN (ALL) MODSEQ 1`, "* ESEARCH TAG ALL 1:4 MODSEQ 6")
+	// RFC 7162 3.1.5: with MIN or MAX alone, the MODSEQ of that message.
+	run(`SEARCH RETURN (MIN) MODSEQ 1`, "* ESEARCH TAG MIN 1 MODSEQ 3")
+	run(`SEARCH RETURN (MAX) MODSEQ 1`, "* ESEARCH TAG MAX 4 MODSEQ 6")
+	run(`SEARCH RETURN (MIN MAX) 1:2 MODSEQ 1`, "* ESEARCH TAG MIN 1 MAX 2 MODSEQ 4")
 }
 
 // RFC 5182 (SEARCHRES): SAVE and "$". The examples of 2.1:
@@ -646,7 +660,9 @@ func TestRFC3501ModifiedUTF7(t *testing.T) {
 	c.expect(`LIST "" Entw*`,
 		`* LIST (\HasChildren) "/" Entw&APw-rfe`, `* LIST (\HasNoChildren) "/" Entw&APw-rfe/&U,BTFw-`, "OK LIST completed")
 	c.ok("SELECT Entw&APw-rfe/&U,BTFw-")
-	c.expect("CREATE caf&AOk", "BAD the mailbox name is not modified UTF-7")
+	c.expect("CREATE caf&AOk", "NO [CANNOT] the mailbox name is not modified UTF-7")
+	c.expect("SELECT caf&AOk", "NO [CANNOT] the mailbox name is not modified UTF-7")
+	c.expect(`LIST "" caf&AOk*`, "OK LIST completed")
 	c.expect(`CREATE "café"`, "BAD 8-bit characters in a quoted string")
 	if b := e.st.box("台北"); b == nil {
 		t.Error("the store does not have the mailbox under its UTF-8 name")

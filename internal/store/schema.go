@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 5
+const schemaVersion = 6
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -29,6 +29,7 @@ var schema = []string{
 	// id is random and never changes. blob_key encrypts the account's blobs
 	// and is stored wrapped by the master key. The counters hand out Email,
 	// Mailbox and Thread ids. Change log rows up to trimmed_modseq are gone.
+	// uidvalidity is the last UIDVALIDITY a mailbox of the account got.
 	`CREATE TABLE IF NOT EXISTS account (
 		id             TEXT NOT NULL PRIMARY KEY,
 		address        TEXT NOT NULL UNIQUE,
@@ -41,7 +42,8 @@ var schema = []string{
 		next_mailbox   INTEGER NOT NULL,
 		next_thread    INTEGER NOT NULL,
 		next_submission INTEGER NOT NULL DEFAULT 1,
-		next_identity   INTEGER NOT NULL DEFAULT 2
+		next_identity   INTEGER NOT NULL DEFAULT 2,
+		uidvalidity     INTEGER NOT NULL DEFAULT 0
 	) WITHOUT ROWID`,
 
 	// A web login. token_hash is the SHA-256 of the token in the cookie, so
@@ -187,6 +189,13 @@ var migrations = map[int64][]string{
 		`ALTER TABLE account ADD COLUMN next_submission INTEGER NOT NULL DEFAULT 1`,
 		`ALTER TABLE account ADD COLUMN next_identity INTEGER NOT NULL DEFAULT 2`,
 		`INSERT OR IGNORE INTO identity (account_id, id, name, email, modseq) SELECT id, 1, '', address, modseq FROM account`,
+	},
+	// 6: IMAP. An account remembers the last UIDVALIDITY it gave a mailbox,
+	// so that a mailbox that is deleted and made again under the same name
+	// never gets the one it had (RFC 3501 2.3.1.1).
+	5: {
+		`ALTER TABLE account ADD COLUMN uidvalidity INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE account SET uidvalidity = COALESCE((SELECT max(m.uidvalidity) FROM mailbox m WHERE m.account_id = account.id), 0)`,
 	},
 }
 

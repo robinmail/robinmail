@@ -336,7 +336,9 @@ type CopyResult struct {
 // with a UID in uids, in one batch.
 //
 // A mailbox is a label, so a copy adds the label "to" to the emails: no
-// second email is made. Each gets the target's next UID, in the order of
+// second email is made. A copy into the mailbox the messages are in
+// changes nothing; a move into it gives them new UIDs, which is what a
+// client that moves expects to see (the old UIDs are gone). Each gets the target's next UID, in the order of
 // their UIDs in from. An email that is in the target already stays as it
 // is there and is reported with the UID it has. A move also takes the
 // label "from" away, so the email keeps its id (and JMAP sees an update,
@@ -358,6 +360,9 @@ func (s *Store) CopyMessages(ctx context.Context, account string, from int64, ui
 }
 
 func (s *Store) copyMessages(ctx context.Context, account string, from int64, ranges []UIDRange, to int64, move bool) (CopyResult, error) {
+	if from == to && move {
+		return s.renumber(ctx, account, from, ranges)
+	}
 	if from == to {
 		// The label is there already.
 		return s.sameMailbox(ctx, account, from, ranges)
@@ -393,6 +398,43 @@ func (s *Store) copyMessages(ctx context.Context, account string, from int64, ra
 	res, err := s.run(ctx, b)
 	if errors.Is(err, errNothing) {
 		return s.targetOnly(ctx, account, to)
+	}
+	if err != nil {
+		return CopyResult{}, err
+	}
+	last := res[len(res)-1].Values[0]
+	out := CopyResult{State: asInt(last[0]), UIDValidity: uint32(asInt(last[1]))}
+	for _, row := range res[pairsAt].Values {
+		out.Pairs = append(out.Pairs, UIDPair{From: uint32(asInt(row[0])), To: uint32(asInt(row[1]))})
+	}
+	return out, nil
+}
+
+// renumber is a move of messages into the mailbox they are in: each gets
+// the mailbox's next UID, in the order they had. The rows are replaced:
+// the new ones come from a SELECT over the old ones, which SQLite reads
+// in full before it writes when both are the same table.
+func (s *Store) renumber(ctx context.Context, account string, mailbox int64, ranges []UIDRange) (CopyResult, error) {
+	inRange, kv := uidCond(ranges)
+	b := s.newBatch(account)
+	b.base["m"] = mailbox
+	b.guardAccount()
+	b.guard(ErrNoMailbox, `EXISTS (SELECT 1 FROM mailbox WHERE account_id = :a AND id = :m)`)
+	b.stamp(inRange, kv...)
+	const renumbered = `(SELECT uidnext FROM mailbox WHERE account_id = :a AND id = :m) + row_number() OVER (ORDER BY x.uid) - 1
+		FROM email_mailbox x WHERE x.account_id = :a AND x.mailbox_id = :m AND x.email_id IN ` + sqlStamped
+	pairsAt := len(b.stmts)
+	b.add(`SELECT x.uid, ` + renumbered + ` ORDER BY x.uid`)
+	b.add(`INSERT OR REPLACE INTO email_mailbox (account_id, email_id, mailbox_id, uid) SELECT :a, x.email_id, :m, ` + renumbered)
+	b.add(`UPDATE mailbox SET uidnext = (SELECT max(uid) + 1 FROM email_mailbox WHERE account_id = :a AND mailbox_id = :m)
+		WHERE account_id = :a AND id = :m`)
+	b.change("Mailbox", `:m AS id, 'updated' AS op`)
+	b.change("Email", `s.id AS id, 'updated' AS op FROM email s WHERE s.account_id = :a AND s.modseq = `+sqlModseq)
+	b.touchMailboxes()
+	b.add(`SELECT (SELECT modseq FROM account WHERE id = :a), uidvalidity FROM mailbox WHERE account_id = :a AND id = :m`)
+	res, err := s.run(ctx, b)
+	if errors.Is(err, errNothing) {
+		return s.targetOnly(ctx, account, mailbox)
 	}
 	if err != nil {
 		return CopyResult{}, err
