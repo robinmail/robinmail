@@ -183,3 +183,27 @@ func TestSubmissionAndOutbound(t *testing.T) {
 		}
 	}
 }
+
+// The dev section, for labs: off unless asked for, and the config of the
+// interoperability lab loads.
+func TestDev(t *testing.T) {
+	const base = `"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://127.0.0.1:4001"}`
+	c, err := load(t, `{`+base+`}`)
+	if err != nil || c.Dev.RetrySeconds != 0 || c.Dev.SMTPTrace {
+		t.Errorf("without a dev section: %+v, %v", c, err)
+	}
+	c, err = load(t, `{`+base+`,"dev":{"retry_seconds":5,"smtp_trace":true}}`)
+	if err != nil || c.Dev.RetrySeconds != 5 || !c.Dev.SMTPTrace {
+		t.Errorf("dev section: %+v, %v", c, err)
+	}
+	if _, err := load(t, `{`+base+`,"dev":{"retry_seconds":-1}}`); err == nil {
+		t.Error("a negative retry_seconds is accepted")
+	}
+	lab, err := os.ReadFile("../../contrib/lab/robinmail/robinmail.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := load(t, string(lab)); err != nil || c.Hostname != "mx.robin.test" || c.Dev.RetrySeconds == 0 {
+		t.Errorf("the lab's config: %+v, %v", c, err)
+	}
+}

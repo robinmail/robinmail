@@ -624,3 +624,23 @@ func TestRoutes(t *testing.T) {
 		t.Errorf("the catch-all route was not used: %s", dialed)
 	}
 }
+
+// Worker.Retry (the config's dev.retry_seconds) replaces the schedule: a
+// lab sees the second try after seconds, not after five minutes.
+func TestRetryOverride(t *testing.T) {
+	x := newWorld(t)
+	x.w.Retry = func(n int) time.Duration { return time.Duration(n) * 3 * time.Second }
+	x.dns.mx["down.test"] = []*net.MX{{Host: "mx.down.test.", Pref: 10}}
+	x.dns.ip["mx.down.test"] = []string{"192.0.2.50"} // refuses connections
+	sub := x.send("soon again", "anna@down.test")
+	for try := 1; try <= 3; try++ {
+		if n := x.run(); n != 1 {
+			t.Fatalf("try %d: %d attempts", try, n)
+		}
+		got := x.sub(sub.ID)
+		if want := x.now().Add(time.Duration(try) * 3 * time.Second); !got.NextTry.Equal(want) {
+			t.Fatalf("after try %d the next is at %v, want %v", try, got.NextTry, want)
+		}
+		x.advance(time.Duration(try) * 3 * time.Second)
+	}
+}
