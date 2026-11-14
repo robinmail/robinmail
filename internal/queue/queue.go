@@ -806,7 +806,7 @@ func (w *Worker) bounce(ctx context.Context, sub store.Submission, msg []byte, f
 		return nil
 	}
 	now := w.now()
-	d := message.DSN{ReportingMTA: w.Hostname, ArrivalDate: sub.CreatedAt}
+	d := message.DSN{ReportingMTA: w.Hostname, ArrivalDate: sub.CreatedAt.In(now.Location())}
 	h := sha256.New()
 	for _, r := range failed {
 		rec := message.DSNRecipient{Address: r.Address, Action: "failed", Status: r.Status, RemoteMTA: r.MTA,
