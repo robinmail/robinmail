@@ -337,6 +337,10 @@ func (w *Worker) work(ctx context.Context, ref store.SubmissionRef) bool {
 	// domain.
 	groups := map[string][]int{}
 	var order []string
+	before := map[int]string{} // the states this attempt started from
+	for i, r := range sub.Recipients {
+		before[i] = r.State
+	}
 	for i, r := range sub.Recipients {
 		if r.State != store.RcptQueued {
 			continue
@@ -352,10 +356,6 @@ func (w *Worker) work(ctx context.Context, ref store.SubmissionRef) bool {
 		groups[domain] = append(groups[domain], i)
 	}
 	sort.Strings(order)
-	before := map[int]string{}
-	for i, r := range sub.Recipients {
-		before[i] = r.State
-	}
 	for _, domain := range order {
 		if ctx.Err() != nil {
 			return true // shutting down, or the claim is gone
