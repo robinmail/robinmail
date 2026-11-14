@@ -334,3 +334,10 @@ func readData(r *bufio.Reader, max int64) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// ValidMailbox reports whether s is a Mailbox of RFC 5321 4.1.2 (with the
+// non-ASCII characters RFC 6531 adds): what may stand between the angle
+// brackets of RCPT TO.
+func ValidMailbox(s string) bool {
+	return s != "" && len(s) <= maxPath-2 && utf8.ValidString(s) && mailboxEnd(s, 0) == len(s)
+}

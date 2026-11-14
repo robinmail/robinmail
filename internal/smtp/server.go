@@ -1,5 +1,6 @@
-// Package smtp is an ESMTP server for inbound mail. It speaks the protocol
-// and knows nothing about storage: recipients and messages go to a Handler.
+// Package smtp is an ESMTP server, for inbound mail and for submission, and
+// an ESMTP client (client.go). It speaks the protocol and knows nothing
+// about storage: recipients and messages go to a Handler.
 package smtp
 
 import (
@@ -7,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Envelope is what the client told the server before DATA.
@@ -27,6 +30,25 @@ type Envelope struct {
 	From     string               // empty for the null reverse path <>
 	Rcpts    []string
 	UTF8     bool // SMTPUTF8 was requested
+	// AuthUser is what the Authenticator returned for the client's
+	// credentials; empty on a server without authentication.
+	AuthUser string
+}
+
+// Authenticator checks the credentials of AUTH (RFC 4954). It returns the
+// name the session then acts as, ErrAuthFailed for wrong credentials, or an
+// *Error to answer with something else, such as a 454 when it cannot tell.
+type Authenticator interface {
+	Authenticate(ctx context.Context, ip net.IP, username, password string) (user string, err error)
+}
+
+// ErrAuthFailed is "535 5.7.8 Authentication credentials invalid".
+var ErrAuthFailed = errors.New("smtp: authentication failed")
+
+// MailChecker is a Handler that also wants to see MAIL FROM, for instance
+// to refuse a sender the authenticated user may not use.
+type MailChecker interface {
+	Mail(ctx context.Context, env *Envelope) error
 }
 
 // Handler decides about recipients and takes delivery of messages.
@@ -47,9 +69,15 @@ func (e *Error) Error() string { return fmt.Sprintf("%d %s %s", e.Code, e.Enhanc
 
 // Server is an SMTP listener. Zero limits get the defaults in brackets.
 type Server struct {
-	Hostname        string
-	TLSConfig       *tls.Config // nil disables STARTTLS
-	Handler         Handler
+	Hostname  string
+	TLSConfig *tls.Config // nil disables STARTTLS
+	Handler   Handler
+	// Auth makes this a submission server (RFC 6409): AUTH PLAIN and LOGIN
+	// are offered once the connection is encrypted, and nothing is
+	// accepted from a client that has not authenticated. The connection is
+	// encrypted after STARTTLS, or from the start when Serve is given a
+	// TLS listener (port 465, RFC 8314).
+	Auth            Authenticator
 	Logger          *slog.Logger
 	MaxMessageBytes int64         // [25 MiB]
 	MaxRecipients   int           // [100]
@@ -202,6 +230,18 @@ func (s *Server) handle(c net.Conn) {
 		io.WriteString(c, "421 4.7.0 Too many connections, try again later\r\n")
 		return
 	}
+	var implicit *tls.ConnectionState
+	if tc, ok := c.(*tls.Conn); ok {
+		// Implicit TLS: the handshake comes before the greeting.
+		tc.SetDeadline(time.Now().Add(time.Minute))
+		if err := tc.Handshake(); err != nil {
+			s.Logger.Debug("tls handshake failed", "remote", key, "err", err)
+			return
+		}
+		tc.SetDeadline(time.Time{})
+		st := tc.ConnectionState()
+		implicit = &st
+	}
 	s.mu.Lock()
 	if s.perIP[key] >= s.MaxConnsPerIP {
 		s.mu.Unlock()
@@ -211,6 +251,7 @@ func (s *Server) handle(c net.Conn) {
 	}
 	sess := &session{srv: s, ip: ip, log: s.Logger.With("remote", key)}
 	sess.setConn(c)
+	sess.tls = implicit
 	s.perIP[key]++
 	s.sessions[sess] = struct{}{}
 	s.mu.Unlock()
@@ -239,6 +280,7 @@ type session struct {
 
 	helo   string
 	ehlo   bool
+	user   string // set by a successful AUTH
 	tls    *tls.ConnectionState
 	env    *Envelope // non-nil between MAIL and the end of the transaction
 	errors int
@@ -449,7 +491,7 @@ func (s *session) command(line string) {
 	case "HELP":
 		s.reply(214, "2.0.0", "See RFC 5321")
 	case "AUTH":
-		s.bad(502, "5.5.1", "Authentication is not available on this port")
+		s.cmdAuth(arg)
 	default:
 		// Clients sometimes send HTTP to port 25 to probe it.
 		if verb == "GET" || verb == "POST" || verb == "CONNECT" {
@@ -481,6 +523,11 @@ func (s *session) cmdHelo(verb, arg string) {
 	}
 	if s.srv.TLSConfig != nil && s.tls == nil {
 		lines = append(lines, "STARTTLS")
+	}
+	// RFC 4954 4: mechanisms that send the password are only offered on an
+	// encrypted connection.
+	if s.srv.Auth != nil && s.tls != nil {
+		lines = append(lines, "AUTH PLAIN LOGIN")
 	}
 	s.reply(250, "", lines...)
 }
@@ -520,6 +567,133 @@ func (s *session) cmdStartTLS(arg string) {
 	s.helo, s.ehlo, s.env = "", false, nil
 }
 
+// authLine reads one line of the client inside an AUTH exchange and
+// decodes it. A line may be as long as a command line; RFC 4954 4 asks for
+// 12288 octets, which no address and password need. "*" cancels (RFC 4954 4).
+func (s *session) authLine(prompt string) (string, bool) {
+	s.reply(334, "", base64.StdEncoding.EncodeToString([]byte(prompt)))
+	s.flush()
+	if s.quit {
+		return "", false
+	}
+	s.conn.SetReadDeadline(time.Now().Add(s.srv.CommandTimeout))
+	line, err := s.readLine()
+	if err != nil {
+		if err == errLineTooLong {
+			s.bad(500, "5.5.6", "Authentication exchange line is too long")
+		} else {
+			s.quit = true
+		}
+		return "", false
+	}
+	if line == "*" {
+		s.bad(501, "5.0.0", "Authentication cancelled")
+		return "", false
+	}
+	return s.authDecode(line)
+}
+
+func (s *session) authDecode(b64 string) (string, bool) {
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		s.bad(501, "5.5.2", "Cannot decode the authentication data")
+		return "", false
+	}
+	return string(raw), true
+}
+
+// cmdAuth is AUTH (RFC 4954) with the mechanisms PLAIN (RFC 4616) and
+// LOGIN (the same over two prompts, which old clients still use).
+func (s *session) cmdAuth(arg string) {
+	switch {
+	case s.srv.Auth == nil:
+		s.bad(502, "5.5.1", "Authentication is not available on this port")
+		return
+	case s.helo == "":
+		s.bad(503, "5.5.1", "Send EHLO first")
+		return
+	case s.user != "":
+		// "After an AUTH command has been successfully completed, no more
+		// AUTH commands may be issued in the same session."
+		s.bad(503, "5.5.1", "Already authenticated")
+		return
+	case s.env != nil:
+		s.bad(503, "5.5.1", "AUTH is not permitted during a mail transaction")
+		return
+	case s.tls == nil:
+		s.bad(538, "5.7.11", "Encryption required for requested authentication mechanism")
+		return
+	}
+	mech, initial, hasInitial := strings.Cut(arg, " ")
+	initial = strings.TrimSpace(initial)
+	var username, password string
+	switch strings.ToUpper(mech) {
+	case "PLAIN":
+		// message = [authzid] NUL authcid NUL passwd (RFC 4616 2)
+		var msg string
+		var ok bool
+		switch {
+		case !hasInitial:
+			msg, ok = s.authLine("")
+		case initial == "=":
+			msg, ok = "", true // an empty initial response
+		default:
+			msg, ok = s.authDecode(initial)
+		}
+		if !ok {
+			return
+		}
+		parts := strings.Split(msg, "\x00")
+		if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+			s.bad(501, "5.5.2", "Malformed PLAIN authentication data")
+			return
+		}
+		// Nobody may act as someone else here.
+		if parts[0] != "" && parts[0] != parts[1] {
+			s.bad(535, "5.7.8", "Authorization identity is not permitted")
+			return
+		}
+		username, password = parts[1], parts[2]
+	case "LOGIN":
+		var ok bool
+		if hasInitial && initial != "=" {
+			username, ok = s.authDecode(initial)
+		} else {
+			username, ok = s.authLine("Username:")
+		}
+		if !ok {
+			return
+		}
+		if password, ok = s.authLine("Password:"); !ok {
+			return
+		}
+	default:
+		s.bad(504, "5.5.4", "Unrecognized authentication type")
+		return
+	}
+	if !utf8.ValidString(username) || !utf8.ValidString(password) || len(username) > 320 || len(password) > 1024 {
+		s.bad(535, "5.7.8", "Authentication credentials invalid")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), s.srv.HandlerTimeout)
+	defer cancel()
+	user, err := s.srv.Auth.Authenticate(ctx, s.ip, username, password)
+	var e *Error
+	switch {
+	case errors.Is(err, ErrAuthFailed):
+		s.bad(535, "5.7.8", "Authentication credentials invalid")
+	case errors.As(err, &e):
+		s.errors++
+		s.reply(e.Code, e.Enhanced, e.Msg)
+	case err != nil || user == "":
+		s.log.Error("authentication failed to run", "err", err)
+		s.reply(454, "4.7.0", "Temporary authentication failure")
+	default:
+		s.user = user
+		s.reply(235, "2.7.0", "Authentication successful")
+	}
+}
+
 // swapConn swaps the connection for its TLS wrapper and keeps Shutdown able to close it.
 func (s *session) swapConn(tc *tls.Conn) {
 	s.srv.mu.Lock()
@@ -555,6 +729,18 @@ func (s *session) cmdMail(arg string) {
 		s.bad(503, "5.5.1", "Nested MAIL command")
 		return
 	}
+	if s.srv.Auth != nil {
+		switch {
+		case s.tls == nil:
+			// RFC 3207 4
+			s.bad(530, "5.7.0", "Must issue a STARTTLS command first")
+			return
+		case s.user == "":
+			// RFC 4954 6
+			s.bad(530, "5.7.0", "Authentication required")
+			return
+		}
+	}
 	rest, ok := cutPrefixFold(arg, "FROM:")
 	if !ok {
 		s.bad(501, "5.5.4", "Syntax: MAIL FROM:<address>")
@@ -565,7 +751,7 @@ func (s *session) cmdMail(arg string) {
 		s.bad(501, "5.1.7", "Bad sender address")
 		return
 	}
-	env := &Envelope{RemoteIP: s.ip, Helo: s.helo, TLS: s.tls, From: from}
+	env := &Envelope{RemoteIP: s.ip, Helo: s.helo, TLS: s.tls, From: from, AuthUser: s.user}
 	tooBig := false
 	for _, p := range params {
 		switch p.key {
@@ -590,6 +776,14 @@ func (s *session) cmdMail(arg string) {
 				return
 			}
 			env.UTF8 = true
+		case "AUTH":
+			// RFC 4954 5: who the message was first submitted by. Only an
+			// authenticated client may send it, and we attach no meaning
+			// to it: the session's own identity is what counts.
+			if s.user == "" || !p.hasValue {
+				s.bad(555, "5.5.4", "Unsupported parameter")
+				return
+			}
 		default:
 			// RFC 5321 4.1.1.11
 			s.bad(555, "5.5.4", "Unsupported parameter")
@@ -605,6 +799,15 @@ func (s *session) cmdMail(arg string) {
 		// RFC 1870 6.1
 		s.reply(552, "5.3.4", "Message size exceeds fixed maximum message size")
 		return
+	}
+	if mc, ok := s.srv.Handler.(MailChecker); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), s.srv.HandlerTimeout)
+		defer cancel()
+		if err := mc.Mail(ctx, env); err != nil {
+			s.errors++
+			s.replyErr(err)
+			return
+		}
 	}
 	s.env = env
 	s.reply(250, "2.1.0", "OK")
