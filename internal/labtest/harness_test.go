@@ -774,7 +774,7 @@ func printMatrix(w io.Writer) {
 	}
 	fmt.Fprintf(w, "\n%-*s", wide+2, "case")
 	for _, c := range order {
-		fmt.Fprintf(w, "%-12s", c)
+		fmt.Fprintf(w, "%-14s", c)
 	}
 	fmt.Fprintln(w)
 	for _, r := range matrix.rows {
@@ -784,7 +784,7 @@ func printMatrix(w io.Writer) {
 			if v == "" {
 				v = "-"
 			}
-			fmt.Fprintf(w, "%-12s", v)
+			fmt.Fprintf(w, "%-14s", v)
 		}
 		fmt.Fprintln(w)
 	}

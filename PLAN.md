@@ -172,6 +172,8 @@ contrib/rspamd       Rspamd config, DKIM signing        port as is; dkim_signing
 contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
                      cluster.yaml, cluster.sh: three rqlite and three robinmail nodes
 contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev
+contrib/lab          the interoperability lab: Postfix, Exim, OpenSMTPD, DNS, CA   new; "make lab-test"
+internal/labtest     tests against that lab             new
 ```
 
 owl's `internal/fsutil` is not ported: the blob store only needed its
@@ -1004,6 +1006,167 @@ Built as follows (the webmail in `web/`):
   link inside an HTML message is in the sandboxed frame and opens the
   system's mail program, not the composer. Only Chromium was run.
 
+### Phase 5c: interop lab — done
+
+robinmail had only ever exchanged mail with itself, Go test doubles, Rspamd
+and Mailpit. There is no public host yet, so real providers stay out of
+reach; this phase puts three other mail servers next to it instead.
+
+- A lab in Docker: robinmail, Postfix, Exim and OpenSMTPD, each with its
+  own domain, real MX records, STARTTLS with a private CA, MTA-STS.
+- A harness that sends both ways and reads the results back.
+- Every fault it finds in robinmail fixed, with a test that needs no
+  Docker. Fastmail's JMAP-TestSuite run against the same robinmail.
+- Exit: `make lab-test` passes.
+
+Built as follows:
+
+- **The lab** (`contrib/lab`, `lab.sh up|down|versions|suite`). One
+  internal Docker network (10.77.25.0/24) that has no route out. CoreDNS
+  1.15.0 is mounted as the only resolver of every container: it serves
+  `.test` (MX, A, TXT for SPF and MTA-STS, PTR) from `dns/test.zone` and
+  answers NXDOMAIN to everything else, so no name outside the lab
+  resolves and no mail can leave. `ca.sh` makes a CA and a certificate
+  per host (`secrets/`, not in git); robinmail trusts only that CA
+  (`SSL_CERT_FILE`), the peers have it in their system store. nginx 1.30.6
+  serves `https://mta-sts.<domain>/` and is the gate: it is also on a
+  second network and passes a few ports on 127.0.0.1 into the lab for the
+  harness. rqlite 10.7.1.
+- **The peers**, from Debian 13 packages (`debian:trixie-20261104-slim`):
+  Postfix 3.10.13 with postgrey 1.37, Exim 4.98.2, OpenSMTPD 7.6.0p1.
+  Each has `<peer>.test` with the local users alice and bob (Maildir),
+  `late.<peer>.test` that takes any recipient and bounces afterwards, and
+  is set to deliver to robin.test only over TLS with a certificate the
+  lab CA signed. Two more Postfix containers: `badtls.test` (self-signed
+  certificate) and `notls.test` (no STARTTLS), each also under a second
+  name with an MTA-STS policy in mode `enforce`. Policies: postfix.test
+  and exim.test `enforce`, opensmtpd.test `testing`.
+- **Two development settings** in robinmail's config, section `dev`, for
+  labs only: `retry_seconds` replaces the retry schedule by a fixed wait
+  (the queue's clock was only reachable from Go tests), `smtp_trace` logs
+  every SMTP command and reply of the listeners and of the outbound
+  client, without message content and without credentials, and marks a
+  command that arrived together with the next one (a pipelining client).
+- **The harness** (`internal/labtest`, `make lab-test`, skipped without
+  `ROBINMAIL_TEST_LAB`). Peers send through their own `sendmail`; their
+  Maildirs are read with `docker compose exec`. robinmail is driven over
+  JMAP through the gate (`Email/set` as the webmail does it, or
+  `Email/import` of a raw message, then `EmailSubmission/set`), with TLS
+  checked against the lab CA. Raw SMTP for what no server sends. The
+  trace tells what each peer put on the wire. Attachments are unpacked on
+  the peer by ripmime 1.4. Submission is done by swaks. It prints the
+  matrix at the end; the last run is in `contrib/lab/lab-test-output.txt`
+  (4.5 minutes).
+- **The matrix.** All cells pass except where it says otherwise.
+
+  | Case | Postfix | Exim | OpenSMTPD |
+  |---|---|---|---|
+  | to robinmail: ASCII; 8-bit body in UTF-8 and Latin-1; encoded words; raw UTF-8 headers | pass | pass | pass |
+  | to robinmail: SMTPUTF8 sender address | pass | pass | n/a: no SMTPUTF8 |
+  | to robinmail: just under our size limit; over it (refused, the peer bounces) | pass | pass | pass |
+  | to robinmail: three recipients, one unknown (two delivered, the peer's bounce parsed) | pass | pass | pass |
+  | to robinmail: a line of 998; lines starting with a dot | pass | pass | pass |
+  | to robinmail: a line of 3000 | peer folds it | peer bounces it | peer re-encodes it |
+  | to robinmail: STARTTLS, our certificate verified by the peer | pass | pass | pass |
+  | from robinmail: ASCII; 8-bit (`BODY=8BITMIME`); UTF-8 from `Email/set`; attachments | pass | pass | pass |
+  | from robinmail: raw UTF-8 headers; SMTPUTF8 recipient | pass | pass | pass: bounced with 5.6.7 |
+  | from robinmail: just under the peer's SIZE; over it (not offered, 5.3.4) | pass | pass | under only: one limit for listener and local users |
+  | from robinmail: three recipients, one unknown (550, bounce, `deliveryStatus`) | pass | pass | pass |
+  | from robinmail: a line of 998; of 3000 (kept as it is); dot lines | pass | pass | pass |
+  | from robinmail: STARTTLS, peer's certificate verified (MTA-STS) | pass | pass | pass |
+  | peer accepts, then bounces: its DSN sets `deliveryStatus` | pass | pass | pass |
+  | peer down: queued, delivered when it is back | pass | pass | pass |
+  | greylisting (postgrey): 450, delivered on the third try | pass | | |
+  | sender domain with an underscore, to and from | pass | peer refuses its own sender | pass |
+
+  Without a column: a self-signed certificate delivers without a policy
+  and does not under `enforce` (4.7.0); no STARTTLS delivers in the clear
+  without a policy and does not under `enforce`; a null reverse-path and
+  source routes by hand; swaks on 587 and 465 with AUTH PLAIN and LOGIN, a
+  wrong password (535), and 587 without STARTTLS (no AUTH offered, 530).
+- **What the peers do**, as the trace shows it.
+
+  | | Postfix | Exim | OpenSMTPD |
+  |---|---|---|---|
+  | pipelines MAIL, RCPT, DATA | yes | yes | no |
+  | declares `SIZE=` | yes | yes | no |
+  | declares `BODY=8BITMIME` for 8-bit content | yes | no | no |
+  | asks `SMTPUTF8` for UTF-8 headers | yes | no (only for an address) | no |
+  | offers a message over our `SIZE` | no, bounces at once | yes, takes the 552 at MAIL | no |
+  | its bounce is a `multipart/report` | yes | yes | no: `multipart/mixed` |
+  | status in its bounce for our `550 5.1.1` | 5.1.1 | 5.0.0 | 5.0.0, no Diagnostic-Code |
+  | accepts `MAIL FROM` with an underscore in the domain | 250 | 501 | 250 |
+  | accepts a source route | 250 | 250 | 250 |
+
+  All three keep our `Return-Path` once, put their `Received` above ours
+  and say there which TLS they negotiated.
+- **Fixed in robinmail**, each with a test in the normal Go suite (the
+  transactions and bounces are replayed from what the lab recorded:
+  `internal/smtp/interop*_test.go`, `internal/message/testdata/dsn-*.eml`):
+  - A sender whose domain has an underscore got 501. Postfix and
+    OpenSMTPD send from and accept such senders; Exim is as strict as RFC
+    5321 4.1.2. Accepted now in the reverse-path and in a recipient we
+    send to, so such mail can be answered; RCPT TO for our own domains and
+    source routes stay strict. This settles the open question of phase 2:
+    tolerant, because the name is only ever looked up and Postfix-run
+    sites accept it.
+  - The server closed the socket under TLS without `close_notify`. Exim
+    logged every delivery as a TLS error.
+  - OpenSMTPD's bounce was not read as a DSN, so a message that bounced
+    there stayed "sent". A multipart of another kind with a
+    `message/delivery-status` part directly in it is read now.
+  - `smtpReply` and the Diagnostic-Code of our own bounces had no reply
+    code for reasons robinmail makes up itself ("connecting to … failed"),
+    and were empty or bare text for reports without a usable
+    Diagnostic-Code (Exim, OpenSMTPD, Postfix's `X-Postfix`). Always a
+    reply now: `451 4.4.1 connecting to …`, `550 5.0.0 reported by
+    mx.exim.test without a reason`.
+- **Not changed, kept with a test that says so**: 8-bit content without
+  `BODY=8BITMIME` and UTF-8 headers without `SMTPUTF8` are accepted (Exim
+  and OpenSMTPD send nothing else; RFC 6152 and 6531 want the
+  declaration, a server cannot check it before DATA). A message over the
+  limit that was sent anyway is read to its end and answered 552.
+- **Fastmail's JMAP-TestSuite** (github.com/fastmail/JMAP-TestSuite at
+  2fa1934, Perl) runs in a container of its own inside the lab: `lab.sh
+  suite`, 73 seconds. The adapter
+  (`contrib/lab/jmapsuite/Robinmail.pm`) makes a new user for every test
+  with `robinmail user add`. First run: 24 of 173 files failed. Now: 110
+  pass, 49 skip themselves for capabilities robinmail does not offer
+  (calendars, contacts, blob, quota, MDN, principals, vacation response),
+  4 skip for want of two accounts that share (the `/copy` tests), 10 fail
+  (`contrib/lab/jmapsuite/suite-output.txt`).
+  - Fixed in `internal/jmap` and `internal/message`
+    (`internal/jmap/testsuite_test.go`): `subParts` on parts that are not
+    multiparts only when asked for, and then also in `textBody`,
+    `htmlBody`, `attachments`; `maxBodyValueBytes: null`; a part from
+    `bodyValues` may have any type; `size` next to a `blobId` is ignored;
+    a header on the Email and on its `bodyStructure` is refused; a text
+    body without a final line end comes back without one (written as
+    quoted-printable with a soft line break at the end); a Raw header
+    value gets its leading space; `Email/import` answers
+    `invalidProperties` for a blob that is not there and names every
+    missing property; `Mailbox/set` takes server-set properties that have
+    their current value (RFC 8620 5.3) and names each right of `myRights`
+    it refuses.
+  - Fail because robinmail does not have it: the `text` filter of
+    `Email/query` and `Email/queryChanges` (2 files; phase 8),
+    `SearchSnippet/get` (1; phase 8), `updatedProperties` of
+    `Mailbox/changes` (1; the RFC allows null).
+  - Fail because the suite asks for more than the RFC, as we read it:
+    `isSubscribed` false on a mailbox the user made (2 files; RFC 8621 2
+    says it SHOULD default to true there), mailbox names sorted by octet
+    where we ignore case (1; the default collation is the server's), the
+    `position` 0 in the answer to a query past the end (1; we return the
+    position asked for), the order of names in `invalidProperties` (1),
+    a display name written as a quoted string where we write atoms (1).
+- **Not covered.** Exchange, Gmail, Outlook.com, Yahoo and every other
+  real provider are still untested: Exchange does not run in a container,
+  the others need a public host. So are: IPv6 (the lab is IPv4), DKIM,
+  SPF and DMARC verification by a receiver (no Rspamd in the lab; mail
+  goes out unsigned), DANE, the DSN extension, CHUNKING (Exim would use
+  it if we offered it), a peer that drops the connection mid-transaction,
+  IDN domains, rate limits. msmtp was not used; swaks was.
+
 ### Phase 6: push and IMAP
 
 - JMAP push over EventSource. A node polls `modseq` for the accounts that have
@@ -1042,16 +1205,31 @@ Built as follows (the webmail in `web/`):
   same sender within a week is dropped as a retry. Intended, but worth
   knowing.
 - Where phase 5 gets tested against real providers: which host and domain.
-  Still open: everything sent so far went over loopback or a Docker
-  network. What only real providers can show: whether Gmail, Outlook and
-  the like accept the mail (PTR, SPF, DKIM alignment, their rate limits),
-  how their greylisting and 4yz replies meet our backoff, what their
-  MTA-STS policies and certificates do under `enforce`, and whether their
-  bounces parse.
-- The strict `MAIL FROM` grammar refuses senders that exist in the wild,
-  mostly hosts with an underscore in their name. Postfix accepts those by
-  default. The RFC says `501`; real traffic in phase 5 will show whether
-  that costs wanted mail.
+  Still open. Phase 5c exchanged mail with Postfix, Exim and OpenSMTPD in
+  a lab, which covers the protocol. What only real providers can show:
+  whether Gmail, Outlook and the like accept the mail (PTR, SPF, DKIM
+  alignment, their rate limits), how their greylisting and 4yz replies
+  meet our backoff, what their MTA-STS policies and certificates do under
+  `enforce`, and whether their bounces parse. Exchange is the one big
+  server nobody can put in a container.
+- A line longer than 998 characters goes out as it came in (phase 5c:
+  Postfix and OpenSMTPD took one of 3000, Exim took it and would not pass
+  it on). RFC 5322 2.1.1 says MUST NOT. Refuse it at submission, or
+  re-encode the part as quoted-printable, which changes a signed message?
+- Exim and OpenSMTPD report 5.0.0 for every failure and give no
+  Diagnostic-Code for their own. `smtpReply` then says who reported it and
+  nothing else; the text part of the bounce has the reason, for a person
+  to read. Worth parsing?
+- A bounce is recognised by its `message/delivery-status` part even when
+  it is not a `multipart/report` (OpenSMTPD). That widens, a little, what
+  can mark a sent message as failed; the null reverse-path and the
+  Message-ID are still required.
+- The `dev` section (`retry_seconds`, `smtp_trace`) is in every binary. A
+  production config with it set gets a warning at start for the first and
+  a very large log for the second. A build tag would keep them out.
+- The JMAP-TestSuite is pinned to one commit and changes daily. Ten files
+  fail, six of them over readings of the RFC that could be raised with its
+  authors.
 - RFC 9106's own test vectors use a secret and associated data, which
   `x/crypto`'s exported `argon2.IDKey` does not take. `x/crypto` runs them
   in its own tests; ours check the reference implementation's vectors
