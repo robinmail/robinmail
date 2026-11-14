@@ -23,10 +23,12 @@ import (
 
 	"github.com/mikepage/robinmail/internal/address"
 	"github.com/mikepage/robinmail/internal/blob"
+	"github.com/mikepage/robinmail/internal/cluster"
 	"github.com/mikepage/robinmail/internal/config"
 	"github.com/mikepage/robinmail/internal/rqlite"
 	"github.com/mikepage/robinmail/internal/store"
 	"github.com/mikepage/robinmail/internal/users"
+	"github.com/mikepage/robinmail/internal/web"
 )
 
 const usage = `usage: robinmail [-config robinmail.json] <command>
@@ -57,6 +59,9 @@ commands:
   changes <address> [state]                    show what changed since a state (default: 0)
   trim                                         remove change log, delivery keys and sessions past their time
   sweep                                        remove this node's blob files that no email refers to
+  repair                                       fetch the blobs this node lacks from the other nodes
+  node list                                    list the nodes of the cluster
+  node remove <id>                             take a stopped node out of the cluster
   reindex [address]                            read stored messages again and refresh the cached columns
 `
 
@@ -99,21 +104,24 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		ictx, cancel := context.WithTimeout(ctx, time.Minute)
-		st, err := openStore(ictx, cfg)
+		a, err := open(ictx, cfg, true)
 		cancel()
 		if err != nil {
 			return err
 		}
-		a := app{ctx: ctx, cfg: cfg, store: st, stdin: stdin, stdout: stdout}
+		a.ctx, a.stdin, a.stdout = ctx, stdin, stdout
 		return a.serve(stop)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	st, err := openStore(ctx, cfg)
+	a, err := open(ctx, cfg, false)
 	if err != nil {
 		return err
 	}
-	a := app{ctx: ctx, cfg: cfg, store: st, stdin: stdin, stdout: stdout}
+	a.ctx, a.stdin, a.stdout = ctx, stdin, stdout
+	// A command may leave pushes to other nodes running when enough of
+	// them have a blob. They finish before the process ends.
+	defer a.wait()
 
 	cmd, args := args[0], args[1:]
 	n := len(args)
@@ -158,6 +166,12 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return a.trim()
 	case cmd == "sweep" && n == 0:
 		return a.sweep()
+	case cmd == "repair" && n == 0:
+		return a.repair()
+	case cmd == "node" && n == 1 && args[0] == "list":
+		return a.nodeList()
+	case cmd == "node" && n == 2 && args[0] == "remove":
+		return a.nodeRemove(args[1])
 	case cmd == "reindex" && (n == 0 || n == 1):
 		return a.reindex(optional(args, 0, ""))
 	}
@@ -172,10 +186,14 @@ func optional(args []string, i int, def string) string {
 	return def
 }
 
-// openStore loads the master key, connects the store to rqlite and the blob
-// directory, and creates the schema in an empty database.
-func openStore(ctx context.Context, cfg *config.Config) (*store.Store, error) {
-	db, err := rqlite.New(cfg.Rqlite.URL, nil)
+// open loads the master key, connects the store to rqlite and the blob
+// directory, and creates the schema in an empty database. With a node
+// section in the config it also makes this process a member of the
+// cluster: blobs are replicated to the other nodes and fetched from them.
+// serving is true for the server, which announces itself as running; a
+// command only makes sure the other nodes know its certificate.
+func open(ctx context.Context, cfg *config.Config, serving bool) (*app, error) {
+	db, err := rqlite.NewCluster(cfg.Rqlite.Nodes(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -183,11 +201,27 @@ func openStore(ctx context.Context, cfg *config.Config) (*store.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w (make one with \"robinmail key generate\")", err)
 	}
-	st := store.New(db, blob.NewLocal(cfg.BlobDir()), master)
-	if err := st.Init(ctx); err != nil {
+	a := &app{cfg: cfg, local: blob.NewLocal(cfg.BlobDir())}
+	if cfg.Node.ID == "" {
+		a.store = store.New(db, a.local, master)
+		return a, a.store.Init(ctx)
+	}
+	identity, err := cluster.LoadOrCreateIdentity(cfg.DataDir)
+	if err != nil {
 		return nil, err
 	}
-	return st, nil
+	a.replicated = &blob.Replicated{Local: a.local, Copies: cfg.Node.BlobCopies}
+	a.store = store.New(db, a.replicated, master)
+	if err := a.store.Init(ctx); err != nil {
+		return nil, err
+	}
+	a.node = &cluster.Node{ID: cfg.Node.ID, Address: cfg.Node.Address, Identity: identity, Dir: a.store}
+	a.replicated.Peers = a.node
+	a.replicated.Verify = a.store.VerifyBlob
+	if err := a.node.Register(ctx, serving); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 type app struct {
@@ -196,6 +230,17 @@ type app struct {
 	store  *store.Store
 	stdin  io.Reader
 	stdout io.Writer
+	// local is this node's blob directory. node and replicated are nil
+	// unless the config has a node section.
+	local      *blob.Local
+	node       *cluster.Node
+	replicated *blob.Replicated
+}
+
+func (a *app) wait() {
+	if a.replicated != nil {
+		a.replicated.Wait()
+	}
 }
 
 // account looks a user up by address.
@@ -279,7 +324,7 @@ func (a *app) domainAdd(s string) error {
 	} else if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.stdout, "added %s; running servers pick it up within half a minute\n", name)
+	fmt.Fprintf(a.stdout, "added %s\n", name)
 	return nil
 }
 
@@ -700,7 +745,50 @@ func (a *app) trim() error {
 	if err != nil {
 		return err
 	}
+	if _, err := a.store.TrimLoginFailures(a.ctx, now.Add(-web.LoginWindow)); err != nil {
+		return err
+	}
 	fmt.Fprintf(a.stdout, "removed %d change rows, %d delivery keys and %d sessions\n", changes, keys, sessions)
+	return nil
+}
+
+// repair fetches the blobs this node lacks from the other nodes. serve
+// does the same at start and every few minutes.
+func (a *app) repair() error {
+	res, err := a.store.RepairBlobs(a.ctx)
+	if errors.Is(err, store.ErrNoRepair) {
+		return errors.New("this node is not part of a cluster (no node section in the config)")
+	}
+	fmt.Fprintf(a.stdout, "%d blobs were missing here, fetched %d\n", res.Missing, res.Fetched)
+	return err
+}
+
+func (a *app) nodeList() error {
+	nodes, err := a.store.Nodes(a.ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range nodes {
+		seen := "never ran"
+		if n.SeenAt.Unix() > 0 {
+			seen = "seen " + time.Since(n.SeenAt).Round(time.Second).String() + " ago"
+		}
+		fmt.Fprintf(a.stdout, "%-12s  %-28s  %s  %s\n", n.ID, n.Address, n.Cert[:min(16, len(n.Cert))], seen)
+	}
+	return nil
+}
+
+// nodeRemove takes a node out of the node table. The others then stop
+// counting it as a place a blob should be.
+func (a *app) nodeRemove(id string) error {
+	ok, err := a.store.RemoveNode(a.ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%s: no such node", id)
+	}
+	fmt.Fprintf(a.stdout, "removed %s\n", id)
 	return nil
 }
 

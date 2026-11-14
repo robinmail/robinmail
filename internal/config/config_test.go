@@ -109,3 +109,39 @@ func TestWeb(t *testing.T) {
 		}
 	}
 }
+
+// A node section makes the instance a cluster member; several rqlite URLs
+// may be given, alone or next to url.
+func TestNodeAndRqliteURLs(t *testing.T) {
+	head := `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"k",`
+	c, err := load(t, head+`"rqlite":{"urls":["http://a:4001","http://b:4001"]},
+		"node":{"id":"n1","listen":":7443","address":"n1.internal:7443","blob_copies":3,"repair_interval_seconds":60}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Rqlite.Nodes(); len(got) != 2 || got[0] != "http://a:4001" {
+		t.Errorf("Nodes = %v", got)
+	}
+	if c.Node.ID != "n1" || c.Node.BlobCopies != 3 {
+		t.Errorf("node = %+v", c.Node)
+	}
+	c, err = load(t, head+`"rqlite":{"url":"http://near:4001","urls":["http://far:4001"]}}`)
+	if err != nil || len(c.Rqlite.Nodes()) != 2 || c.Rqlite.Nodes()[0] != "http://near:4001" || c.Node.ID != "" {
+		t.Errorf("url and urls: %v, %+v", err, c)
+	}
+	rq := `"rqlite":{"url":"http://x:4001"},`
+	for name, body := range map[string]string{
+		"no rqlite at all":       head + `"rqlite":{}}`,
+		"bad url in urls":        head + `"rqlite":{"urls":["http://a:4001","b:4001"]}}`,
+		"node without id":        head + rq + `"node":{"listen":":7443","address":"n1:7443"}}`,
+		"bad node id":            head + rq + `"node":{"id":"Node 1","listen":":7443","address":"n1:7443"}}`,
+		"node without listen":    head + rq + `"node":{"id":"n1","address":"n1:7443"}}`,
+		"node without address":   head + rq + `"node":{"id":"n1","listen":":7443"}}`,
+		"address without a host": head + rq + `"node":{"id":"n1","listen":":7443","address":":7443"}}`,
+		"negative copies":        head + rq + `"node":{"id":"n1","listen":":7443","address":"n1:7443","blob_copies":-1}}`,
+	} {
+		if _, err := load(t, body); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

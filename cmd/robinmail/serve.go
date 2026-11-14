@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -24,8 +25,9 @@ import (
 // it to listen on port 0. onWebListen is the same for the first web
 // listener.
 var (
-	onListen    func(net.Addr)
-	onWebListen func(net.Addr)
+	onListen     func(net.Addr)
+	onWebListen  func(net.Addr)
+	onNodeListen func(net.Addr)
 )
 
 // webStatic is the webmail served outside the API paths: the one built
@@ -92,6 +94,7 @@ func (a *app) serve(stop func()) error {
 	site := &web.Server{
 		Hostname:   a.cfg.Hostname,
 		Accounts:   a.store,
+		Limits:     a.store,
 		JMAP:       &jmap.Handler{Store: a.store},
 		Static:     webStatic,
 		DevOrigins: a.cfg.Web.DevOrigins,
@@ -101,7 +104,7 @@ func (a *app) serve(stop func()) error {
 		},
 	}
 	var webServers []*http.Server
-	webErr := make(chan error, 2)
+	webErr := make(chan error, 3)
 	if a.cfg.Web.Listen != "" {
 		if tc == nil {
 			return errors.New("web listen needs a certificate")
@@ -138,6 +141,37 @@ func (a *app) serve(stop func()) error {
 	// Last, so a test that waits for this has every listener up.
 	if onListen != nil {
 		onListen(l.Addr())
+	}
+
+	// The other nodes: a listener for their blobs, a heartbeat in the node
+	// table, and the pass that fetches what this disk lacks.
+	var peerServer *http.Server
+	upkeep := make(chan struct{})
+	if a.node == nil {
+		close(upkeep)
+	} else {
+		a.node.Logger, a.replicated.Logger = log, log
+		pl, err := tls.Listen("tcp", a.cfg.Node.Listen, a.node.ServerTLS())
+		if err != nil {
+			return err
+		}
+		peerServer = a.node.HTTPServer(a.local, a.store.VerifyBlob)
+		members, _ := a.node.Members(a.ctx)
+		log.Info("node listening", "id", a.node.ID, "addr", pl.Addr().String(), "address", a.node.Address,
+			"cert", a.node.Identity.Fingerprint[:16], "nodes", members)
+		if onNodeListen != nil {
+			onNodeListen(pl.Addr())
+		}
+		go func() { webErr <- peerServer.Serve(pl) }()
+		interval := time.Duration(a.cfg.Node.RepairIntervalSeconds) * time.Second
+		if interval == 0 {
+			interval = 5 * time.Minute
+		}
+		go func() {
+			defer close(upkeep)
+			go a.node.Run(a.ctx)
+			repairLoop(a.ctx, a.store, log, interval)
+		}()
 	}
 
 	// Every node trims. The first run comes at a random moment so the nodes
@@ -177,7 +211,41 @@ func (a *app) serve(stop func()) error {
 	}
 	<-webDone
 	<-trimmed
+	<-upkeep
+	if peerServer != nil {
+		// Last: until here a delivery that was finishing could still push.
+		a.replicated.Wait()
+		if err := peerServer.Shutdown(sctx); err != nil {
+			peerServer.Close()
+		}
+	}
 	return nil
+}
+
+// repairLoop is the anti-entropy pass: at start and then every interval it
+// fetches, from the other nodes, the blobs the database refers to and this
+// disk lacks. That is how a new node fills up, how a node that was away
+// catches up, and what covers a push that did not arrive.
+func repairLoop(ctx context.Context, st *store.Store, log *slog.Logger, interval time.Duration) {
+	t := time.NewTimer(0)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		res, err := st.RepairBlobs(ctx)
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err != nil:
+			log.Error("blob repair failed", "missing", res.Missing, "fetched", res.Fetched, "err", err)
+		case res.Missing > 0:
+			log.Info("blob repair", "missing", res.Missing, "fetched", res.Fetched)
+		}
+		t.Reset(interval)
+	}
 }
 
 // trimLoop removes change log rows, delivery keys and web sessions past
@@ -221,6 +289,10 @@ func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger) {
 	sessions, err := st.TrimSessions(ctx, now)
 	if err != nil {
 		log.Error("trimming sessions failed", "err", err)
+		return
+	}
+	if _, err := st.TrimLoginFailures(ctx, now.Add(-web.LoginWindow)); err != nil {
+		log.Error("trimming login failures failed", "err", err)
 		return
 	}
 	log.Info("trimmed", "changes", changes, "delivery_keys", keys, "sessions", sessions)

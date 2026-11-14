@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/mikepage/robinmail/internal/address"
@@ -25,6 +26,7 @@ type Config struct {
 	// a cluster needs the same file. Relative paths as for DataDir.
 	MasterKeyFile string `json:"master_key_file"`
 	Rqlite        Rqlite `json:"rqlite"`
+	Node          Node   `json:"node"`
 	TLS           TLS    `json:"tls"`
 	SMTP          SMTP   `json:"smtp"`
 	Web           Web    `json:"web"`
@@ -39,6 +41,41 @@ type Rqlite struct {
 	// URL of one rqlite node, for example "http://127.0.0.1:4001". Basic
 	// auth credentials may be given as "http://user:password@host:4001".
 	URL string `json:"url"`
+	// URLs lists several nodes of the same rqlite cluster instead. The
+	// first is tried first, so put the nearest one there; when it stops
+	// answering the others are used.
+	URLs []string `json:"urls"`
+}
+
+// Nodes returns the configured rqlite URLs, nearest first.
+func (r Rqlite) Nodes() []string {
+	if r.URL != "" {
+		return append([]string{r.URL}, r.URLs...)
+	}
+	return r.URLs
+}
+
+// Node makes this robinmail a member of a cluster. Without an id it runs
+// alone: blobs stay on its own disk and nothing listens for other nodes.
+// In a cluster every node needs this section, the same master key file and
+// the same rqlite cluster.
+type Node struct {
+	// ID names the node in the node table: lowercase letters, digits and
+	// "-". It must be unique in the cluster and should not change.
+	ID string `json:"id"`
+	// Listen is where the node listens for the other nodes, for example
+	// ":7443". Mutual TLS; see internal/cluster.
+	Listen string `json:"listen"`
+	// Address is the host:port under which the other nodes reach Listen.
+	Address string `json:"address"`
+	// BlobCopies is how many nodes must have a blob before a write is
+	// acknowledged, this node included. With fewer nodes registered than
+	// this, all of them. [2]
+	BlobCopies int `json:"blob_copies"`
+	// RepairIntervalSeconds is how often the node compares what the
+	// database refers to with its disk and fetches missing blobs. It also
+	// does so at start. [300]
+	RepairIntervalSeconds int `json:"repair_interval_seconds"`
 }
 
 // SMTP configures the inbound listener. Zero values get the server defaults.
@@ -108,8 +145,31 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: invalid hostname %q", path, c.Hostname)
 	}
 
-	if !httpURL(c.Rqlite.URL) {
-		return nil, fmt.Errorf("%s: rqlite url must be an http:// or https:// URL", path)
+	if len(c.Rqlite.Nodes()) == 0 {
+		return nil, fmt.Errorf("%s: rqlite url (or urls) is required", path)
+	}
+	for _, u := range c.Rqlite.Nodes() {
+		if !httpURL(u) {
+			return nil, fmt.Errorf("%s: rqlite url must be an http:// or https:// URL", path)
+		}
+	}
+	if n := c.Node; n.ID == "" {
+		if n.Listen != "" || n.Address != "" || n.BlobCopies != 0 || n.RepairIntervalSeconds != 0 {
+			return nil, fmt.Errorf("%s: node needs an id", path)
+		}
+	} else {
+		if !nodeID.MatchString(n.ID) {
+			return nil, fmt.Errorf("%s: node id %q must be 1 to 32 lowercase letters, digits or \"-\"", path, n.ID)
+		}
+		if _, _, err := net.SplitHostPort(n.Listen); err != nil {
+			return nil, fmt.Errorf("%s: node listen must be an address such as :7443", path)
+		}
+		if host, _, err := net.SplitHostPort(n.Address); err != nil || host == "" {
+			return nil, fmt.Errorf("%s: node address must be the host:port the other nodes reach this node on", path)
+		}
+		if n.BlobCopies < 0 || n.RepairIntervalSeconds < 0 {
+			return nil, errors.New(path + ": limits cannot be negative")
+		}
 	}
 	if c.DataDir == "" {
 		return nil, fmt.Errorf("%s: data_dir is required", path)
@@ -164,6 +224,8 @@ func Load(path string) (*Config, error) {
 	}
 	return &c, nil
 }
+
+var nodeID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 func httpURL(s string) bool {
 	u, err := url.Parse(s)
