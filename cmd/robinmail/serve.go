@@ -14,6 +14,7 @@ import (
 
 	"github.com/mikepage/robinmail/internal/delivery"
 	"github.com/mikepage/robinmail/internal/jmap"
+	"github.com/mikepage/robinmail/internal/queue"
 	"github.com/mikepage/robinmail/internal/rspamd"
 	"github.com/mikepage/robinmail/internal/smtp"
 	"github.com/mikepage/robinmail/internal/store"
@@ -28,6 +29,12 @@ var (
 	onListen     func(net.Addr)
 	onWebListen  func(net.Addr)
 	onNodeListen func(net.Addr)
+	// onSubmissionListen is told the STARTTLS and the implicit TLS
+	// submission listener, each nil without one.
+	onSubmissionListen func(starttls, implicit net.Addr)
+	// queueSetup lets a test give the outbound worker its own DNS, dialer
+	// and clock before it starts.
+	queueSetup func(*queue.Worker)
 )
 
 // webStatic is the webmail served outside the API paths: the one built
@@ -60,10 +67,22 @@ func (a *app) serve(stop func()) error {
 		FailOpen: a.cfg.Rspamd.FailOpen,
 		Logger:   log,
 	}
+	d.Submissions = a.store
+	sender := &delivery.Submitter{
+		Hostname:        a.cfg.Hostname,
+		Store:           a.store,
+		FailOpen:        a.cfg.Rspamd.FailOpen,
+		MaxMessageBytes: a.cfg.SMTP.MaxMessageBytes,
+		MaxRecipients:   a.cfg.SMTP.MaxRecipients,
+		MaxPerHour:      a.cfg.Submission.MaxRecipientsPerHour,
+		Hold:            time.Duration(*a.cfg.Submission.UndoSeconds) * time.Second,
+		Logger:          log,
+	}
 	if a.cfg.Rspamd.URL != "" {
 		d.Rspamd = &rspamd.Client{URL: a.cfg.Rspamd.URL, Timeout: time.Duration(a.cfg.Rspamd.TimeoutSeconds) * time.Second}
+		sender.Rspamd = d.Rspamd
 	} else {
-		log.Warn("no rspamd url configured, mail is delivered unscanned")
+		log.Warn("no rspamd url configured: incoming mail is delivered unscanned, outgoing mail is sent without a DKIM signature")
 	}
 	domains, err := a.store.Domains(a.ctx)
 	if err != nil {
@@ -95,7 +114,7 @@ func (a *app) serve(stop func()) error {
 		Hostname:   a.cfg.Hostname,
 		Accounts:   a.store,
 		Limits:     a.store,
-		JMAP:       &jmap.Handler{Store: a.store},
+		JMAP:       &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store)},
 		Static:     webStatic,
 		DevOrigins: a.cfg.Web.DevOrigins,
 		Logger:     log,
@@ -138,6 +157,74 @@ func (a *app) serve(stop func()) error {
 	if len(webServers) == 0 {
 		log.Warn("no web listener configured, JMAP and the webmail are off")
 	}
+	// Submission: 587 with STARTTLS, 465 with TLS from the start. The same
+	// server, so limits on connections hold for both together.
+	var submission *smtp.Server
+	subErr := make(chan error, 2)
+	if a.cfg.Submission.Listen != "" || a.cfg.Submission.ListenTLS != "" {
+		if tc == nil {
+			return errors.New("submission listeners need a certificate")
+		}
+		submit := &delivery.Handler{Submitter: sender, Login: site.Login}
+		submission = &smtp.Server{
+			Hostname:        a.cfg.Hostname,
+			TLSConfig:       tc,
+			Handler:         submit,
+			Auth:            submit,
+			Logger:          log,
+			MaxMessageBytes: a.cfg.SMTP.MaxMessageBytes,
+			MaxRecipients:   a.cfg.SMTP.MaxRecipients,
+			MaxConnections:  a.cfg.SMTP.MaxConnections,
+			MaxConnsPerIP:   a.cfg.SMTP.MaxConnectionsPerIP,
+		}
+		var plain, implicit net.Addr
+		if addr := a.cfg.Submission.Listen; addr != "" {
+			sl, err := net.Listen("tcp", addr)
+			if err != nil {
+				return err
+			}
+			plain = sl.Addr()
+			log.Info("submission listening", "addr", plain.String(), "tls", "starttls")
+			go func() { subErr <- submission.Serve(sl) }()
+		}
+		if addr := a.cfg.Submission.ListenTLS; addr != "" {
+			sl, err := net.Listen("tcp", addr)
+			if err != nil {
+				return err
+			}
+			implicit = sl.Addr()
+			log.Info("submission listening", "addr", implicit.String(), "tls", "implicit")
+			go func() { subErr <- submission.Serve(tls.NewListener(sl, tc)) }()
+		}
+		if onSubmissionListen != nil {
+			onSubmissionListen(plain, implicit)
+		}
+	}
+
+	// The outbound queue. Every node works it; a row belongs to whoever
+	// holds its claim.
+	worker := &queue.Worker{
+		Hostname:       a.cfg.Hostname,
+		NodeID:         a.cfg.Node.ID,
+		Store:          a.store,
+		Local:          d,
+		Routes:         a.cfg.Outbound.Routes,
+		Concurrency:    a.cfg.Outbound.Concurrency,
+		PerDestination: a.cfg.Outbound.PerDestination,
+		Logger:         log,
+	}
+	if worker.NodeID == "" {
+		worker.NodeID = a.cfg.Hostname
+	}
+	if queueSetup != nil {
+		queueSetup(worker)
+	}
+	queued := make(chan struct{})
+	go func() {
+		defer close(queued)
+		worker.Run(a.ctx)
+	}()
+
 	// Last, so a test that waits for this has every listener up.
 	if onListen != nil {
 		onListen(l.Addr())
@@ -190,6 +277,8 @@ func (a *app) serve(stop func()) error {
 		return err
 	case err := <-webErr:
 		return err
+	case err := <-subErr:
+		return err
 	case <-a.ctx.Done():
 	}
 	stop()
@@ -209,6 +298,14 @@ func (a *app) serve(stop func()) error {
 	if err := srv.Shutdown(sctx); err != nil {
 		log.Warn("closed sessions that did not finish in time")
 	}
+	if submission != nil {
+		if err := submission.Shutdown(sctx); err != nil {
+			log.Warn("closed submission sessions that did not finish in time")
+		}
+	}
+	// An attempt that is under way is cut off; its claim runs out and the
+	// message is tried again, here after a restart or on another node.
+	<-queued
 	<-webDone
 	<-trimmed
 	<-upkeep
@@ -295,7 +392,21 @@ func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger) {
 		log.Error("trimming login failures failed", "err", err)
 		return
 	}
-	log.Info("trimmed", "changes", changes, "delivery_keys", keys, "sessions", sessions)
+	uploads, err := st.TrimUploads(ctx, now.Add(-store.UploadRetention))
+	if err != nil {
+		log.Error("trimming uploads failed", "err", err)
+		return
+	}
+	subs, err := st.TrimSubmissions(ctx, now.Add(-store.SubmissionRetention))
+	if err != nil {
+		log.Error("trimming the queue failed", "err", err)
+		return
+	}
+	if _, err := st.TrimSTSPolicies(ctx, now.Add(-24*time.Hour)); err != nil {
+		log.Error("trimming MTA-STS policies failed", "err", err)
+		return
+	}
+	log.Info("trimmed", "changes", changes, "delivery_keys", keys, "sessions", sessions, "uploads", uploads, "submissions", subs)
 	// The blobs are this node's own: every node sweeps its disk.
 	swept, err := st.SweepBlobs(ctx, now.Add(-store.BlobGrace))
 	if err != nil {
@@ -303,4 +414,39 @@ func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger) {
 		return
 	}
 	log.Info("swept blobs", "removed", swept.Removed, "restored", swept.Restored, "temp", swept.Temp)
+}
+
+// jmapSend is how EmailSubmission/set reaches the Submitter: it turns a
+// refusal into the SetError RFC 8621 7.5 has for it.
+func jmapSend(sender *delivery.Submitter, st *store.Store) func(context.Context, jmap.User, jmap.Outgoing) (store.Submission, *jmap.SendError, error) {
+	return func(ctx context.Context, u jmap.User, o jmap.Outgoing) (store.Submission, *jmap.SendError, error) {
+		acct, err := st.AccountByID(ctx, u.AccountID)
+		if err != nil {
+			return store.Submission{}, nil, err
+		}
+		sub, err := sender.Submit(ctx, delivery.Outgoing{Account: acct, From: o.MailFrom, Rcpts: o.RcptTo, Raw: o.Raw,
+			EmailID: o.EmailID, IdentityID: o.IdentityID, IfInState: o.IfInState, Protocol: "JMAP"})
+		var r *delivery.Refusal
+		if !errors.As(err, &r) {
+			return sub, nil, err
+		}
+		se := &jmap.SendError{Type: r.Kind, Description: r.Msg, InvalidRecipients: r.Recipients}
+		switch r.Kind {
+		case delivery.RefuseTooMany:
+			se.MaxRecipients = sender.MaxRecipients
+			if se.MaxRecipients == 0 {
+				se.MaxRecipients = 100
+			}
+		case delivery.RefuseTooLarge:
+			se.MaxSize = sender.MaxMessageBytes
+			if se.MaxSize == 0 {
+				se.MaxSize = 25 << 20
+			}
+		case delivery.RefuseRateLimit, delivery.RefuseLater:
+			// RFC 8621 has no "try later" for a submission; forbiddenToSend
+			// with the reason is the nearest it has.
+			se.Type = "forbiddenToSend"
+		}
+		return sub, se, nil
+	}
 }

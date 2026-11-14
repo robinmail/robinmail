@@ -35,5 +35,16 @@
     "url": "http://127.0.0.1:11333",
     "fail_open": false,
     "timeout_seconds": 30
+  },
+  "submission": {
+    "listen": ":587",
+    "listen_tls": ":465",
+    "max_recipients_per_hour": 300,
+    "undo_seconds": 10
+  },
+  "outbound": {
+    "concurrency": 8,
+    "per_destination": 2,
+    "routes": {}
   }
 }

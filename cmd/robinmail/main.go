@@ -63,6 +63,8 @@ commands:
   node list                                    list the nodes of the cluster
   node remove <id>                             take a stopped node out of the cluster
   reindex [address]                            read stored messages again and refresh the cached columns
+  dns <domain> [dkim-key-file]                 print the DNS records of a domain (MX, SPF, DKIM, DMARC, MTA-STS);
+                                               a key file that does not exist is made
 `
 
 func main() {
@@ -172,6 +174,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return a.nodeList()
 	case cmd == "node" && n == 2 && args[0] == "remove":
 		return a.nodeRemove(args[1])
+	case cmd == "dns" && (n == 1 || n == 2):
+		return a.dns(args[0], optional(args, 1, ""))
 	case cmd == "reindex" && (n == 0 || n == 1):
 		return a.reindex(optional(args, 0, ""))
 	}

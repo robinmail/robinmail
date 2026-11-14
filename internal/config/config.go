@@ -24,13 +24,15 @@ type Config struct {
 	// MasterKeyFile holds the key that wraps the account keys blobs are
 	// encrypted with. Make one with "robinmail key generate"; every node of
 	// a cluster needs the same file. Relative paths as for DataDir.
-	MasterKeyFile string `json:"master_key_file"`
-	Rqlite        Rqlite `json:"rqlite"`
-	Node          Node   `json:"node"`
-	TLS           TLS    `json:"tls"`
-	SMTP          SMTP   `json:"smtp"`
-	Web           Web    `json:"web"`
-	Rspamd        Rspamd `json:"rspamd"`
+	MasterKeyFile string     `json:"master_key_file"`
+	Rqlite        Rqlite     `json:"rqlite"`
+	Node          Node       `json:"node"`
+	TLS           TLS        `json:"tls"`
+	SMTP          SMTP       `json:"smtp"`
+	Web           Web        `json:"web"`
+	Rspamd        Rspamd     `json:"rspamd"`
+	Submission    Submission `json:"submission"`
+	Outbound      Outbound   `json:"outbound"`
 }
 
 // The domains the server accepts mail for are not in this file: the nodes of
@@ -85,6 +87,36 @@ type SMTP struct {
 	MaxRecipients       int    `json:"max_recipients"`
 	MaxConnections      int    `json:"max_connections"`
 	MaxConnectionsPerIP int    `json:"max_connections_per_ip"`
+}
+
+// Submission configures the listeners users send mail through (RFC 6409,
+// RFC 8314). Both need a certificate (tls): a password never crosses them
+// in the clear. Without a listener only JMAP submits. The size and
+// recipient limits are those of smtp.
+type Submission struct {
+	// Listen is the STARTTLS listener, usually ":587".
+	Listen string `json:"listen"`
+	// ListenTLS is the listener with TLS from the first byte, usually
+	// ":465".
+	ListenTLS string `json:"listen_tls"`
+	// MaxRecipientsPerHour is how many recipients one account may send to
+	// within an hour, over SMTP and JMAP together and on all nodes. [300]
+	MaxRecipientsPerHour int `json:"max_recipients_per_hour"`
+	// UndoSeconds is how long a message submitted over JMAP waits before
+	// it is sent, so the user can still cancel it. [10]; 0 sends at once.
+	UndoSeconds *int `json:"undo_seconds"`
+}
+
+// Outbound configures the queue that delivers to other servers.
+type Outbound struct {
+	// Concurrency is how many messages a node works on at once [8];
+	// PerDestination how many connections one recipient domain gets [2].
+	Concurrency    int `json:"concurrency"`
+	PerDestination int `json:"per_destination"`
+	// Routes sends the mail for a domain to a fixed "host:port" instead of
+	// its MX hosts; "*" is every other domain. For a relay host, and for
+	// development without DNS.
+	Routes map[string]string `json:"routes"`
 }
 
 // Web configures the HTTP side: login, JMAP and the webmail on one origin.
@@ -202,6 +234,28 @@ func Load(path string) (*Config, error) {
 	}
 	if n := c.SMTP.MaxRecipients; n != 0 && n < MinRecipients {
 		return nil, fmt.Errorf("%s: smtp max_recipients must be at least %d (RFC 5321 4.5.3.1.8)", path, MinRecipients)
+	}
+	sub := c.Submission
+	if (sub.Listen != "" || sub.ListenTLS != "") && !c.TLS.ACME && c.TLS.CertFile == "" {
+		return nil, errors.New(path + ": submission listeners need a certificate (tls)")
+	}
+	if sub.MaxRecipientsPerHour < 0 || (sub.UndoSeconds != nil && (*sub.UndoSeconds < 0 || *sub.UndoSeconds > 3600)) {
+		return nil, errors.New(path + ": submission: max_recipients_per_hour cannot be negative, undo_seconds is 0 to 3600")
+	}
+	if c.Submission.MaxRecipientsPerHour == 0 {
+		c.Submission.MaxRecipientsPerHour = 300
+	}
+	if c.Submission.UndoSeconds == nil {
+		ten := 10
+		c.Submission.UndoSeconds = &ten
+	}
+	if c.Outbound.Concurrency < 0 || c.Outbound.PerDestination < 0 {
+		return nil, errors.New(path + ": limits cannot be negative")
+	}
+	for domain, route := range c.Outbound.Routes {
+		if host, _, err := net.SplitHostPort(route); err != nil || host == "" || (domain != "*" && !address.ValidDomain(domain)) {
+			return nil, fmt.Errorf("%s: outbound routes: %q: %q must be a domain (or \"*\") to a host:port", path, domain, route)
+		}
 	}
 	if c.Web.Listen != "" && !c.TLS.ACME && c.TLS.CertFile == "" {
 		return nil, errors.New(path + ": web listen needs a certificate (tls); for development use web http_listen")
