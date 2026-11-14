@@ -16,6 +16,14 @@
 # each other mail cannot share one. The tests that need it want
 #   ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003
 # and contrib/dev/send-demo.sh uses it for its second instance.
+#
+# rqlite-dev (port 4005) belongs to the development instance of
+# contrib/dev/seed.sh and to "make e2e", which runs on that instance.
+# rqlite and rqlite-b belong to the Go tests (and send-demo.sh): they
+# make domains and accounts with random names by the hundred and never
+# remove them, and their servers' queue workers take any row they find,
+# so nothing a person looks at lives there. To empty them:
+#   docker compose -f contrib/compose/compose.yaml up -d --force-recreate rqlite rqlite-b
 name: robinmail
 
 services:
@@ -28,6 +36,11 @@ services:
     image: rqlite/rqlite:10.7.1
     ports:
       - "127.0.0.1:4003:4001"
+
+  rqlite-dev:
+    image: rqlite/rqlite:10.7.1
+    ports:
+      - "127.0.0.1:4005:4001"
 
   # Mailpit takes every message the development instance sends to a domain
   # that is not its own (contrib/dev/robinmail.dev.json routes "*" to it)

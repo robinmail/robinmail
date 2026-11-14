@@ -1,7 +1,8 @@
 #!/bin/sh
 # Sets up a development instance of robinmail in ./dev (ignored by git): a
 # config, a master key, the domain robinmail.test, one user and some mail.
-# It needs rqlite from contrib/compose:
+# It needs rqlite-dev from contrib/compose (127.0.0.1:4005), a database
+# that only this instance and "make e2e" use:
 #
 #   docker compose -f contrib/compose/compose.yaml up -d
 #   contrib/dev/seed.sh
@@ -24,6 +25,21 @@
 # from before the IMAP and submission listeners is moved aside and
 # replaced (the script says so). One from before Mailpit still routes to
 # the dead port 127.0.0.1:1 until that line is changed.
+#
+# Until November 2026 the instance used the rqlite on 127.0.0.1:4001, the
+# one the Go tests fill with throwaway domains and accounts. An existing
+# dev/robinmail.json that still names it is pointed at 4005 by this
+# script (it says so). To move over, once:
+#
+#   docker compose -f contrib/compose/compose.yaml up -d    # starts rqlite-dev
+#   contrib/dev/seed.sh                                     # new database: the users and the sample mail again
+#   stop the running dev server and start it again          # until then it stays on 4001
+#
+# Nothing is carried over: the instance starts fresh, with the same
+# master key. Mail, app passwords and settings of the old one stay in the
+# database on 4001 until that container is recreated, and its message
+# files stay in dev/data, where nothing refers to them any more ("rm -rf
+# dev/data" before seeding, with no server running, clears them).
 #
 # A mail client (Thunderbird, Apple Mail, mbsync) can use the instance
 # too. IMAP and submission only speak TLS, so this script makes a
@@ -71,8 +87,20 @@ if [ -f "$DIR/robinmail.json" ] && ! grep -q '"imap"' "$DIR/robinmail.json"; the
 	echo "$DIR/robinmail.json had no IMAP and submission listeners: replaced by contrib/dev/robinmail.dev.json,"
 	echo "the old one is $DIR/robinmail.json.before-mail-clients; restart a running dev server to use the new one"
 fi
+# A config that still uses the database of the Go tests gets the
+# instance's own.
+if [ -f "$DIR/robinmail.json" ] && grep -q '"url": "http://127.0.0.1:4001"' "$DIR/robinmail.json"; then
+	sed -i.before-rqlite-dev 's|"url": "http://127.0.0.1:4001"|"url": "http://127.0.0.1:4005"|' "$DIR/robinmail.json"
+	echo "$DIR/robinmail.json used the database of the Go tests (127.0.0.1:4001): it now names 127.0.0.1:4005,"
+	echo "which starts empty; restart a running dev server to use it (the old file is $DIR/robinmail.json.before-rqlite-dev)"
+fi
 [ -f "$DIR/robinmail.json" ] || cp contrib/dev/robinmail.dev.json "$DIR/robinmail.json"
 go build -o "$DIR/robinmail" ./cmd/robinmail
+RQLITE=$(sed -n 's|.*"url": "\(http://[^"]*\)".*|\1|p' "$DIR/robinmail.json" | head -1)
+if ! curl -fsS -o /dev/null --max-time 3 "$RQLITE/readyz"; then
+	echo "no rqlite on $RQLITE: docker compose -f contrib/compose/compose.yaml up -d" >&2
+	exit 1
+fi
 robinmail() { "$DIR/robinmail" -config "$DIR/robinmail.json" "$@"; }
 
 [ -f "$DIR/master.key" ] || robinmail key generate

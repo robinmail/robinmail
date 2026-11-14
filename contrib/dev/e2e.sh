@@ -12,7 +12,8 @@
 # The server listens on 127.0.0.1:8080 like the development instance. When
 # one is running there already, ROBINMAIL_E2E_PORT=8085 puts this one on
 # another port (and its SMTP on the next); both then work on the same
-# database, as two nodes would.
+# database (rqlite-dev of contrib/compose, 127.0.0.1:4005), as two nodes
+# would. The Go tests have databases of their own.
 set -eu
 cd "$(dirname "$0")/../.."
 PORT=${ROBINMAIL_E2E_PORT:-8080}
