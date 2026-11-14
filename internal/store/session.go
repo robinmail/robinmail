@@ -25,7 +25,10 @@ func (s *Store) AccountByID(ctx context.Context, id string) (Account, error) {
 func (s *Store) CreateSession(ctx context.Context, tokenHash, account string, expires time.Time) error {
 	b := s.newBatch(account)
 	b.guardAccount()
-	b.add(`INSERT INTO session (token_hash, account_id, expires_at) VALUES (:hash, :a, :expires)`,
+	// The token is 32 random bytes: a row with its hash can only be this
+	// one, written by a first run of this batch.
+	b.idempotent()
+	b.add(`INSERT OR IGNORE INTO session (token_hash, account_id, expires_at) VALUES (:hash, :a, :expires)`,
 		"hash", tokenHash, "expires", expires.Unix())
 	_, err := s.run(ctx, b)
 	return err
@@ -48,7 +51,7 @@ func (s *Store) SessionAccount(ctx context.Context, tokenHash string) (Account, 
 
 // DeleteSession ends a session. One that does not exist is not an error.
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
-	if _, err := s.db.Execute(ctx, rqlite.Stmt(`DELETE FROM session WHERE token_hash = ?`, tokenHash)); err != nil {
+	if _, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM session WHERE token_hash = ?`, tokenHash)); err != nil {
 		return fmt.Errorf("store: %w", err)
 	}
 	return nil
@@ -57,7 +60,7 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 // TrimSessions removes the sessions that expired before the given time and
 // returns how many.
 func (s *Store) TrimSessions(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.Execute(ctx, rqlite.Stmt(`DELETE FROM session WHERE expires_at <= ?`, before.Unix()))
+	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM session WHERE expires_at <= ?`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}

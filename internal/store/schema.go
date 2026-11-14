@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -158,6 +158,9 @@ var schema = []string{
 	) WITHOUT ROWID`,
 	`CREATE INDEX IF NOT EXISTS submission_next ON submission (state, next_try)`,
 
+	sqlNodeTable,
+	sqlLoginFailureTable,
+
 	`INSERT INTO schema_version (version) SELECT ` + fmt.Sprint(schemaVersion) + ` WHERE NOT EXISTS (SELECT 1 FROM schema_version)`,
 }
 
@@ -176,7 +179,32 @@ var migrations = map[int64][]string{
 		`CREATE INDEX IF NOT EXISTS email_received ON email (account_id, received_at)`,
 		`CREATE INDEX IF NOT EXISTS session_expires ON session (expires_at)`,
 	},
+	// 4: the cluster. Nodes find each other through the node table; login
+	// failures are counted for all nodes together.
+	3: {sqlNodeTable, sqlLoginFailureTable},
 }
+
+const (
+	// The robinmail nodes of the cluster. A node writes its own row when it
+	// starts and renews seen_at while it runs. address is where the other
+	// nodes reach it; cert is the SHA-256 of the certificate it shows them
+	// and expects to be recognised by (internal/cluster).
+	sqlNodeTable = `CREATE TABLE IF NOT EXISTS node (
+		id         TEXT NOT NULL PRIMARY KEY,
+		address    TEXT NOT NULL,
+		cert       TEXT NOT NULL,
+		started_at INTEGER NOT NULL DEFAULT 0,
+		seen_at    INTEGER NOT NULL DEFAULT 0
+	) WITHOUT ROWID`
+
+	// Failed logins per key ("a:" + address, "i:" + IP) in a window that
+	// starts with the first failure, shared by the nodes.
+	sqlLoginFailureTable = `CREATE TABLE IF NOT EXISTS login_failure (
+		key     TEXT NOT NULL PRIMARY KEY,
+		started INTEGER NOT NULL,
+		count   INTEGER NOT NULL
+	) WITHOUT ROWID`
+)
 
 // Init creates the tables in an empty database, migrates an older one and
 // checks the schema version. Call it once at start. It is safe to run on
@@ -191,7 +219,7 @@ func (s *Store) Init(ctx context.Context) error {
 		for i, sql := range schema {
 			stmts[i] = rqlite.Stmt(sql)
 		}
-		if _, err := s.db.Execute(ctx, stmts...); err != nil {
+		if _, err := s.db.ExecuteIdempotent(ctx, stmts...); err != nil {
 			return fmt.Errorf("store: creating schema: %w", err)
 		}
 		if version, err = s.version(ctx); err != nil {
@@ -210,7 +238,7 @@ func (s *Store) Init(ctx context.Context) error {
 			stmts = append(stmts, rqlite.Stmt(sql))
 		}
 		stmts = append(stmts, rqlite.Stmt(`UPDATE schema_version SET version = ?`, version+1))
-		_, merr := s.db.Execute(ctx, stmts...)
+		_, merr := s.db.ExecuteIdempotent(ctx, stmts...)
 		now, err := s.version(ctx)
 		if err != nil {
 			return err

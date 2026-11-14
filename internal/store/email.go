@@ -497,6 +497,7 @@ func (s *Store) Reindex(ctx context.Context, account string, id int64) error {
 		attachment = 1
 	}
 	b := s.newBatch(account)
+	b.idempotent() // sets columns to values that depend only on the blob
 	b.add(`UPDATE email SET message_id = :message_id, sender = :sender, recipients = :recipients, cc = :cc, bcc = :bcc,
 			subject = :subject, sent_at = :sent_at, preview = :preview, has_attachment = :attachment
 		WHERE account_id = :a AND id = :e`,

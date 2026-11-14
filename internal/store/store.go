@@ -130,7 +130,14 @@ type batch struct {
 	base  map[string]any
 	stmts []rqlite.Statement
 	fail  map[int]error // statement index -> what its failure means
+	// again marks a batch that may be sent a second time when rqlite did
+	// not say whether the first was applied. See run.
+	again bool
 }
+
+// idempotent marks the batch as safe to run twice. Call it only with a
+// comment that says why it is.
+func (b *batch) idempotent() { b.again = true }
 
 func (s *Store) newBatch(account string) *batch {
 	return &batch{
@@ -208,8 +215,42 @@ func (b *batch) change(typ, sel string, kv ...any) {
 }
 
 // run executes the batch and translates a failed statement.
+//
+// When a leader dies in the middle of a write, rqlite cannot say whether the
+// batch was applied. Most batches here are not safe to send again: they take
+// a counter and bump the modseq, so a second run would do the work twice, or
+// they carry a guard ("no mailbox of that name yet", ifInState) that a
+// second run would trip over its own first run and report as a refusal.
+// Those fail with rqlite.ErrUnknownOutcome and the caller's caller decides:
+// a JMAP client gets serverFail and syncs, a command prints the error.
+//
+// The batches marked idempotent are sent again. How each write qualifies:
+//
+//	Deliver with a key     again: the delivered row is its guard; a second run
+//	                       fails as a whole with ErrDuplicate, which callers
+//	                       take as "stored"
+//	Deliver without a key  not again: a second run stores a second email
+//	CreateAccount          not again: would report ErrAccountExists for itself
+//	AddDomain/RemoveDomain not again: would report ErrDomainExists/ErrNoDomain
+//	NewMailbox, UpdateMailbox, DestroyMailbox, UpdateEmail, DestroyEmail
+//	                       not again: counters, modseq, and guards as above
+//	Reindex                again: sets columns to values computed from the blob
+//	CreateSession          again: INSERT OR IGNORE of a random token's hash
+//	DeleteSession, TrimSessions, TrimChanges, TrimDelivered, TrimLoginFailures
+//	                       again: deletes by condition; only the count of the
+//	                       second run is lower
+//	RegisterNode, Heartbeat, RemoveNode
+//	                       again: set a row to given values
+//	AddLoginFailure        not again: it counts
+//	ClearLoginFailures     again: a delete
+//	Init                   again: CREATE IF NOT EXISTS; a migration is guarded
+//	                       by the version it starts from
 func (s *Store) run(ctx context.Context, b *batch) ([]rqlite.Result, error) {
-	res, err := s.db.Execute(ctx, b.stmts...)
+	exec := s.db.Execute
+	if b.again {
+		exec = s.db.ExecuteIdempotent
+	}
+	res, err := exec(ctx, b.stmts...)
 	if err == nil {
 		return res, nil
 	}
@@ -224,6 +265,24 @@ func (s *Store) run(ctx context.Context, b *batch) ([]rqlite.Result, error) {
 
 // query runs read-only statements with weak consistency: the leader answers
 // after checking, locally, that it still is the leader.
+//
+// Read consistency, per kind of read:
+//
+//	weak    everything a user or a delivery reads: accounts, sessions,
+//	        domains, mailboxes, emails, changes, the node list. It costs no
+//	        Raft round trip. A leader that was just cut off from the others
+//	        can still answer for about a second (until its lease runs out)
+//	        from data that misses the newest writes. Nothing breaks on
+//	        that: JMAP state strings make a client catch up, a delivery's
+//	        own checks are guards inside its write batch, and a logged-out
+//	        session or a removed domain is honoured a second late.
+//	strong  the one read that decides a deletion: the blob sweeper's
+//	        "is this still referenced". It goes through the Raft log, so
+//	        only a leader that still has a quorum answers.
+//	none    the login failure counters: any node answers from its own copy,
+//	        without asking the leader, unless it lost the leader more than
+//	        5 seconds ago. A count that is a moment old is good enough for a
+//	        rate limit, and it keeps a login from waiting on the leader.
 func (s *Store) query(ctx context.Context, account string, stmts ...[]any) ([]rqlite.Result, error) {
 	b := &batch{base: map[string]any{"a": account}}
 	for _, st := range stmts {

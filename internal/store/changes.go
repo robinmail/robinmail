@@ -112,7 +112,7 @@ func (s *Store) TrimAccountChanges(ctx context.Context, account string, before t
 // trimChanges trims one account, or all of them when account is empty.
 func (s *Store) trimChanges(ctx context.Context, account string, before time.Time) (int64, error) {
 	t := before.Unix()
-	res, err := s.db.Execute(ctx,
+	res, err := s.db.ExecuteIdempotent(ctx,
 		rqlite.Stmt(`UPDATE account SET trimmed_modseq = max(trimmed_modseq,
 				(SELECT max(c.modseq) FROM changes c WHERE c.account_id = account.id AND c.at < ?))
 			WHERE (? = '' OR id = ?)
@@ -127,7 +127,7 @@ func (s *Store) trimChanges(ctx context.Context, account string, before time.Tim
 // TrimDelivered forgets delivery keys stored before the given time and
 // returns how many.
 func (s *Store) TrimDelivered(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.Execute(ctx, rqlite.Stmt(`DELETE FROM delivered WHERE at < ?`, before.Unix()))
+	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM delivered WHERE at < ?`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}

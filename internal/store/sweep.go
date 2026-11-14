@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/mikepage/robinmail/internal/blob"
@@ -60,4 +63,75 @@ func (r blobRefs) Referenced(ctx context.Context, account, sum string) (bool, er
 		return false, err
 	}
 	return len(res[0].Values) > 0, nil
+}
+
+// VerifyBlob is the blob.Verifier of a cluster: it decides whether an
+// encrypted file that another node sent is the blob the key names. It
+// decrypts the file with the account's key and compares the SHA-256 of the
+// plaintext with the name.
+//
+// Decrypting already proves a lot: every chunk is authenticated with the
+// account's key and with the account id and hash as associated data, so
+// only a node that holds the master key can have made a file that gets
+// this far. The hash on top catches a sender that sealed the wrong
+// content under a name. Every node has the master key anyway (it serves
+// every account), so a check that needs no key would buy nothing.
+func (s *Store) VerifyBlob(ctx context.Context, key string, r io.Reader) error {
+	account, sum, err := blob.SplitKey(key)
+	if err != nil {
+		return err
+	}
+	k, err := s.blobKey(ctx, account)
+	if err != nil {
+		return err
+	}
+	plain, err := blob.Decrypt(k, account, sum, io.NopCloser(r))
+	if err != nil {
+		return err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, plain); err != nil {
+		return err
+	}
+	if hex.EncodeToString(h.Sum(nil)) != sum {
+		return blob.ErrCorrupt
+	}
+	return nil
+}
+
+// ErrNoRepair is returned by RepairBlobs when the blob store is not a
+// replicated one: there is nobody to fetch from.
+var ErrNoRepair = errors.New("store: this blob store has no other nodes to repair from")
+
+// repairer is what blob.Replicated has.
+type repairer interface {
+	Repair(ctx context.Context, cat blob.Catalog) (blob.RepairResult, error)
+}
+
+// RepairBlobs fetches, from the other nodes, every blob an email refers to
+// that this node's disk lacks. Every node runs it at start and from time
+// to time.
+func (s *Store) RepairBlobs(ctx context.Context) (blob.RepairResult, error) {
+	rp, ok := s.blobs.(repairer)
+	if !ok {
+		return blob.RepairResult{}, ErrNoRepair
+	}
+	res, err := rp.Repair(ctx, blobRefs{s})
+	if err != nil {
+		return res, fmt.Errorf("store: repairing blobs: %w", err)
+	}
+	return res, nil
+}
+
+// Accounts lists the account ids, for blob.Catalog.
+func (r blobRefs) Accounts(ctx context.Context) ([]string, error) {
+	res, err := r.s.query(ctx, "", q(`SELECT id FROM account ORDER BY id`))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(res[0].Values))
+	for _, row := range res[0].Values {
+		out = append(out, asString(row[0]))
+	}
+	return out, nil
 }

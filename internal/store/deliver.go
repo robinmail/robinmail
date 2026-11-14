@@ -87,7 +87,10 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 		b.guard(ErrNoMailbox, target+` IS NOT NULL`)
 	}
 	if m.Key != "" {
-		// A repeated key fails here and rolls everything back.
+		// A repeated key fails here and rolls everything back. That also
+		// makes the batch safe to send again after an unknown outcome: if
+		// the first run was applied, the second is refused as a whole.
+		b.idempotent()
 		b.unique(ErrDuplicate)
 		b.add(`INSERT INTO delivered (account_id, key, at) VALUES (:a, :key, :now)`, "key", m.Key)
 	}
