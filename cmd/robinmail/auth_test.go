@@ -78,34 +78,65 @@ func imapLogin(t *testing.T, name, addr, user, secret string) (*imapClient, stri
 // returns the reply code.
 func smtpAuth(t *testing.T, n authNode, user, secret string) int {
 	t.Helper()
+	s, code := smtpOpen(t, n, user, secret)
+	s.conn.Close()
+	return code
+}
+
+// smtpSession is a submission session that stays open after AUTH, as a
+// mail client's does between two messages.
+type smtpSession struct {
+	conn net.Conn
+	br   *bufio.Reader
+}
+
+func smtpOpen(t *testing.T, n authNode, user, secret string) (*smtpSession, int) {
+	t.Helper()
 	// Each node has a certificate of its own making; like dialIMAP, this
 	// does not check it.
 	conn, err := tls.Dial("tcp", n.implicit, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	t.Cleanup(func() { conn.Close() })
 	conn.SetDeadline(time.Now().Add(20 * time.Second))
-	br := bufio.NewReader(conn)
-	reply := func() (int, string) {
-		for {
-			line, err := br.ReadString('\n')
-			if err != nil {
-				t.Fatalf("submission: %v", err)
-			}
-			if len(line) >= 4 && line[3] == ' ' {
-				code := 0
-				fmt.Sscanf(line[:3], "%d", &code)
-				return code, line
-			}
+	s := &smtpSession{conn, bufio.NewReader(conn)}
+	s.reply(t)
+	fmt.Fprintf(conn, "EHLO client.example\r\n")
+	s.reply(t)
+	fmt.Fprintf(conn, "AUTH PLAIN %s\r\n", base64.StdEncoding.EncodeToString([]byte("\x00"+user+"\x00"+secret)))
+	code, _ := s.reply(t)
+	return s, code
+}
+
+func (s *smtpSession) reply(t *testing.T) (int, string) {
+	t.Helper()
+	for {
+		line, err := s.br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("submission: %v", err)
+		}
+		if len(line) >= 4 && line[3] == ' ' {
+			code := 0
+			fmt.Sscanf(line[:3], "%d", &code)
+			return code, line
 		}
 	}
-	reply()
-	fmt.Fprintf(conn, "EHLO client.example\r\n")
-	reply()
-	fmt.Fprintf(conn, "AUTH PLAIN %s\r\n", base64.StdEncoding.EncodeToString([]byte("\x00"+user+"\x00"+secret)))
-	code, _ := reply()
-	return code
+}
+
+// ended checks that the server ends the session unasked, with 421 4.7.0,
+// and closes the connection.
+func (s *smtpSession) ended(t *testing.T, what string) {
+	t.Helper()
+	s.conn.SetDeadline(time.Now().Add(10 * time.Second))
+	line, err := s.br.ReadString('\n')
+	if err != nil || !strings.HasPrefix(line, "421 4.7.0 ") || !strings.Contains(line, "login was withdrawn") {
+		t.Errorf("%s: the open submission session got %q, %v", what, line, err)
+		return
+	}
+	if _, err := s.br.ReadString('\n'); err != io.EOF {
+		t.Errorf("%s: the submission session after the 421: %v, want the connection closed", what, err)
+	}
 }
 
 // post sends JSON and decodes the answer into out when it is not nil.
@@ -164,6 +195,12 @@ func TestAuthEndToEnd(t *testing.T) {
 	if code := smtpAuth(t, a, anna, password); code != 235 {
 		t.Fatalf("SMTP AUTH with the account password: %d", code)
 	}
+	// A submission session that stays open, as Thunderbird keeps one
+	// between messages.
+	smtpWithPassword, authCode := smtpOpen(t, b, anna, password)
+	if authCode != 235 {
+		t.Fatalf("SMTP AUTH with the account password: %d", authCode)
+	}
 
 	// --- 2. The first app password, made in the webmail on node A. ---
 	web := newJMAPClient(t, "http://"+a.web)
@@ -182,6 +219,8 @@ func TestAuthEndToEnd(t *testing.T) {
 	// told to go: that password is no longer a way into IMAP.
 	withPassword.want(bye, 10*time.Second)
 	t.Logf("first app password on node A -> BYE for the password's IDLE session on node B after %v", time.Since(start).Round(time.Millisecond))
+	// So is the submission session: it could send mail otherwise.
+	smtpWithPassword.ended(t, "the first app password")
 
 	// --- 3. The account password is for the web login only now. ---
 	for name, n := range map[string]authNode{"A": a, "B": b} {
@@ -261,10 +300,15 @@ func TestAuthEndToEnd(t *testing.T) {
 		}
 	}
 
+	smtpPhone, authCode := smtpOpen(t, b, anna, phone.Secret)
+	if authCode != 235 {
+		t.Fatalf("SMTP AUTH with the app password: %d", authCode)
+	}
 	start = time.Now()
 	if status := web.post("DELETE", "/auth/app-passwords/"+phone.ID, "", nil); status != 204 {
 		t.Fatalf("revoke: %d", status)
 	}
+	smtpPhone.ended(t, "the revoke")
 	idle.want(bye, 10*time.Second)
 	t.Logf("revoke on node A -> BYE in IDLE on node B after %v", time.Since(start).Round(time.Millisecond))
 	waiting.want(bye, 10*time.Second)

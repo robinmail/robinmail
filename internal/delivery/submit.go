@@ -331,21 +331,49 @@ type Handler struct {
 	// Login checks an address and password and answers like
 	// web.Server.Login: 0, or the HTTP status that says why not.
 	Login func(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration)
+	// LoginSession, when set, is used instead of Login. For a login it
+	// grants it also returns a function that starts watching it: that
+	// one's channel is closed when the login is withdrawn (an app password
+	// revoked, a password changed), and the SMTP session ends then.
+	LoginSession func(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration, func() (<-chan struct{}, func()))
 }
 
 // Authenticate implements smtp.Authenticator. The session then acts as the
 // account's address.
 func (h *Handler) Authenticate(ctx context.Context, ip net.IP, username, password string) (string, error) {
-	acct, status, _ := h.Login(ctx, ip.String(), username, password)
+	user, _, stop, err := h.AuthenticateSession(ctx, ip, username, password)
+	if stop != nil {
+		stop()
+	}
+	return user, err
+}
+
+// AuthenticateSession implements smtp.RevocableAuthenticator: with
+// LoginSession set, the session ends when its login is withdrawn.
+func (h *Handler) AuthenticateSession(ctx context.Context, ip net.IP, username, password string) (string, <-chan struct{}, func(), error) {
+	var (
+		acct   store.Account
+		status int
+		watch  func() (<-chan struct{}, func())
+	)
+	if h.LoginSession != nil {
+		acct, status, _, watch = h.LoginSession(ctx, ip.String(), username, password)
+	} else {
+		acct, status, _ = h.Login(ctx, ip.String(), username, password)
+	}
 	switch status {
 	case 0:
-		return acct.Address, nil
+		if watch != nil {
+			revoked, stop := watch()
+			return acct.Address, revoked, stop, nil
+		}
+		return acct.Address, nil, nil, nil
 	case http.StatusUnauthorized:
-		return "", smtp.ErrAuthFailed
+		return "", nil, nil, smtp.ErrAuthFailed
 	case http.StatusTooManyRequests:
-		return "", &smtp.Error{Code: 454, Enhanced: "4.7.0", Msg: "Too many failed logins, try again later"}
+		return "", nil, nil, &smtp.Error{Code: 454, Enhanced: "4.7.0", Msg: "Too many failed logins, try again later"}
 	}
-	return "", &smtp.Error{Code: 454, Enhanced: "4.7.0", Msg: "Temporary authentication failure"}
+	return "", nil, nil, &smtp.Error{Code: 454, Enhanced: "4.7.0", Msg: "Temporary authentication failure"}
 }
 
 // Mail implements smtp.MailChecker: the envelope sender is the user's.

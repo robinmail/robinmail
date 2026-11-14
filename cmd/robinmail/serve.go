@@ -194,10 +194,15 @@ func (a *app) serve(stop func()) error {
 		if tc == nil {
 			return errors.New("submission listeners need a certificate")
 		}
+		// A session ends when its login is withdrawn, like an IMAP session:
+		// a client that keeps the connection open between messages would
+		// otherwise go on sending with a revoked app password.
 		submit := &delivery.Handler{Submitter: sender,
-			Login: func(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration) {
+			LoginSession: func(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration, func() (<-chan struct{}, func())) {
 				c, status, wait := site.MailLogin(ctx, ip, store.ScopeSMTP, username, password)
-				return c.Account, status, wait
+				return c.Account, status, wait, func() (<-chan struct{}, func()) {
+					return watchLogin(authHub, site.CredentialValid, c, store.ScopeSMTP)
+				}
 			}}
 		submission = &smtp.Server{
 			Hostname:        a.cfg.Hostname,

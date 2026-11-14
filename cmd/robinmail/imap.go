@@ -57,12 +57,19 @@ type imapUser struct {
 // Revoked implements imap.Revocable: the channel is closed once the app
 // password the session logged in with is gone, or, for a login with the
 // account password, once that changed or stopped being accepted for IMAP.
-// It is looked at when the account's auth_seq moved, which this node
-// hears at once for its own writes and within a second for another
-// node's. While the store cannot say, the session stays.
 func (u *imapUser) Revoked() (<-chan struct{}, func()) {
+	return watchLogin(u.b.auth, u.b.valid, u.cred, store.ScopeIMAP)
+}
+
+// watchLogin returns a channel that is closed once a login of a mail
+// client no longer stands for the scope, and a function that ends the
+// watching. The login is looked at when the account's auth_seq moved,
+// which this node hears at once for its own writes and within a second
+// for another node's. While the store cannot say, the login stays.
+func watchLogin(auth *notify.Hub, valid func(ctx context.Context, c web.Credential, scope string) (bool, error),
+	cred web.Credential, scope string) (<-chan struct{}, func()) {
 	revoked := make(chan struct{})
-	changes, unsubscribe := u.b.auth.Subscribe(u.acct.ID)
+	changes, unsubscribe := auth.Subscribe(cred.Account.ID)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		defer unsubscribe()
@@ -73,7 +80,7 @@ func (u *imapUser) Revoked() (<-chan struct{}, func()) {
 			case <-changes:
 			}
 			cctx, done := context.WithTimeout(ctx, 10*time.Second)
-			ok, err := u.b.valid(cctx, u.cred, store.ScopeIMAP)
+			ok, err := valid(cctx, cred, scope)
 			done()
 			if err == nil && !ok {
 				close(revoked)

@@ -42,6 +42,23 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, ip net.IP, username, password string) (user string, err error)
 }
 
+// RevocableAuthenticator is an Authenticator whose logins can be withdrawn
+// while a session is open: an app password is revoked, a password changes.
+// A mail client may keep a submission connection open between messages
+// (Thunderbird does), so a login that held at AUTH is no licence for the
+// MAIL an hour later. A server whose Auth implements this ends a session
+// when its login is withdrawn: with 421 at once when it waits for a
+// command, or after the command it is busy with. The client connects
+// again and is refused at AUTH, which is where clients ask for a new
+// password.
+type RevocableAuthenticator interface {
+	Authenticator
+	// AuthenticateSession is Authenticate, and for a login it grants also
+	// returns a channel that is closed when the login no longer stands and
+	// a function that ends the watching. Both may be nil.
+	AuthenticateSession(ctx context.Context, ip net.IP, username, password string) (user string, revoked <-chan struct{}, stop func(), err error)
+}
+
 // ErrAuthFailed is "535 5.7.8 Authentication credentials invalid".
 var ErrAuthFailed = errors.New("smtp: authentication failed")
 
@@ -292,14 +309,19 @@ type session struct {
 	ip   net.IP
 	log  *slog.Logger
 
-	helo   string
-	ehlo   bool
-	user   string // set by a successful AUTH
-	tls    *tls.ConnectionState
-	env    *Envelope // non-nil between MAIL and the end of the transaction
-	errors int
-	quit   bool
-	hold   bool // the reply just written may wait for the next one
+	helo string
+	ehlo bool
+	user string // set by a successful AUTH
+	// revoked is closed when the login of AUTH was withdrawn
+	// (RevocableAuthenticator); nil otherwise. stopRevoked ends the watch.
+	revoked     <-chan struct{}
+	stopRevoked func()
+	done        chan struct{} // closed when the session ends
+	tls         *tls.ConnectionState
+	env         *Envelope // non-nil between MAIL and the end of the transaction
+	errors      int
+	quit        bool
+	hold        bool // the reply just written may wait for the next one
 }
 
 func (s *session) setConn(c net.Conn) {
@@ -365,7 +387,31 @@ func (s *session) replyErr(err error) {
 	s.reply(451, "4.3.0", "Temporary failure, try again later")
 }
 
+// isRevoked reports whether the session's login was withdrawn.
+func (s *session) isRevoked() bool {
+	select {
+	case <-s.revoked:
+		return s.revoked != nil
+	default:
+		return false
+	}
+}
+
+// replyRevoked is what a session is told whose login was withdrawn. 421 is
+// the one reply that announces the end of the connection (RFC 5321 3.8);
+// X.7.0 is "other or undefined security status" (RFC 3463).
+func (s *session) replyRevoked() {
+	s.reply(421, "4.7.0", s.srv.Hostname+" This login was withdrawn, log in again; closing transmission channel")
+}
+
 func (s *session) serve() {
+	s.done = make(chan struct{})
+	defer func() {
+		close(s.done)
+		if s.stopRevoked != nil {
+			s.stopRevoked()
+		}
+	}()
 	defer s.flush()
 	s.reply(220, "", s.srv.Hostname+" ESMTP robinmail")
 	for !s.quit {
@@ -381,6 +427,10 @@ func (s *session) serve() {
 		}
 		s.hold = false
 		if !s.await() {
+			if s.isRevoked() {
+				s.replyRevoked()
+				return
+			}
 			s.reply(421, "4.3.2", s.srv.Hostname+" Service shutting down, closing transmission channel")
 			return
 		}
@@ -408,6 +458,9 @@ func (s *session) serve() {
 		case errors.As(err, &ne) && ne.Timeout() && closed:
 			s.reply(421, "4.3.2", s.srv.Hostname+" Service shutting down, closing transmission channel")
 			return
+		case errors.As(err, &ne) && ne.Timeout() && s.isRevoked():
+			s.replyRevoked()
+			return
 		case errors.As(err, &ne) && ne.Timeout():
 			s.reply(421, "4.4.2", s.srv.Hostname+" Timeout, closing transmission channel")
 			return
@@ -421,13 +474,14 @@ func (s *session) serve() {
 }
 
 // await marks the session as waiting for a command and starts the command
-// timeout. It returns false when the server is shutting down. Marking and
-// checking happen under the lock Shutdown holds, so either Shutdown sees the
-// session idle and wakes it, or the session sees the server closed.
+// timeout. It returns false when the server is shutting down or the
+// session's login was withdrawn. Marking and checking happen under the lock
+// that Shutdown and the watcher of the login hold, so either they see the
+// session idle and wake it, or the session sees what happened.
 func (s *session) await() bool {
 	s.srv.mu.Lock()
 	defer s.srv.mu.Unlock()
-	if s.srv.closed {
+	if s.srv.closed || s.isRevoked() {
 		return false
 	}
 	s.idle = true
@@ -702,7 +756,17 @@ func (s *session) cmdAuth(arg string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), s.srv.HandlerTimeout)
 	defer cancel()
-	user, err := s.srv.Auth.Authenticate(ctx, s.ip, username, password)
+	var (
+		user    string
+		err     error
+		revoked <-chan struct{}
+		stop    func()
+	)
+	if ra, ok := s.srv.Auth.(RevocableAuthenticator); ok {
+		user, revoked, stop, err = ra.AuthenticateSession(ctx, s.ip, username, password)
+	} else {
+		user, err = s.srv.Auth.Authenticate(ctx, s.ip, username, password)
+	}
 	var e *Error
 	switch {
 	case errors.Is(err, ErrAuthFailed):
@@ -715,7 +779,27 @@ func (s *session) cmdAuth(arg string) {
 		s.reply(454, "4.7.0", "Temporary authentication failure")
 	default:
 		s.user = user
+		s.revoked, s.stopRevoked = revoked, stop
+		if revoked != nil {
+			// A session waiting for a command is woken the way Shutdown
+			// wakes it; one in a command sees it when that is done.
+			go func() {
+				select {
+				case <-revoked:
+					s.srv.mu.Lock()
+					if s.idle {
+						s.conn.SetReadDeadline(time.Now())
+					}
+					s.srv.mu.Unlock()
+				case <-s.done:
+				}
+			}()
+		}
 		s.reply(235, "2.7.0", "Authentication successful")
+		return
+	}
+	if stop != nil {
+		stop()
 	}
 }
 
