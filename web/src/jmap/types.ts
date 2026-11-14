@@ -161,6 +161,15 @@ export interface SearchSnippet {
   preview: string | null
 }
 
+// SieveScript (RFC 9661 2): a script of the account. The script itself is
+// the blob; at most one script is active.
+export interface SieveScript {
+  id: Id
+  name: string | null
+  blobId: Id
+  isActive: boolean
+}
+
 export interface Thread {
   id: Id
   emailIds: Id[]
@@ -296,6 +305,12 @@ export interface Methods {
     args: Omit<SetArgs<Email>, 'create'> & { create?: Record<string, EmailCreate> }
     response: SetResponse<Email>
   }
+  'SieveScript/get': { args: GetArgs; response: GetResponse<SieveScript> }
+  'SieveScript/set': {
+    args: SetArgs<SieveScript> & { onSuccessActivateScript?: Id | null; onSuccessDeactivateScript?: boolean | null }
+    response: SetResponse<SieveScript>
+  }
+  'SieveScript/validate': { args: { blobId: Id }; response: { accountId: Id; error: SetError | null } }
   'Identity/get': { args: GetArgs; response: GetResponse<Identity> }
   'Identity/set': { args: SetArgs<Identity>; response: SetResponse<Identity> }
   'EmailSubmission/get': { args: GetArgs; response: GetResponse<EmailSubmission> }

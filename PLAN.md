@@ -62,8 +62,10 @@ Every mail table starts with `account_id`.
 | Table | Columns | Notes |
 |---|---|---|
 | `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
+| `sieve_script` | id, name, blob, size, active, created_at, modseq | Sieve scripts (RFC 9661); the script is a blob of the account; at most one per account is active |
+| `vacation_sent` | key, at | automatic replies that went out: a hash of the reply and of whom it was for; trimmed after 45 days |
 | `alias` | address, target, domain, wildcard, created_at | one row per target of an alias; `address` is an address or a pattern with one `*` (`*@domain` is the catch-all); not per account |
-| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts` |
+| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq, next_sieve | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts` |
 | `session` | token_hash, id, account_id, stage, method, created_at, seen_at, expires_at, idle, ip, seen_ip, agent, remember | web login; the hash is SHA-256 of the token in the cookie; `id` is what the user's list shows and revokes by; `stage` is `full`, or `totp` for a login that still owes its code; ends at `expires_at`, or `idle` seconds after `seen_at` |
 | `app_password` | id, name, hash, scope, created_at, used_at, used_ip | a password for one device; `hash` is SHA-256 of the 160 random bits the server made; `scope` lists `imap`, `smtp`, `jmap` (empty: all); revoking deletes the row |
 | `totp` | secret, created_at, confirmed_at, last_step | one row per account; the secret is sealed with the account's blob key; not asked for until confirmed; `last_step` is the newest time step a code was accepted for |
@@ -76,7 +78,7 @@ Every mail table starts with `account_id`.
 | `email_fts` | rowid, subject, addr, body, attach, hdr | the full-text index: an FTS5 table, contentless (the words and their places, not the text); the rowid is the account's `seq` times 2^32 plus the email id; a trigger on `email` removes a row with its email; not per account and not encrypted |
 | `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom; `$deleted` is IMAP's `\Deleted` |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
-| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission or Identity; op created, updated or destroyed; `at` is for trimming |
+| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission, Identity or SieveScript; op created, updated or destroyed; `at` is for trimming |
 | `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
 | `submission` | id, email_id, thread_id, identity_id, message_id, blob, size, mail_from, recipients, rcpt_count, undo, queue, created_at, send_at, next_try, tries, claimed_by, claimed_until, destroyed, submit_key, modseq | outbound queue: one row per message; `recipients` is JSON with the state of each; `blob` is the message as it goes out; a node works on a row while its claim lasts |
 | `identity` | id, name, email, reply_to, bcc, text_signature, html_signature, modseq | JMAP identities; id 1 is made with the account |
@@ -174,6 +176,7 @@ internal/store       schema and all mail operations     new, replaces owl's stor
 internal/message     MIME to JMAP body structure, HTML view   new
 internal/search      words of a text, search terms, snippets  new
 internal/srs         sender rewriting for forwarded mail (SRS0, SRS1)   new
+internal/sieve       Sieve scripts: parser and interpreter (RFC 5228 and extensions)   new
 internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, settings, OIDC login, static app   new
 internal/totp        HOTP and TOTP (RFC 4226, RFC 6238), otpauth URI    new
@@ -1932,7 +1935,7 @@ Built as follows:
 - Exit: each item shown working with a test.
 
 Built in this order, each item committed with its tests: 1 full-text
-search (done), 2 aliases (done), 3 Sieve, 4 VacationResponse, 5 quotas, 6 MTA-STS
+search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse, 5 quotas, 6 MTA-STS
 serving and TLS-RPT, 7 autoconfig, 8 operations, 9 README, 10 lab and
 cluster cases.
 
@@ -2125,6 +2128,125 @@ Built as follows:
     goes to an alias with outside targets is forwarded without a spam
     scan of its own (it was scanned when it was submitted). The system
     accounts stay when their domain is removed.
+- **Filters: Sieve.** Each account can have Sieve scripts, one of them
+  active. The active one runs on every message for the account as it
+  arrives, after Rspamd.
+  - **The language** (`internal/sieve`, our own: about 1700 lines). RFC
+    5228 whole, and the extensions `fileinto`, `envelope`, `body` (RFC
+    5173), `variables` (RFC 5229), `vacation` (RFC 5230), `relational`
+    (RFC 5231), `imap4flags` (RFC 5232), `subaddress` (RFC 5233), `copy`
+    (RFC 3894), `mailbox` (RFC 5490), `reject` and `ereject` (RFC 5429),
+    `date` and `index` (RFC 5260), the comparators `i;octet`,
+    `i;ascii-casemap` and `i;ascii-numeric`. `Parse` checks a script
+    completely (syntax, `require` first and only for what exists, every
+    command and test known, required and with the arguments it takes),
+    so a script that is stored will run. `Run` touches nothing: it
+    returns the actions, and delivery does them.
+  - **Limits.** A script: 64 KiB, 32 levels of nesting, 5000 commands
+    and tests, 1000 strings in a list, 16 scripts per account. One
+    message: 20,000 steps, 4 redirects, 16 mailboxes, 256 variables of
+    4000 octets, a bound on the work of one `:matches` (a pattern of
+    thirty `*a` against five thousand `a` is given up, not waited for),
+    1 MiB of a body part looked at. A script that fails at run time, or
+    whose actions do not go together (`reject` with `keep`), keeps the
+    message (RFC 5228 2.10.6). A script that cannot be read defers the
+    mail (`451`): a filter may be what keeps a message from being
+    forwarded.
+  - **Where it runs** (`delivery.finish`, for port 25 and for mail
+    between users here, the same code). The script sees the message as
+    it will be stored, with our `Received` line and Rspamd's headers,
+    and as envelope "to" the address that led to the account, so an
+    alias or a `+tag` can be tested for. Not run: `APPEND`, `Email/set`
+    create, `/import`, and the bounces our own queue stores.
+  - **What the actions do.** `keep` is the default mailbox: the Inbox,
+    or Junk for what Rspamd marked. `fileinto` names a mailbox the way
+    IMAP shows it (`Work/Invoices`, `INBOX`); one that is not there
+    keeps the message in the default mailbox, unless `:create` makes
+    it, with the levels above it. **A message filed into several
+    mailboxes is one Email with those labels**, and its flags (`\Seen`
+    becomes `$seen`, and so on; keywords stay) are the union of what
+    each action gave it, since an Email has one set of keywords.
+    `discard` stores nothing. `redirect` sends the message on like an
+    alias does: the sender rewritten (SRS) under the account's domain,
+    `Delivered-To` the account; a message that comes back with that
+    line is kept instead of sent round again, and spam is kept, not
+    redirected. `reject` and `ereject`: when the message was for this
+    account alone the refusal is the reply to the sender's server (`550
+    5.7.1` and the reason), which is what RFC 5429 prefers; when it also
+    went to others, they get it and the sender gets a DSN from the
+    system account.
+  - **Vacation** (RFC 5230, RFC 3834). No reply to: the null
+    reverse-path; `MAILER-DAEMON`, `owner-*`, `*-request`, `LISTSERV`,
+    `majordomo` and no-reply senders; the user's own address; mail with
+    `Auto-Submitted` other than `no`, any `List-*` field, `Precedence`
+    bulk, list or junk, or `X-Auto-Response-Suppress`; spam; mail that
+    does not name one of the user's addresses (the account's, its
+    aliases, the envelope recipient, `:addresses`) in `To`, `Cc`, `Bcc`
+    or their `Resent-` forms. One reply per sender per period: the key
+    is the `:handle`, or without one the reply's own text, and the
+    sender; `vacation_sent` takes it with one statement that gives one
+    of several nodes the yes. `:days` is 7 by default, 30 at most. The
+    reply: `From` the account (or `:from` when that is one of its
+    addresses), `To` the envelope sender, `Subject` from `:subject` or
+    `Auto: ` and the original, `In-Reply-To`, `References`,
+    `Auto-Submitted: auto-replied`; `:mime` gives the body as an entity
+    of its own. It goes out through the Submitter like the account's own
+    mail (scanned, signed, counted against its hourly limit) with the
+    null reverse-path, so nothing bounces to it or answers it.
+  - **Storage.** The script is a blob of the account: encrypted on disk
+    like a message, replicated like one, downloadable by its blobId,
+    known to the sweeper and the repair pass. Schema version 10. A
+    parsed script is cached per node by the hash of its text.
+  - **JMAP Sieve** (RFC 9661): capability `urn:ietf:params:jmap:sieve`
+    with the limits and the list of extensions, `SieveScript/get`,
+    `/set` with `onSuccessActivateScript` (also for a script made in the
+    same call) and `onSuccessDeactivateScript`, `/query` and
+    `/validate`. `invalidSieve` carries the line of the fault;
+    `sieveIsActive` refuses the destroy of the active script;
+    `alreadyExists` a second script of a name. Push names `SieveScript`.
+  - **Webmail.** `/settings/filters`: a list of rules (From, To or Cc,
+    Subject contains; all or any; then move, label, mark read, forward,
+    delete), in order, with a switch for on and off, and beside it the
+    script as text. The page stores nothing of its own: rules are
+    written as a script of a fixed shape (`web/src/sieve/rules.ts`) and
+    read back from it. Whether a script is "rules" is decided by a round
+    trip: it is, when writing the rules read from it gives the same
+    script again. Anything else is shown as text only, and runs all the
+    same. One file (`web/src/sieve/testdata/rules.sieve`) is the fixture
+    of the page's test and of the interpreter's.
+  - **ManageSieve (RFC 5804) is left out.** It is a protocol of its own
+    with its own listener, SASL and capability handling, for the few
+    mail clients that have a Sieve editor; JMAP and the webmail cover
+    the need here.
+  - **Tests.** `internal/sieve`: the examples of RFC 5228 (2.4, 2.10,
+    3.1, 4, 5, the extended example of 10, 45 scripts that must not
+    parse), 5229, 5230, 5231, 5232, 5233, 3894, 5490, 5429, 5260 and
+    5173, limits, a fuzz test that parses and runs anything.
+    `internal/delivery`: every action, spam, rejection alone and among
+    several recipients, loops, 24 vacation cases, the reply, the period.
+    `internal/jmap`: RFC 9661 1.3 and 2.1 to 2.4. `TestSieveEndToEnd`
+    (`cmd/robinmail`): two servers; a script uploaded and activated over
+    JMAP; mail from the other server filed into mailboxes the script
+    makes (one Email, two labels, flagged), answered once by vacation
+    with the null reverse-path, redirected with the rewritten sender,
+    and refused with the reason arriving in the other server's bounce.
+    Playwright (`e2e/filters.spec.ts`): a rule made in the page runs on
+    mail that comes in over SMTP; a broken script is refused with its
+    line; a script written by hand runs and is shown as text.
+  - **Deviations**, each in a test: a bare LF ends a line of a script
+    (RFC 5228 has CRLF only; a script typed in a browser has LF). The
+    RFC texts have two slips the tests write correctly: `elseif` in RFC
+    5231 6, a comma after the last argument in RFC 5260 6.
+  - **Not handled.** No `include`, `editheader`, `enotify`, `regex`,
+    `duplicate`, `spamtest`, `environment`, `mime`/`foreverypart`,
+    `encoded-character`, `vacation-seconds`. A script's `:flags` on
+    several `fileinto` are not kept apart per mailbox. A rejection after
+    DATA for several recipients is a DSN, not a refusal per recipient
+    (that would be LMTP's way). Bounces our queue makes for a local
+    sender are stored without passing the sender's script. The rules
+    page knows three fields and "contains"; everything else is the
+    script tab. A vacation reply is made from the script; JMAP's
+    VacationResponse (next item) is a second way to the same code.
 
 ## Open questions
 

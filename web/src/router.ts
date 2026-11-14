@@ -11,6 +11,7 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: LoginPage },
     { path: '/mail/:mailbox?/:thread?', name: 'mail', component: () => import('./pages/MailPage.vue') },
     { path: '/settings', name: 'settings', component: () => import('./pages/SettingsPage.vue') },
+    { path: '/settings/filters', name: 'filters', component: () => import('./pages/FiltersPage.vue') },
     { path: '/settings/security', name: 'security', component: () => import('./pages/SecurityPage.vue') },
     { path: '/:rest(.*)*', redirect: { name: 'mail' } },
   ],
@@ -46,5 +47,5 @@ client.onUnauthorized = () => {
   store.reset()
   const here = router.currentRoute.value
   // The composers stay as they are: what was typed is saved after the login.
-  void router.replace({ name: 'login', query: here.name === 'mail' || here.name === 'settings' || here.name === 'security' ? { next: here.fullPath } : {} })
+  void router.replace({ name: 'login', query: here.name === 'mail' || here.name === 'settings' || here.name === 'filters' || here.name === 'security' ? { next: here.fullPath } : {} })
 }

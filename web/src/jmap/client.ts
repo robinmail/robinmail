@@ -5,7 +5,9 @@
 import { eventSourcePath } from './push'
 import type { Id, Invocation, MethodName, Methods, ResultReference, Session } from './types'
 
-export const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission']
+export const USING = [
+  'urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:sieve',
+]
 
 // HttpError is a response that is not JMAP: 401 without a session, 5xx.
 export class HttpError extends Error {

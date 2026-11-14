@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -566,5 +567,27 @@ if header :matches "from" "*@*" { }
 if body :matches "*missile*" { reject "${1}"; }`, multipart, `reject "a"`)
 	if _, err := Parse([]byte(`if body :contains "x" { keep; }`)); err == nil {
 		t.Error("body without its require")
+	}
+}
+
+// The script the webmail's Filters page writes (web/src/sieve/rules.ts).
+// The file is the fixture of the page's own test: what the page writes is
+// what runs here.
+func TestWebmailRules(t *testing.T) {
+	src, err := os.ReadFile("../../web/src/sieve/testdata/rules.sieve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{string(src), strings.ReplaceAll(string(src), "\n", "\r\n")} {
+		for msg, want := range map[string]string{
+			"From: Billing <billing@shop.example>\r\nSubject: Your Invoice 7\r\n\r\n":         `fileinto "Work/Invoices" create flags=\Seen`,
+			"From: billing@shop.example\r\nSubject: hello\r\n\r\n":                            `keep`,
+			"From: a@x.example\r\nCc: dev@lists.example\r\nSubject: patch\r\n\r\n":            `fileinto "Lists" create | redirect archive@example.org | keep`,
+			"From: a@x.example\r\nSubject: [DEV] patch\r\n\r\n":                               `fileinto "Lists" create | redirect archive@example.org | keep`,
+			"From: a@x.example\r\nSubject: A special \\ \"offer\" for you\r\n\r\n":            `discard`,
+			"From: billing@shop.example\r\nTo: dev@lists.example\r\nSubject: invoice\r\n\r\n": `fileinto "Work/Invoices" create flags=\Seen`,
+		} {
+			expect(t, "the webmail's rules", text, msg, want)
+		}
 	}
 }

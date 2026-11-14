@@ -100,7 +100,7 @@ export async function destroyBySubject(page: Page, subject: string, unread: stri
   })
 }
 
-const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission']
+const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:sieve']
 
 // jmap sends method calls with the page's session and returns the
 // arguments of each response. accountId is filled in.
@@ -134,4 +134,45 @@ export async function cleanUp(page: Page, subject: string): Promise<void> {
     ['EmailSubmission/query', {}],
     ['EmailSubmission/set', { '#destroy': { resultOf: 'c4', name: 'EmailSubmission/query', path: '/ids' } }],
   ])
+}
+
+// smtpDeliver hands a message to the tested server over SMTP, as another
+// mail server would: unlike deliver, which stores it directly, this is the
+// way on which aliases are followed and filters run. The address of the
+// listener is read from the config e2e.sh wrote. It resolves to the last
+// reply of the server (250 when the message was taken).
+export async function smtpDeliver(from: string, to: string, message: string): Promise<string> {
+  const { readFileSync } = await import('node:fs')
+  const net = await import('node:net')
+  const cfg = JSON.parse(readFileSync(new URL('../../dev/robinmail.e2e.json', import.meta.url), 'utf8'))
+  const [host, port] = String(cfg.smtp.listen).split(':')
+  const body = message.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..')
+  const steps = ['EHLO e2e.test', `MAIL FROM:<${from}>`, `RCPT TO:<${to}>`, 'DATA', `${body.endsWith('\r\n') ? body : body + '\r\n'}.`, 'QUIT']
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(Number(port), host || '127.0.0.1')
+    let buffer = ''
+    let last = ''
+    let step = -1
+    socket.setEncoding('utf8')
+    socket.setTimeout(15_000, () => socket.destroy(new Error('SMTP timed out')))
+    socket.on('error', reject)
+    socket.on('close', () => resolve(last))
+    socket.on('data', (chunk: string) => {
+      buffer += chunk
+      // A reply is complete at a line whose fourth character is a space.
+      for (;;) {
+        const m = /^(?:\d{3}-[^\n]*\n)*(\d{3}) [^\n]*\n/.exec(buffer)
+        if (!m) return
+        buffer = buffer.slice(m[0].length)
+        const code = Number(m[1])
+        if (step >= 0 && steps[step] !== 'QUIT') last = m[0].trim().split('\n').pop()!.trim()
+        if (code >= 400 && steps[step] !== 'QUIT') {
+          socket.end('QUIT\r\n')
+          return
+        }
+        step++
+        if (step < steps.length) socket.write(steps[step] + '\r\n')
+      }
+    })
+  })
 }

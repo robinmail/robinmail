@@ -1,10 +1,11 @@
 <script setup lang="ts">
-// The two settings pages, as links.
+// The settings pages, as links.
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
 const tabs = [
   { name: 'settings', label: 'Identities', icon: 'i-lucide-at-sign' },
+  { name: 'filters', label: 'Filters', icon: 'i-lucide-list-filter' },
   { name: 'security', label: 'Security', icon: 'i-lucide-shield-check' },
 ]
 </script>
