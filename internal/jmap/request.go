@@ -76,6 +76,9 @@ type call struct {
 	using   map[string]bool
 	created map[string]string // creation id -> id, from the request and from /set calls so far
 	done    []invocation
+	// resolved is how many bytes result references have copied into the
+	// arguments of this request's calls so far (resolveReferences).
+	resolved int64
 	// implied collects the responses of calls a method made itself, such
 	// as the Email/set of EmailSubmission/set's onSuccessUpdateEmail. They
 	// follow the method's own response.
@@ -169,6 +172,10 @@ func (h *Handler) release(account string) {
 	close(h.slotFreed)
 	h.slotFreed = make(chan struct{})
 }
+
+// maxReferences is how many result references one method call may hold.
+// No method has that many arguments.
+const maxReferences = 32
 
 // maxWaitingRequests is how many requests of one account may wait for a
 // slot; the next is refused at once.
@@ -374,10 +381,22 @@ func (c *call) invoke(name string, args map[string]json.RawMessage, callID strin
 
 // resolveReferences replaces every "#name" argument by the value its
 // ResultReference points at in an earlier response (RFC 8620 3.7).
+//
+// A reference is a few bytes that stand for a value of any size, and a
+// call may hold many of them, to the same value. What they copy is
+// therefore counted against maxSizeRequest for the request as a whole, as
+// if the client had sent the values itself, and one call holds at most
+// maxReferences of them. A response is parsed once per call, however many
+// references point into it.
 func (c *call) resolveReferences(args map[string]json.RawMessage) *methodError {
+	refs := 0
+	parsed := map[*invocation]any{}
 	for key, raw := range args {
 		if !strings.HasPrefix(key, "#") {
 			continue
+		}
+		if refs++; refs > maxReferences {
+			return mErr("invalidResultReference", "more than %d result references in one method call", maxReferences)
 		}
 		name := key[1:]
 		if _, both := args[name]; both {
@@ -404,18 +423,24 @@ func (c *call) resolveReferences(args map[string]json.RawMessage) *methodError {
 		if source.name != *ref.Name {
 			return mErr("invalidResultReference", "the response to call %q is %q, not %q", *ref.ResultOf, source.name, *ref.Name)
 		}
-		var value any
-		if err := json.Unmarshal(source.args, &value); err != nil {
-			return mErr("serverFail", "the server could not complete the request")
+		root, have := parsed[source]
+		if !have {
+			if err := json.Unmarshal(source.args, &root); err != nil {
+				return mErr("serverFail", "the server could not complete the request")
+			}
+			parsed[source] = root
 		}
 		budget := maxPathItems
-		value, ok := evalPointer(value, *ref.Path, &budget)
+		value, ok := evalPointer(root, *ref.Path, &budget)
 		if !ok {
 			return mErr("invalidResultReference", "the path %q does not resolve in the response to call %q", *ref.Path, *ref.ResultOf)
 		}
 		resolved, err := json.Marshal(value)
 		if err != nil {
 			return mErr("serverFail", "the server could not complete the request")
+		}
+		if c.resolved += int64(len(resolved)); c.resolved > c.h.limits.MaxSizeRequest {
+			return mErr("invalidResultReference", "the result references of this request stand for more than maxSizeRequest octets")
 		}
 		delete(args, key)
 		args[name] = resolved

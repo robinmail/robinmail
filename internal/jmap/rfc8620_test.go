@@ -3,6 +3,7 @@ package jmap
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -687,4 +688,32 @@ func FuzzPointer(f *testing.F) {
 			}
 		}
 	})
+}
+
+// What result references copy into a request is bounded like the request
+// itself: many references to one large response must not make the server
+// build an answer many times the size of what was sent.
+func TestResultReferencesDoNotMultiply(t *testing.T) {
+	h := &Handler{Limits: Limits{MaxSizeRequest: 1 << 20}}
+	big := strings.Repeat("x", 200_000)
+	var refs strings.Builder
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			refs.WriteByte(',')
+		}
+		fmt.Fprintf(&refs, `"#r%d": {"resultOf": "t0", "name": "Core/echo", "path": "/v"}`, i)
+	}
+	body := `{"using":["urn:ietf:params:jmap:core"],"methodCalls":[
+		["Core/echo", {"v": "` + big + `"}, "t0"],
+		["Core/echo", {` + refs.String() + `}, "t1"]]}`
+	status, _, out := post(t, h, "application/json", body)
+	if status != 200 {
+		t.Fatalf("status %d: %.200s", status, out)
+	}
+	if len(out) > 4*len(body) {
+		t.Errorf("a request of %d bytes got an answer of %d bytes", len(body), len(out))
+	}
+	if got := decode(t, out)["methodResponses"]; at(t, got, "/1/1/type") != "invalidResultReference" {
+		t.Errorf("the references were resolved: %.100s", out)
+	}
 }
