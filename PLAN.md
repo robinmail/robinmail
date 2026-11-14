@@ -140,7 +140,8 @@ internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, static app new
 internal/queue       outbound delivery                  new
 internal/imap        IMAP server                        new
-web/                 Vue webmail (Vite, Nuxt UI)
+web/                 Vue webmail (Vite, Nuxt UI); src/jmap is the client, e2e the browser test
+Makefile             web build, binary with the webmail, tests, dev
 contrib/rspamd       Rspamd config                      port as is
 contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
 contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev
@@ -308,7 +309,7 @@ Built as follows, where it differs from or adds to the above:
   message. RFC 5321 4.4 wants `250` plus a notification; we answer `451`
   and rely on the idempotent retry, as owl did. Needs phase 5's outbound.
 
-### Phase 3: JMAP read side and webmail — Go side done, webmail open
+### Phase 3: JMAP read side and webmail — done
 
 - `internal/jmap`: session, request handling with result references
   and limits, `Mailbox/get|changes|query`, `Thread/get`,
@@ -320,10 +321,10 @@ Built as follows, where it differs from or adds to the above:
 - `internal/web`: login, sessions, `Origin` check, serving the embedded app
   (in development Vite's dev server proxies the API paths to Go instead).
 - `web/`: login, mailbox list, message list, thread view, labels,
-  attachment download, mark read, flag, move, delete. **Not built yet.**
+  attachment download, mark read, flag, move, delete.
 - Exit: browse and manage mail in the browser; the same session answers raw
-  JMAP from `curl`. The `curl` half is shown (`contrib/dev/jmap-demo.sh`);
-  the browser half waits for `web/`.
+  JMAP from `curl`. The `curl` half is `contrib/dev/jmap-demo.sh`; the
+  browser half is `make e2e`.
 
 Built as follows (the Go side), where it differs from or adds to the above:
 
@@ -408,6 +409,72 @@ Built as follows (the Go side), where it differs from or adds to the above:
   character, and when longer than 75 characters; an obsolete message id
   with white space inside is skipped; `bodyStructure` has `subParts`
   without being asked.
+
+Built as follows (the webmail in `web/`):
+
+- Stack as decided: Vue 3, Vue Router, TypeScript, Vite, Nuxt UI 4 through
+  its Vite plugin (dashboard group, sidebar, panels). Runtime dependencies:
+  `vue`, `vue-router`, `@nuxt/ui`, `tailwindcss`, `@iconify/vue`. Icons
+  (Lucide) are bundled at build time; the page never asks an icon API.
+- Build and embedding. `make` runs `npm run build`, copies `web/dist` to
+  `internal/web/dist` and builds with the tag `webmail`, which embeds that
+  directory (`internal/web/embed_webmail.go`). Neither directory is in git.
+  Without the tag (`go build ./...`, no Node needed) the binary serves the
+  placeholder. The static handler and the CSP of phase 3's Go side fit the
+  built app unchanged: no inline script, `frame-src 'self'` for the view.
+  `TestEmbeddedWebmail` (tag `webmail`) checks the real build through the
+  handler. `make test`, `make e2e` and `make dev` are described in the
+  `Makefile`.
+- JMAP client of our own (`web/src/jmap`): session, batches with result
+  references, typed per method. It uses only the path of the session's
+  URLs, since the webmail is always same-origin. A list is one request:
+  `Email/query` (collapsed threads) → `Email/get` → `Thread/get` →
+  `Email/get` for every email of those threads.
+- State (`web/src/store/mail.ts`). One state string per type. It moves on
+  after `/changes` was merged, and after a `/set` of ours only when that
+  `/set` started from the state we held; a `/get` never moves it. A
+  refresh is one request of twelve calls (`Mailbox/changes`,
+  `Email/changes`, `Thread/changes`, `Email/queryChanges`, each with the
+  `/get` calls it needs), every 30 seconds while the page is visible and
+  on focus. `cannotCalculateChanges` fetches everything held again.
+- Actions change the page first and send the `Email/set` after; a refused
+  or failed change is put back and reported. While a change waits, answers
+  from the server are older than the page and are dropped. Changes are
+  sent with `keepalive`, so closing the tab does not lose them.
+  `ifInState` is used for `Mailbox/set` only (rename, delete, create): on
+  `stateMismatch` the mailboxes are fetched again and the change is tried
+  once more if the mailbox it is about did not change. Email changes are
+  patches that hold in any state, so they carry none.
+- What an action covers. A row is a thread. Read: every email of the
+  thread; unread and flag: the newest; move and delete: the emails of the
+  thread that are in the open mailbox. Delete replaces all mailboxes by
+  Trash; in Trash it destroys. Deleting a mailbox with mail in it uses
+  `onDestroyRemoveEmails` after saying so.
+- Routes: `/login`, `/mail/<mailbox id>/<thread id>` with the filter in
+  the query (`from`, `subject`, `unread`, `flagged`, `attachment`). A 401
+  resets the store and returns to `/login?next=…`. Nothing about the
+  session is in `localStorage`; only the colour mode and pane widths are.
+- The HTML view sits in `<iframe sandbox="allow-popups
+  allow-popups-to-escape-sandbox">`; a `HEAD` on the view reads
+  `X-Remote-Images` for the "load remote images" bar. A text body comes
+  from `bodyValues`.
+- Keys: `j`/`k`, `u` (read/unread), `s` (flag), `#` or Delete, `/`
+  (filter), Escape.
+- Tests: Vitest for the client, the state handling and the store against
+  an in-memory JMAP server (`web/src/test/fake.ts`); Playwright
+  (`web/e2e`) against the real binary and the dev instance: login, HTML
+  view, remote images, attachment, read, flag, reload, filter, mailbox
+  create and delete, move, delete, destroy, paging, selection, expired
+  session, phone width, no console errors and no request to another
+  origin.
+- The tests found and fixed, in the new code: a refresh queued before a
+  waiting change put the old data back for a moment; a reload on a thread
+  closed it (the first load cleared what the thread view had fetched);
+  icons named in `.ts` files were not bundled and were asked from the
+  Iconify API, which the CSP refused; a change was lost or half applied
+  when the page went away right after the click.
+- Not built: compose, reply, drafts (phase 5); push (phase 6); search in
+  bodies (phase 8); drag and drop; an undo for delete.
 
 ### Phase 4: cluster and blob replication
 
@@ -507,3 +574,20 @@ Built as follows (the Go side), where it differs from or adds to the above:
   proxy; if one ever appears, it needs its own setting.
 - A JMAP request may be 10 MB and four run at once per account, each held
   in memory. No limit across accounts yet.
+- The HTML view has a fixed height (65% of the window) and scrolls inside
+  it: a frame without scripts and without our origin cannot tell the page
+  how tall it is. A short message leaves white space. The way out is a
+  height the server computes, or a view that is allowed one fixed script.
+- Each create, update and destroy of a `/set` is its own batch, and the
+  request's context ends when the client goes away. A browser that
+  disconnects in the middle leaves the `/set` half applied (seen in the
+  end-to-end test: one of two destroys). The webmail now sends changes
+  with `keepalive`; the server could also finish a `/set` it started.
+- The webmail's assets are served uncompressed: 680 kB of script and
+  210 kB of CSS, 195 kB and 26 kB with gzip. Compress at build time and
+  serve by `Accept-Encoding`, or leave it to phase 8.
+- The navigation shows `unreadEmails`, which the webmail can keep exact
+  while a change is on its way, not `unreadThreads`, which fits collapsed
+  threads better but only the server can count.
+- `go build ./...` walks `web/node_modules` when it exists. No npm package
+  there ships Go files now; one that does would become part of `./...`.
