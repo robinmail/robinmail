@@ -34,7 +34,63 @@ type Config struct {
 	Submission    Submission `json:"submission"`
 	Outbound      Outbound   `json:"outbound"`
 	IMAP          IMAP       `json:"imap"`
+	Auth          Auth       `json:"auth"`
 	Dev           Dev        `json:"dev"`
+}
+
+// Auth configures logins. Accounts, app passwords and TOTP need no
+// configuration; this section holds the switches.
+type Auth struct {
+	// RequireAppPasswords refuses the account password for IMAP, SMTP
+	// submission and JMAP with Basic auth for every account. Without it
+	// an account's password works there until the account has an app
+	// password or TOTP.
+	RequireAppPasswords bool `json:"require_app_passwords"`
+	// AuditRetentionDays is how long the log of auth events is kept. [90]
+	AuditRetentionDays int `json:"audit_retention_days"`
+	// OIDC lists OpenID Connect providers the webmail's login page offers
+	// next to the password. Mail clients cannot use them: they need an
+	// app password.
+	OIDC []OIDC `json:"oidc"`
+}
+
+// OIDC is one OpenID Connect provider: Keycloak, Authentik, Zitadel or any
+// other that has a discovery document. The provider needs a client for
+// robinmail with the redirect URI
+// https://<hostname>/auth/oidc/<name>/callback and the authorization code
+// flow.
+type OIDC struct {
+	// Name is the provider in URLs: lowercase letters, digits and "-".
+	Name string `json:"name"`
+	// Label is what the login button says after "Log in with". [Name]
+	Label string `json:"label"`
+	// Issuer is the provider's issuer URL, exactly as its discovery
+	// document states it. https, or http on a loopback address for
+	// development.
+	Issuer   string `json:"issuer"`
+	ClientID string `json:"client_id"`
+	// ClientSecret, or ClientSecretFile with the secret on its first
+	// line (relative to the config file). Without either robinmail is a
+	// public client and PKCE alone protects the code.
+	ClientSecret     string `json:"client_secret"`
+	ClientSecretFile string `json:"client_secret_file"`
+	// Scopes to ask for. ["openid", "email"]
+	Scopes []string `json:"scopes"`
+	// Claim of the ID token that holds the address of the robinmail
+	// account. ["email"]
+	Claim string `json:"claim"`
+	// AllowUnverifiedEmail accepts the "email" claim without
+	// "email_verified": true. Only for a provider whose addresses the
+	// administrator assigns.
+	AllowUnverifiedEmail bool `json:"allow_unverified_email"`
+	// RequireTOTP asks an account that has TOTP for its code after a
+	// login through this provider too. Without it the second factor is
+	// the provider's business.
+	RequireTOTP bool `json:"require_totp"`
+	// AutoProvisionDomains lists domains for which a login through this
+	// provider creates the account when there is none. The domain must be
+	// one robinmail accepts mail for. Empty: accounts are made by hand.
+	AutoProvisionDomains []string `json:"auto_provision_domains"`
 }
 
 // Dev holds settings for development and test labs (contrib/lab). None of
@@ -316,7 +372,80 @@ func Load(path string) (*Config, error) {
 	if c.Rspamd.URL != "" && !httpURL(c.Rspamd.URL) {
 		return nil, fmt.Errorf("%s: rspamd url must start with http:// or https://", path)
 	}
+	if c.Auth.AuditRetentionDays < 0 {
+		return nil, errors.New(path + ": auth audit_retention_days cannot be negative")
+	}
+	if c.Auth.AuditRetentionDays == 0 {
+		c.Auth.AuditRetentionDays = 90
+	}
+	seen := map[string]bool{}
+	for i := range c.Auth.OIDC {
+		p := &c.Auth.OIDC[i]
+		if !nodeID.MatchString(p.Name) || seen[p.Name] {
+			return nil, fmt.Errorf("%s: auth oidc: name %q must be lowercase letters, digits and \"-\", and unique", path, p.Name)
+		}
+		seen[p.Name] = true
+		if p.Label == "" {
+			p.Label = p.Name
+		}
+		u, err := url.Parse(p.Issuer)
+		if err != nil || u.Host == "" || u.RawQuery != "" || u.Fragment != "" ||
+			!(u.Scheme == "https" || (u.Scheme == "http" && loopbackHost(u.Hostname()))) {
+			return nil, fmt.Errorf("%s: auth oidc %s: issuer must be an https URL without query (http only on a loopback address)", path, p.Name)
+		}
+		if p.ClientID == "" {
+			return nil, fmt.Errorf("%s: auth oidc %s: client_id is required", path, p.Name)
+		}
+		if p.ClientSecretFile != "" {
+			if p.ClientSecret != "" {
+				return nil, fmt.Errorf("%s: auth oidc %s: give client_secret or client_secret_file, not both", path, p.Name)
+			}
+			file := p.ClientSecretFile
+			if !filepath.IsAbs(file) {
+				file = filepath.Join(filepath.Dir(path), file)
+			}
+			data, err := os.ReadFile(file)
+			if err != nil {
+				return nil, fmt.Errorf("%s: auth oidc %s: %w", path, p.Name, err)
+			}
+			line, _, _ := strings.Cut(string(data), "\n")
+			if p.ClientSecret = strings.TrimSpace(line); p.ClientSecret == "" {
+				return nil, fmt.Errorf("%s: auth oidc %s: %s is empty", path, p.Name, p.ClientSecretFile)
+			}
+		}
+		if len(p.Scopes) == 0 {
+			p.Scopes = []string{"openid", "email"}
+		}
+		hasOpenID := false
+		for _, sc := range p.Scopes {
+			hasOpenID = hasOpenID || sc == "openid"
+			if sc == "" || strings.ContainsAny(sc, " \t\r\n\"\\") {
+				return nil, fmt.Errorf("%s: auth oidc %s: %q is not a scope", path, p.Name, sc)
+			}
+		}
+		if !hasOpenID {
+			return nil, fmt.Errorf("%s: auth oidc %s: scopes must include \"openid\"", path, p.Name)
+		}
+		if p.Claim == "" {
+			p.Claim = "email"
+		}
+		for j, d := range p.AutoProvisionDomains {
+			d = strings.ToLower(d)
+			if !address.ValidDomain(d) {
+				return nil, fmt.Errorf("%s: auth oidc %s: auto_provision_domains: %q is not a domain", path, p.Name, d)
+			}
+			p.AutoProvisionDomains[j] = d
+		}
+	}
 	return &c, nil
+}
+
+func loopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 var nodeID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)

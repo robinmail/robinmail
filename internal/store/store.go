@@ -53,6 +53,14 @@ var (
 	ErrMailboxLoop     = errors.New("a mailbox cannot be moved under itself")
 	ErrNoBlob          = errors.New("no such blob")
 	ErrNoSession       = errors.New("no such session")
+	// Authentication (auth.go).
+	ErrNoAppPassword   = errors.New("no such app password")
+	ErrAppPasswords    = errors.New("too many app passwords")
+	ErrNoTOTP          = errors.New("the account has no TOTP secret")
+	ErrTOTPEnabled     = errors.New("TOTP is already on")
+	ErrTOTPNotPending  = errors.New("no TOTP enrolment is waiting to be confirmed")
+	ErrOIDCSubject     = errors.New("the account is linked to another subject at this provider")
+	ErrPasswordChanged = errors.New("the password was changed meanwhile")
 	// ErrCannotCalculateChanges is returned by Changes when the given state
 	// is older than the change log reaches, or is not a state of the account.
 	ErrCannotCalculateChanges = errors.New("cannot calculate changes from that state")
@@ -82,6 +90,10 @@ type Store struct {
 	// event streams, IMAP sessions) hear of a change at once; see
 	// internal/notify. Set it before the store is used.
 	OnChange func(account string)
+	// OnAuthChange, when set, is called with the account after a write
+	// that withdrew a way into it (auth_seq moved): a revoked session or
+	// app password, a changed password. Set it before the store is used.
+	OnAuthChange func(account string)
 }
 
 // New returns a store. master wraps the keys that encrypt each account's
@@ -244,9 +256,22 @@ func (b *batch) change(typ, sel string, kv ...any) {
 //	                       not again: counters, modseq, and guards as above
 //	Reindex                again: sets columns to values computed from the blob
 //	CreateSession          again: INSERT OR IGNORE of a random token's hash
-//	DeleteSession, TrimSessions, TrimChanges, TrimDelivered, TrimLoginFailures
-//	                       again: deletes by condition; only the count of the
+//	DeleteSession, TrimSessions, TrimChanges, TrimDelivered, TrimLoginFailures,
+//	TrimAuthEvents         again: deletes by condition; only the count of the
 //	                       second run is lower
+//	TouchSession, UseAppPassword
+//	                       again: set a row to given values
+//	RevokeSession, RevokeSessions, RevokeAppPassword, DisableTOTP
+//	                       again: deletes; auth_seq moves once more, which
+//	                       only makes open connections check once more
+//	CreateAppPassword      again: INSERT OR IGNORE of a random id and hash
+//	SetPendingTOTP, ConfirmTOTP, ReplaceRecoveryCodes, SetPassword
+//	                       not again: guarded by the state they start from
+//	UseTOTPStep, UseRecoveryCode
+//	                       not again: the answer is whether this run took
+//	                       the step or the code; a second run would say no
+//	AddAuthEvent           not again: it appends
+//	LinkOIDC               again: INSERT OR IGNORE, then a check
 //	RegisterNode, Heartbeat, RemoveNode
 //	                       again: set a row to given values
 //	AddLoginFailure        not again: it counts

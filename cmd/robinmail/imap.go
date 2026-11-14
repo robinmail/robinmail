@@ -10,6 +10,7 @@ import (
 	"github.com/mikepage/robinmail/internal/imap"
 	"github.com/mikepage/robinmail/internal/notify"
 	"github.com/mikepage/robinmail/internal/store"
+	"github.com/mikepage/robinmail/internal/web"
 )
 
 // imapBackend puts the store behind the interfaces of internal/imap.
@@ -19,21 +20,26 @@ import (
 // UID of its own in each, and its flags are the same in all of them,
 // because keywords belong to the Email. COPY adds a label, MOVE swaps one,
 // EXPUNGE takes one away and destroys the Email when it was the last. A
-// login is the account password, checked by the same code as the web login
-// and SMTP AUTH, so all three share the failure counters.
+// login is an app password, or the account password while the account may
+// use that here, checked by the same code as SMTP AUTH and JMAP's Basic
+// auth (web.Server.MailLogin), so they share the failure counters.
 type imapBackend struct {
-	st    *store.Store
-	hub   *notify.Hub
-	login func(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration)
+	st  *store.Store
+	hub *notify.Hub
+	// auth follows the accounts' auth_seq: it wakes a session when a way
+	// into its account was withdrawn, on any node.
+	auth  *notify.Hub
+	login func(ctx context.Context, ip, scope, username, password string) (web.Credential, int, time.Duration)
+	valid func(ctx context.Context, c web.Credential, scope string) (bool, error)
 	// maxMessage is the largest message APPEND stores.
 	maxMessage int64
 }
 
 func (b *imapBackend) Login(ctx context.Context, ip, username, password string) (imap.User, error) {
-	acct, status, _ := b.login(ctx, ip, username, password)
+	cred, status, _ := b.login(ctx, ip, store.ScopeIMAP, username, password)
 	switch status {
 	case 0:
-		return &imapUser{b: b, acct: acct}, nil
+		return &imapUser{b: b, acct: cred.Account, cred: cred}, nil
 	case http.StatusUnauthorized:
 		return nil, imap.ErrAuth
 	case http.StatusTooManyRequests:
@@ -45,6 +51,37 @@ func (b *imapBackend) Login(ctx context.Context, ip, username, password string) 
 type imapUser struct {
 	b    *imapBackend
 	acct store.Account
+	cred web.Credential
+}
+
+// Revoked implements imap.Revocable: the channel is closed once the app
+// password the session logged in with is gone, or, for a login with the
+// account password, once that changed or stopped being accepted for IMAP.
+// It is looked at when the account's auth_seq moved, which this node
+// hears at once for its own writes and within a second for another
+// node's. While the store cannot say, the session stays.
+func (u *imapUser) Revoked() (<-chan struct{}, func()) {
+	revoked := make(chan struct{})
+	changes, unsubscribe := u.b.auth.Subscribe(u.acct.ID)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		defer unsubscribe()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-changes:
+			}
+			cctx, done := context.WithTimeout(ctx, 10*time.Second)
+			ok, err := u.b.valid(cctx, u.cred, store.ScopeIMAP)
+			done()
+			if err == nil && !ok {
+				close(revoked)
+				return
+			}
+		}
+	}()
+	return revoked, cancel
 }
 
 // imapErr gives a store error the meaning internal/imap knows it by.

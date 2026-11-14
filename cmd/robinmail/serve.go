@@ -119,13 +119,22 @@ func (a *app) serve(stop func()) error {
 	hub := &notify.Hub{States: a.store.ModSeqs, Logger: log}
 	a.store.OnChange = hub.Changed
 	go hub.Run(a.ctx)
+	// The same for withdrawn logins: a second hub follows auth_seq, which
+	// moves when a session or app password is revoked or a password
+	// changes. Open IMAP sessions and event streams listen to it.
+	authHub := &notify.Hub{States: a.store.AuthSeqs, Logger: log}
+	a.store.OnAuthChange = authHub.Changed
+	go authHub.Run(a.ctx)
 
 	// The web side: HTTPS for real use, plain HTTP on localhost for
 	// development and tests. Both serve the same handler.
 	site := &web.Server{
-		Hostname: a.cfg.Hostname,
-		Accounts: a.store,
-		Limits:   a.store,
+		Hostname:            a.cfg.Hostname,
+		Accounts:            a.store,
+		Limits:              a.store,
+		Audit:               a.store,
+		AuthChanges:         authHub,
+		RequireAppPasswords: a.cfg.Auth.RequireAppPasswords,
 		JMAP: &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store),
 			Push: hub, Closing: a.ctx.Done()},
 		Static:     webStatic,
@@ -178,7 +187,11 @@ func (a *app) serve(stop func()) error {
 		if tc == nil {
 			return errors.New("submission listeners need a certificate")
 		}
-		submit := &delivery.Handler{Submitter: sender, Login: site.Login}
+		submit := &delivery.Handler{Submitter: sender,
+			Login: func(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration) {
+				c, status, wait := site.MailLogin(ctx, ip, store.ScopeSMTP, username, password)
+				return c.Account, status, wait
+			}}
 		submission = &smtp.Server{
 			Hostname:        a.cfg.Hostname,
 			TLSConfig:       tc,
@@ -228,8 +241,9 @@ func (a *app) serve(stop func()) error {
 			maxMessage = 25 << 20
 		}
 		imapServer = &imap.Server{
-			Hostname:        a.cfg.Hostname,
-			Backend:         &imapBackend{st: a.store, hub: hub, login: site.Login, maxMessage: maxMessage},
+			Hostname: a.cfg.Hostname,
+			Backend: &imapBackend{st: a.store, hub: hub, auth: authHub, login: site.MailLogin,
+				valid: site.CredentialValid, maxMessage: maxMessage},
 			TLSConfig:       tc,
 			Logger:          log,
 			MaxMessageBytes: maxMessage,
@@ -333,7 +347,7 @@ func (a *app) serve(stop func()) error {
 	trimmed := make(chan struct{})
 	go func() {
 		defer close(trimmed)
-		trimLoop(a.ctx, a.store, log, rand.N(10*time.Minute), 24*time.Hour)
+		trimLoop(a.ctx, a.store, log, rand.N(10*time.Minute), 24*time.Hour, a.auditRetention())
 	}()
 
 	errc := make(chan error, 1)
@@ -428,7 +442,7 @@ func repairLoop(ctx context.Context, st *store.Store, log *slog.Logger, interval
 // moment run one after the other on the rqlite leader; the second finds
 // nothing left. A node that dies mid-trim leaves either the whole batch or
 // none of it.
-func trimLoop(ctx context.Context, st *store.Store, log *slog.Logger, first, interval time.Duration) {
+func trimLoop(ctx context.Context, st *store.Store, log *slog.Logger, first, interval, auditRetention time.Duration) {
 	t := time.NewTimer(first)
 	defer t.Stop()
 	for {
@@ -437,12 +451,12 @@ func trimLoop(ctx context.Context, st *store.Store, log *slog.Logger, first, int
 			return
 		case <-t.C:
 		}
-		trimOnce(ctx, st, log)
+		trimOnce(ctx, st, log, auditRetention)
 		t.Reset(interval)
 	}
 }
 
-func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger) {
+func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger, auditRetention time.Duration) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	now := time.Now()
@@ -463,6 +477,10 @@ func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger) {
 	}
 	if _, err := st.TrimLoginFailures(ctx, now.Add(-web.LoginWindow)); err != nil {
 		log.Error("trimming login failures failed", "err", err)
+		return
+	}
+	if _, err := st.TrimAuthEvents(ctx, now.Add(-auditRetention)); err != nil {
+		log.Error("trimming auth events failed", "err", err)
 		return
 	}
 	uploads, err := st.TrimUploads(ctx, now.Add(-store.UploadRetention))
@@ -522,4 +540,9 @@ func jmapSend(sender *delivery.Submitter, st *store.Store) func(context.Context,
 		}
 		return sub, se, nil
 	}
+}
+
+// auditRetention is how long auth events are kept.
+func (a *app) auditRetention() time.Duration {
+	return time.Duration(a.cfg.Auth.AuditRetentionDays) * 24 * time.Hour
 }

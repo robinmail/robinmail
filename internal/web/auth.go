@@ -18,13 +18,30 @@ import (
 
 	"github.com/mikepage/robinmail/internal/address"
 	"github.com/mikepage/robinmail/internal/store"
+	"github.com/mikepage/robinmail/internal/users"
 )
 
+// This file checks credentials: the account password for the web login,
+// and for mail clients (IMAP, SMTP submission, JMAP with Basic auth) an app
+// password, or the account password while the account may still use that
+// there. login.go has the web login's steps and the sessions, settings.go
+// what a logged-in user changes, oidc.go the login through a provider.
+//
+// Which secret opens which door:
+//
+//	                   web login   IMAP, SMTP, Basic
+//	account password   yes         only while the account has no app
+//	                               password and no TOTP, and the config
+//	                               does not require app passwords
+//	app password       no          yes, within its scope
+//	TOTP code          second step no
+//
+// The account password stops working for mail clients with the first app
+// password, so that it is typed into one place only, and with TOTP,
+// because a second factor that a mail client can walk around is none.
+
 func jsonError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	writeJSON(w, status, map[string]string{"error": msg})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -34,14 +51,21 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// cookieName is the session cookie. On HTTPS it has the "__Host-" prefix,
-// with which a browser only accepts it as Secure, for this host alone and
-// for all paths, so another site on a sibling domain cannot plant one.
-func cookieName(r *http.Request) string {
-	if r.TLS != nil {
-		return "__Host-robinmail"
+// readJSON reads the body of a request that changes something. It must be
+// JSON and say so: a form on another site cannot send that content type
+// without the browser asking this server first, which is half of the
+// protection against cross-site requests (the Origin check is the other).
+func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		jsonError(w, http.StatusUnsupportedMediaType, "the body must be application/json")
+		return false
 	}
-	return "robinmail"
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxLoginBody+1))
+	if err != nil || len(body) > maxLoginBody || json.Unmarshal(body, v) != nil {
+		jsonError(w, http.StatusBadRequest, "the body is not the JSON object this endpoint takes")
+		return false
+	}
+	return true
 }
 
 // tokenHash is what the session table holds instead of the token.
@@ -50,16 +74,22 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, token string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName(r),
-		Value:    token,
-		Path:     "/",
-		MaxAge:   maxAge,
-		Secure:   r.TLS != nil, // the plain listener is for development on localhost
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	})
+// newToken makes a session token: 256 random bits.
+func newToken() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+// newID makes a random id for something a user sees in a list.
+func newID() (string, error) {
+	var raw [9]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
 // check verifies a password. The number of Argon2id computations running
@@ -72,104 +102,69 @@ func (s *Server) check(ctx context.Context, hash, password string) (match, ok bo
 		return false, false
 	}
 	defer func() { <-s.hashing }()
+	if hash == store.NoPassword {
+		// An account without a password costs what an unknown one does.
+		hash = ""
+	}
 	return s.Verify(hash, password), true
 }
 
-// credentials checks the address and password of an HTTP request.
-func (s *Server) credentials(r *http.Request, username, password string) (store.Account, int, time.Duration) {
-	return s.Login(r.Context(), clientIP(r), username, password)
+// A limit counts failures under one key: in this node's memory, and in
+// the counters all nodes share.
+type limit struct {
+	mem    *limiter
+	key    string // in memory
+	shared string // in the shared counters
+	max    int
 }
 
-// Login checks an address and password, with the rate limits. It returns
-// the account, or an HTTP status that says why not (401 wrong, 429 too
-// many failures, 503 cannot tell right now) and how long the client should
-// wait. Every way into a node goes through here, SMTP AUTH too, so they
-// share the failure counters and the bound on password hashing.
-func (s *Server) Login(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration) {
-	s.init()
-	// The limiter key of an address that does not parse is the text itself,
-	// cut: guessing at nonsense names is limited like guessing at real ones.
-	key := username
-	if len(key) > 320 {
-		key = key[:320]
-	}
-	addr, perr := address.Parse(username)
-	if perr == nil {
-		key = addr.String()
-	}
-	if wait, blocked := s.byIP.blocked(ip); blocked {
-		return store.Account{}, http.StatusTooManyRequests, wait
-	}
-	if wait, blocked := s.byAddress.blocked(key); blocked {
-		return store.Account{}, http.StatusTooManyRequests, wait
-	}
-	shared, wait, blocked := s.sharedFailures(ctx, key, ip)
-	if blocked {
-		return store.Account{}, http.StatusTooManyRequests, wait
-	}
-
-	var acct store.Account
-	hash := "" // an unknown account costs as much time as a wrong password
-	if perr == nil {
-		var err error
-		acct, err = s.Accounts.Account(ctx, addr.String())
-		switch {
-		case err == nil:
-			hash = acct.PasswordHash
-		case !errors.Is(err, store.ErrNoAccount):
-			s.Logger.Error("login: looking up the account failed", "err", err)
-			return store.Account{}, http.StatusServiceUnavailable, 0
-		}
-	}
-	match, ok := s.check(ctx, hash, password)
-	if !ok {
-		return store.Account{}, http.StatusServiceUnavailable, 0
-	}
-	if !match {
-		s.byIP.fail(ip)
-		s.byAddress.fail(key)
-		if s.Limits != nil {
-			if err := s.Limits.AddLoginFailure(ctx, loginWindow, addressKey(key), ipKey(ip)); err != nil {
-				s.Logger.Warn("login: counting the failure for the other nodes failed", "err", err)
-			}
-		}
-		s.Logger.Warn("login failed", "address", key, "ip", ip)
-		return store.Account{}, http.StatusUnauthorized, 0
-	}
-	s.byAddress.reset(key)
-	// Only when there is something to forget: most logins have no failures
-	// behind them and then cost no write.
-	if _, had := shared[addressKey(key)]; had {
-		if err := s.Limits.ClearLoginFailures(ctx, addressKey(key)); err != nil {
-			s.Logger.Warn("login: clearing the failures failed", "err", err)
-		}
-	}
-	return acct, 0, 0
-}
-
-// Keys of the shared counters.
+// Keys of the shared counters. A wrong account password at the web login,
+// a wrong secret from a mail client and a wrong second step are counted
+// apart: a phone with a stale password must not close the webmail, and
+// somebody guessing codes must not be able to hide among mail clients.
 func addressKey(address string) string { return "a:" + address }
+func mailKey(address string) string    { return "m:" + address }
+func codeKey(address string) string    { return "t:" + address }
 func ipKey(ip string) string           { return "i:" + ip }
 
-// sharedFailures asks the counters all nodes share whether the address or
-// the IP is locked out. The limits are the same as for this node's own
-// counters in memory, which stay as they are: they are what is left when
-// rqlite does not answer, and then the limits hold per node again.
+func (s *Server) limitWeb(key string) limit {
+	return limit{s.byAddress, key, addressKey(key), maxFailsPerAddr}
+}
+func (s *Server) limitMail(key string) limit {
+	return limit{s.byMail, key, mailKey(key), maxFailsPerAddr}
+}
+func (s *Server) limitCode(key string) limit {
+	return limit{s.byCode, key, codeKey(key), maxFailsPerCode}
+}
+func (s *Server) limitIP(ip string) limit { return limit{s.byIP, ip, ipKey(ip), maxFailsPerIP} }
+
+// blocked asks whether any of the limits is reached, and for how long. It
+// also returns what the shared counters hold, for cleared.
 //
-// The cost for a login is one read that the nearest rqlite node answers
-// from its own copy (store.LoginFailures), next to an Argon2id check that
-// takes a hundred times longer. Only a failed login writes.
-func (s *Server) sharedFailures(ctx context.Context, key, ip string) (map[string]store.LoginFailure, time.Duration, bool) {
+// The shared counters are the ones that count: this node's own, in memory,
+// are what is left when rqlite does not answer, and then the limits hold
+// per node. The cost for a login is one read that the nearest rqlite node
+// answers from its own copy (store.LoginFailures). Only a failure writes.
+func (s *Server) blocked(ctx context.Context, limits ...limit) (map[string]store.LoginFailure, time.Duration, bool) {
+	for _, l := range limits {
+		if wait, blocked := l.mem.blocked(l.key); blocked {
+			return nil, wait, true
+		}
+	}
 	if s.Limits == nil {
 		return nil, 0, false
 	}
-	fails, err := s.Limits.LoginFailures(ctx, loginWindow, addressKey(key), ipKey(ip))
+	keys := make([]string, len(limits))
+	for i, l := range limits {
+		keys[i] = l.shared
+	}
+	fails, err := s.Limits.LoginFailures(ctx, loginWindow, keys...)
 	if err != nil {
 		s.Logger.Warn("login: reading the shared failure counters failed, using this node's own", "err", err)
 		return nil, 0, false
 	}
-	for k, max := range map[string]int{addressKey(key): maxFailsPerAddr, ipKey(ip): maxFailsPerIP} {
-		if f, ok := fails[k]; ok && f.Count >= max {
+	for _, l := range limits {
+		if f, ok := fails[l.shared]; ok && f.Count >= l.max {
 			if left := f.Started.Add(loginWindow).Sub(s.Now()); left > 0 {
 				return fails, left, true
 			}
@@ -178,146 +173,278 @@ func (s *Server) sharedFailures(ctx context.Context, key, ip string) (map[string
 	return fails, 0, false
 }
 
-// login is POST /auth/login with {"username": "...", "password": "..."}.
-// On success it sets the session cookie and answers with the account.
-func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.originAllowed(r) {
-		jsonError(w, http.StatusForbidden, "cross-site request refused")
-		return
+// failed counts one failure under each limit.
+func (s *Server) failed(ctx context.Context, limits ...limit) {
+	keys := make([]string, len(limits))
+	for i, l := range limits {
+		l.mem.fail(l.key)
+		keys[i] = l.shared
 	}
-	// JSON only: a form on another site cannot send that without asking.
-	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-		jsonError(w, http.StatusUnsupportedMediaType, "the body must be application/json")
-		return
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxLoginBody+1))
-	var req struct {
-		Username *string `json:"username"`
-		Password *string `json:"password"`
-	}
-	if err != nil || len(body) > maxLoginBody || json.Unmarshal(body, &req) != nil || req.Username == nil || req.Password == nil {
-		jsonError(w, http.StatusBadRequest, `the body must be {"username": "...", "password": "..."}`)
-		return
-	}
-	acct, status, wait := s.credentials(r, *req.Username, *req.Password)
-	switch status {
-	case 0:
-	case http.StatusTooManyRequests:
-		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
-		jsonError(w, status, "too many failed logins; try again later")
-		return
-	case http.StatusUnauthorized:
-		// The same answer for an unknown address and a wrong password.
-		jsonError(w, status, "wrong username or password")
-		return
-	default:
-		jsonError(w, status, "the server cannot log you in right now")
-		return
-	}
-
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		jsonError(w, http.StatusInternalServerError, "the server cannot log you in right now")
-		return
-	}
-	token := base64.RawURLEncoding.EncodeToString(raw[:])
-	if err := s.Accounts.CreateSession(r.Context(), tokenHash(token), acct.ID, s.Now().Add(SessionTTL)); err != nil {
-		s.Logger.Error("login: storing the session failed", "err", err)
-		jsonError(w, http.StatusServiceUnavailable, "the server cannot log you in right now")
-		return
-	}
-	s.setCookie(w, r, token, int(SessionTTL/time.Second))
-	s.Logger.Info("login", "address", acct.Address, "ip", clientIP(r))
-	writeJSON(w, http.StatusOK, map[string]string{"accountId": acct.ID, "username": acct.Address})
-}
-
-// logout is POST /auth/logout: it ends the session of the cookie.
-func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	if !s.originAllowed(r) {
-		jsonError(w, http.StatusForbidden, "cross-site request refused")
-		return
-	}
-	if c, err := r.Cookie(cookieName(r)); err == nil && c.Value != "" {
-		if err := s.Accounts.DeleteSession(r.Context(), tokenHash(c.Value)); err != nil {
-			s.Logger.Error("logout: removing the session failed", "err", err)
-			jsonError(w, http.StatusServiceUnavailable, "the server cannot log you out right now")
-			return
+	if s.Limits != nil {
+		if err := s.Limits.AddLoginFailure(ctx, loginWindow, keys...); err != nil {
+			s.Logger.Warn("login: counting the failure for the other nodes failed", "err", err)
 		}
 	}
-	s.setCookie(w, r, "", -1)
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusNoContent)
 }
 
-// session is GET /auth/session: who the cookie belongs to, or 401.
-func (s *Server) session(w http.ResponseWriter, r *http.Request) {
-	if !s.originAllowed(r) {
-		jsonError(w, http.StatusForbidden, "cross-site request refused")
+// cleared forgets the failures under a limit after a success. shared is
+// what blocked returned: only when there is something to forget does this
+// write, and most logins have no failures behind them.
+func (s *Server) cleared(ctx context.Context, shared map[string]store.LoginFailure, l limit) {
+	l.mem.reset(l.key)
+	if _, had := shared[l.shared]; had && s.Limits != nil {
+		if err := s.Limits.ClearLoginFailures(ctx, l.shared); err != nil {
+			s.Logger.Warn("login: clearing the failures failed", "err", err)
+		}
+	}
+}
+
+// limiterKey is what failures for a username are counted under: the
+// address in its one spelling, or, for text that is no address, the text
+// itself, cut: guessing at nonsense names is limited like guessing at real
+// ones.
+func limiterKey(username string) (key string, addr address.Address, ok bool) {
+	key = username
+	if len(key) > 320 {
+		key = key[:320]
+	}
+	addr, err := address.Parse(username)
+	if err == nil {
+		key = addr.String()
+	}
+	return key, addr, err == nil
+}
+
+// lookup finds the account of a username. found is false for an address
+// nobody has; status is not 0 when the store could not say.
+func (s *Server) lookup(ctx context.Context, addr address.Address, isAddress bool) (acct store.Account, found bool, status int) {
+	if !isAddress {
+		return store.Account{}, false, 0
+	}
+	acct, err := s.Accounts.Account(ctx, addr.String())
+	switch {
+	case err == nil:
+		return acct, true, 0
+	case errors.Is(err, store.ErrNoAccount):
+		return store.Account{}, false, 0
+	}
+	s.Logger.Error("login: looking up the account failed", "err", err)
+	return store.Account{}, false, http.StatusServiceUnavailable
+}
+
+// passwordLogin checks an address and the account password for the web
+// login, with the rate limits. It returns the account, or an HTTP status
+// that says why not (401 wrong, 429 too many failures, 503 cannot tell
+// right now) and how long the client should wait.
+func (s *Server) passwordLogin(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration) {
+	s.init()
+	key, addr, isAddress := limiterKey(username)
+	byAddr, byIP := s.limitWeb(key), s.limitIP(ip)
+	shared, wait, blocked := s.blocked(ctx, byIP, byAddr)
+	if blocked {
+		return store.Account{}, http.StatusTooManyRequests, wait
+	}
+	acct, found, status := s.lookup(ctx, addr, isAddress)
+	if status != 0 {
+		return store.Account{}, status, 0
+	}
+	// An unknown account costs as much time as a wrong password.
+	match, ok := s.check(ctx, acct.PasswordHash, password)
+	if !ok {
+		return store.Account{}, http.StatusServiceUnavailable, 0
+	}
+	if !found || !match {
+		s.failed(ctx, byIP, byAddr)
+		s.event(ctx, EventLoginFailed, acct, key, ip, "web: wrong address or password")
+		return store.Account{}, http.StatusUnauthorized, 0
+	}
+	s.cleared(ctx, shared, byAddr)
+	return acct, 0, 0
+}
+
+// Credential is what a mail client logged in with.
+type Credential struct {
+	Account store.Account
+	// AppPassword is the id of the app password; empty for the account
+	// password.
+	AppPassword string
+}
+
+// passwordOpensMail reports whether the account password is still good for
+// mail clients (the table at the top of this file).
+func (s *Server) passwordOpensMail(acct store.Account) bool {
+	return !s.RequireAppPasswords && acct.AppPasswords == 0 && !acct.TOTP
+}
+
+// MailLogin checks the address and secret of a mail client, with the rate
+// limits. scope is the protocol: store.ScopeIMAP, ScopeSMTP or ScopeJMAP.
+// The answer is as for passwordLogin. Every way into a node for a mail
+// client goes through here, so they share the failure counters and the
+// bound on password hashing.
+//
+// A secret that has the form of an app password is only ever looked up as
+// one: a SHA-256 and a read, no Argon2id. Any other is only ever checked
+// as the account password, with Argon2id, also when the account does not
+// exist or may not use its password here. So the time a refusal takes
+// depends on what was sent, not on whether the account exists, has app
+// passwords or has TOTP.
+func (s *Server) MailLogin(ctx context.Context, ip, scope, username, secret string) (Credential, int, time.Duration) {
+	s.init()
+	key, addr, isAddress := limiterKey(username)
+	byAddr, byIP := s.limitMail(key), s.limitIP(ip)
+	shared, wait, blocked := s.blocked(ctx, byIP, byAddr)
+	if blocked {
+		return Credential{}, http.StatusTooManyRequests, wait
+	}
+	acct, found, status := s.lookup(ctx, addr, isAddress)
+	if status != 0 {
+		return Credential{}, status, 0
+	}
+	refuse := func(why string) (Credential, int, time.Duration) {
+		s.failed(ctx, byIP, byAddr)
+		s.event(ctx, EventLoginFailed, acct, key, ip, scope+": "+why)
+		return Credential{}, http.StatusUnauthorized, 0
+	}
+
+	if normalized, isApp := users.NormalizeAppPassword(secret); isApp {
+		// Also for an unknown account, whose id is empty and has none.
+		p, err := s.Accounts.AppPasswordByHash(ctx, acct.ID, users.HashAppPassword(normalized))
+		switch {
+		case errors.Is(err, store.ErrNoAppPassword) || (err == nil && !found):
+			return refuse("no such app password")
+		case err != nil:
+			s.Logger.Error("login: looking up the app password failed", "err", err)
+			return Credential{}, http.StatusServiceUnavailable, 0
+		case !p.Allows(scope):
+			return refuse("app password " + strconv.Quote(p.Name) + " is not for this protocol")
+		}
+		s.cleared(ctx, shared, byAddr)
+		s.appPasswordUsed(ctx, acct, p, ip, scope)
+		return Credential{Account: acct, AppPassword: p.ID}, 0, 0
+	}
+
+	match, ok := s.check(ctx, acct.PasswordHash, secret)
+	switch {
+	case !ok:
+		return Credential{}, http.StatusServiceUnavailable, 0
+	case !found || !match:
+		return refuse("wrong address or password")
+	case !s.passwordOpensMail(acct):
+		// The same answer as for a wrong password: whoever sent it is not
+		// told that it is the account's.
+		return refuse("the account password is not accepted here: an app password is needed")
+	}
+	s.cleared(ctx, shared, byAddr)
+	return Credential{Account: acct}, 0, 0
+}
+
+// appPasswordUsed notes the login in the app password's row and in the
+// log of auth events, at most once per lastUseEvery for one app password
+// from one address: a mail client logs in every few minutes on several
+// connections, and each note is a write.
+func (s *Server) appPasswordUsed(ctx context.Context, acct store.Account, p store.AppPassword, ip, scope string) {
+	now := s.Now()
+	if ip == p.UsedIP && now.Sub(p.UsedAt) < lastUseEvery {
 		return
 	}
-	acct, ok, err := s.cookieAccount(r)
-	switch {
-	case err != nil:
-		jsonError(w, http.StatusServiceUnavailable, "the server cannot check the session right now")
-	case !ok:
-		jsonError(w, http.StatusUnauthorized, "not logged in")
-	default:
-		writeJSON(w, http.StatusOK, map[string]string{"accountId": acct.ID, "username": acct.Address})
+	id := acct.ID + "/" + p.ID + "/" + ip
+	s.usedMu.Lock()
+	if at, ok := s.used[id]; ok && now.Sub(at) < lastUseEvery {
+		s.usedMu.Unlock()
+		return
 	}
+	if len(s.used) >= basicCacheEntries {
+		s.used = map[string]time.Time{}
+	}
+	s.used[id] = now
+	s.usedMu.Unlock()
+	if err := s.Accounts.UseAppPassword(ctx, acct.ID, p.ID, ip); err != nil {
+		s.Logger.Warn("login: noting the use of an app password failed", "err", err)
+	}
+	s.event(ctx, EventLogin, acct, acct.Address, ip, scope+": app password "+strconv.Quote(p.Name))
 }
 
-// cookieAccount returns the account of the request's session cookie.
-func (s *Server) cookieAccount(r *http.Request) (store.Account, bool, error) {
-	c, err := r.Cookie(cookieName(r))
-	if err != nil || c.Value == "" || len(c.Value) > 200 {
-		return store.Account{}, false, nil
+// CredentialValid reports whether what a mail client logged in with still
+// opens the protocol: the app password exists and has the scope, or the
+// account password is unchanged and still allowed there. Connections that
+// stay open ask this when the account's auth_seq moved. An error means the
+// store could not say; the caller then leaves the connection be.
+func (s *Server) CredentialValid(ctx context.Context, c Credential, scope string) (bool, error) {
+	if c.AppPassword != "" {
+		p, err := s.Accounts.AppPassword(ctx, c.Account.ID, c.AppPassword)
+		if errors.Is(err, store.ErrNoAppPassword) {
+			return false, nil
+		}
+		return err == nil && p.Allows(scope), err
 	}
-	acct, err := s.Accounts.SessionAccount(r.Context(), tokenHash(c.Value))
-	if errors.Is(err, store.ErrNoSession) {
-		return store.Account{}, false, nil
+	acct, err := s.Accounts.AccountByID(ctx, c.Account.ID)
+	if errors.Is(err, store.ErrNoAccount) {
+		return false, nil
 	}
 	if err != nil {
-		return store.Account{}, false, err
+		return false, err
 	}
-	return acct, true, nil
+	return acct.PasswordHash == c.Account.PasswordHash && s.passwordOpensMail(acct), nil
 }
 
-// authenticate finds the account of a JMAP request: by session cookie, or
-// by Basic credentials, which standard JMAP clients send with each
-// request. It returns 0 or the status to refuse with.
-func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (store.Account, int) {
-	acct, ok, err := s.cookieAccount(r)
+// authenticate finds who a JMAP request is from: by session cookie, or by
+// Basic credentials, which standard JMAP clients send with each request.
+// It returns 0 or the status to refuse with. valid, when not nil, says
+// whether the login still stands; a long-lived response asks it when the
+// account's auth_seq moves.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (acct store.Account, status int, valid func(context.Context) bool) {
+	sess, acct, hash, ok, err := s.cookieSession(r, sessionCookie(r), store.StageFull)
 	if err != nil {
 		s.Logger.Error("looking up the session failed", "err", err)
-		return store.Account{}, http.StatusServiceUnavailable
+		return store.Account{}, http.StatusServiceUnavailable, nil
 	}
 	if ok {
-		return acct, 0
+		s.touch(r, sess, hash)
+		return acct, 0, func(ctx context.Context) bool {
+			_, _, err := s.Accounts.SessionByToken(ctx, hash)
+			return !errors.Is(err, store.ErrNoSession)
+		}
 	}
 	username, password, ok := r.BasicAuth()
 	if !ok {
-		return store.Account{}, http.StatusUnauthorized
+		return store.Account{}, http.StatusUnauthorized, nil
 	}
-	// A password that was just verified is not hashed again for every
-	// request of a client: Argon2id is slow on purpose.
-	if acct, ok := s.basic.get(username, password); ok {
-		return acct, 0
+	check := func(c Credential) func(context.Context) bool {
+		return func(ctx context.Context) bool {
+			ok, err := s.CredentialValid(ctx, c, store.ScopeJMAP)
+			return ok || err != nil
+		}
 	}
-	acct, status, wait := s.credentials(r, username, password)
+	// An account password that was just verified is not hashed again for
+	// every request of a client: Argon2id is slow on purpose. What is
+	// remembered is checked against the account as it is now, which is
+	// one read: a changed password or a first app password ends it at
+	// once, on every node. App passwords need no memory: they are cheap.
+	if c, ok := s.basic.get(username, password); ok {
+		if ok, err := s.CredentialValid(r.Context(), c, store.ScopeJMAP); err != nil {
+			return store.Account{}, http.StatusServiceUnavailable, nil
+		} else if ok {
+			return c.Account, 0, check(c)
+		}
+		s.basic.drop(username, password)
+	}
+	c, status, wait := s.MailLogin(r.Context(), clientIP(r), store.ScopeJMAP, username, password)
 	if status == http.StatusTooManyRequests {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 	}
 	if status != 0 {
-		return store.Account{}, status
+		return store.Account{}, status, nil
 	}
-	s.basic.put(username, password, acct)
-	return acct, 0
+	if c.AppPassword == "" {
+		s.basic.put(username, password, c)
+	}
+	return c.Account, 0, check(c)
 }
 
 // limiter counts failures per key in a fixed window and blocks a key that
 // reached the maximum until its window ends. It lives in memory: per node,
 // and gone at a restart. The counters all nodes share are in rqlite
-// (sharedFailures); this one is the fallback for when rqlite is away.
+// (blocked); this one is the fallback for when rqlite is away.
 type limiter struct {
 	mu     sync.Mutex
 	max    int
@@ -383,9 +510,9 @@ func (l *limiter) reset(key string) {
 	delete(l.m, key)
 }
 
-// basicCache remembers, for a few minutes, that a username and password
-// were verified. It holds no password: the key is an HMAC of both under a
-// key that exists only in this process.
+// basicCache remembers, for a few minutes, that a username and account
+// password were verified. It holds no password: the key is an HMAC of both
+// under a key that exists only in this process.
 type basicCache struct {
 	mu  sync.Mutex
 	key [32]byte
@@ -394,7 +521,7 @@ type basicCache struct {
 }
 
 type basicEntry struct {
-	acct    store.Account
+	cred    Credential
 	expires time.Time
 }
 
@@ -410,25 +537,33 @@ func (c *basicCache) id(username, password string) string {
 	return string(mac.Sum(nil))
 }
 
-func (c *basicCache) get(username, password string) (store.Account, bool) {
+func (c *basicCache) get(username, password string) (Credential, bool) {
 	id := c.id(username, password)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.m[id]
 	if !ok || !c.now().Before(e.expires) {
 		delete(c.m, id)
-		return store.Account{}, false
+		return Credential{}, false
 	}
-	return e.acct, true
+	return e.cred, true
 }
 
-func (c *basicCache) put(username, password string, acct store.Account) {
+func (c *basicCache) put(username, password string, cred Credential) {
 	id := c.id(username, password)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.m) >= basicCacheEntries {
 		c.m = map[string]basicEntry{}
 	}
-	acct.PasswordHash = ""
-	c.m[id] = basicEntry{acct: acct, expires: c.now().Add(basicCacheTTL)}
+	// The hash stays: it is what CredentialValid compares with the
+	// account's current one.
+	c.m[id] = basicEntry{cred: cred, expires: c.now().Add(basicCacheTTL)}
+}
+
+func (c *basicCache) drop(username, password string) {
+	id := c.id(username, password)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, id)
 }

@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 6
+const schemaVersion = 7
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -43,17 +43,14 @@ var schema = []string{
 		next_thread    INTEGER NOT NULL,
 		next_submission INTEGER NOT NULL DEFAULT 1,
 		next_identity   INTEGER NOT NULL DEFAULT 2,
-		uidvalidity     INTEGER NOT NULL DEFAULT 0
+		uidvalidity     INTEGER NOT NULL DEFAULT 0,
+		auth_seq        INTEGER NOT NULL DEFAULT 0,
+		password_changed_at INTEGER NOT NULL DEFAULT 0
 	) WITHOUT ROWID`,
 
-	// A web login. token_hash is the SHA-256 of the token in the cookie, so
-	// a copy of this table logs nobody in.
-	`CREATE TABLE IF NOT EXISTS session (
-		token_hash TEXT NOT NULL PRIMARY KEY,
-		account_id TEXT NOT NULL,
-		expires_at INTEGER NOT NULL
-	) WITHOUT ROWID`,
-	`CREATE INDEX IF NOT EXISTS session_expires ON session (expires_at)`,
+	sqlSessionTable, sqlSessionExpires, sqlSessionAccount,
+	sqlAppPasswordTable, sqlTOTPTable, sqlRecoveryCodeTable, sqlOIDCLinkTable,
+	sqlAuthEventTable, sqlAuthEventAt, sqlAuthEventAccount,
 
 	// parent_id 0 is the top level. A rename changes name only.
 	`CREATE TABLE IF NOT EXISTS mailbox (
@@ -197,9 +194,110 @@ var migrations = map[int64][]string{
 		`ALTER TABLE account ADD COLUMN uidvalidity INTEGER NOT NULL DEFAULT 0`,
 		`UPDATE account SET uidvalidity = COALESCE((SELECT max(m.uidvalidity) FROM mailbox m WHERE m.account_id = account.id), 0)`,
 	},
+	// 7: authentication. Sessions get an id, a stage, a device and two
+	// lifetimes; the table is made again, so everyone logs in once more.
+	// App passwords, TOTP with recovery codes, the subject an OIDC provider
+	// knows an account by, and the log of auth events are new. auth_seq
+	// moves whenever a way into the account is withdrawn.
+	6: {
+		`ALTER TABLE account ADD COLUMN auth_seq INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE account ADD COLUMN password_changed_at INTEGER NOT NULL DEFAULT 0`,
+		`DROP INDEX IF EXISTS session_expires`,
+		`DROP TABLE IF EXISTS session`,
+		sqlSessionTable, sqlSessionExpires, sqlSessionAccount,
+		sqlAppPasswordTable, sqlTOTPTable, sqlRecoveryCodeTable, sqlOIDCLinkTable,
+		sqlAuthEventTable, sqlAuthEventAt, sqlAuthEventAccount,
+	},
 }
 
 const (
+	// A web login. token_hash is the SHA-256 of the token in the cookie, so
+	// a copy of this table logs nobody in. id is what the user's list of
+	// sessions shows and revokes by. stage is 'full', or 'totp' for a login
+	// that has given its password and still owes the second step. A session
+	// ends at expires_at whatever happens, and before that when nothing was
+	// heard of it for idle seconds after seen_at.
+	sqlSessionTable = `CREATE TABLE IF NOT EXISTS session (
+		token_hash TEXT NOT NULL PRIMARY KEY,
+		id         TEXT NOT NULL UNIQUE,
+		account_id TEXT NOT NULL,
+		stage      TEXT NOT NULL DEFAULT 'full',
+		method     TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		seen_at    INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL,
+		idle       INTEGER NOT NULL,
+		ip         TEXT NOT NULL DEFAULT '',
+		seen_ip    TEXT NOT NULL DEFAULT '',
+		agent      TEXT NOT NULL DEFAULT '',
+		remember   INTEGER NOT NULL DEFAULT 0
+	) WITHOUT ROWID`
+	sqlSessionExpires = `CREATE INDEX IF NOT EXISTS session_expires ON session (expires_at)`
+	sqlSessionAccount = `CREATE INDEX IF NOT EXISTS session_account ON session (account_id)`
+
+	// A password for one device or program, for IMAP, SMTP submission and
+	// JMAP with Basic auth. hash is the SHA-256 of the secret, which the
+	// server made and showed once. scope lists the protocols it opens,
+	// separated by spaces; empty is all of them. A revoked one is deleted.
+	sqlAppPasswordTable = `CREATE TABLE IF NOT EXISTS app_password (
+		account_id TEXT NOT NULL,
+		id         TEXT NOT NULL,
+		name       TEXT NOT NULL,
+		hash       TEXT NOT NULL UNIQUE,
+		scope      TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		used_at    INTEGER NOT NULL DEFAULT 0,
+		used_ip    TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (account_id, id)
+	) WITHOUT ROWID`
+
+	// The TOTP secret of an account, sealed with the account's key.
+	// confirmed_at is 0 until the user has shown a code from it; until then
+	// the login does not ask for one. last_step is the newest time step a
+	// code was accepted for: a code works once, on whatever node.
+	sqlTOTPTable = `CREATE TABLE IF NOT EXISTS totp (
+		account_id   TEXT NOT NULL PRIMARY KEY,
+		secret       TEXT NOT NULL,
+		created_at   INTEGER NOT NULL,
+		confirmed_at INTEGER NOT NULL DEFAULT 0,
+		last_step    INTEGER NOT NULL DEFAULT 0
+	) WITHOUT ROWID`
+
+	// Recovery codes, as SHA-256. Using one deletes its row.
+	sqlRecoveryCodeTable = `CREATE TABLE IF NOT EXISTS recovery_code (
+		account_id TEXT NOT NULL,
+		hash       TEXT NOT NULL,
+		PRIMARY KEY (account_id, hash)
+	) WITHOUT ROWID`
+
+	// The subject ("sub") under which an OIDC provider knew an account at
+	// its first login through that provider. A later login that maps to
+	// the account with another subject is refused: the address was given
+	// to someone else at the provider.
+	sqlOIDCLinkTable = `CREATE TABLE IF NOT EXISTS oidc_link (
+		account_id TEXT NOT NULL,
+		provider   TEXT NOT NULL,
+		subject    TEXT NOT NULL,
+		linked_at  INTEGER NOT NULL,
+		PRIMARY KEY (account_id, provider)
+	) WITHOUT ROWID`
+
+	// What happened at the doors: logins that worked and that failed,
+	// second steps, changes to passwords, app passwords and sessions, and
+	// what an administrator did. account_id is empty when the address
+	// belongs to nobody. Trimmed after a retention.
+	sqlAuthEventTable = `CREATE TABLE IF NOT EXISTS auth_event (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		at         INTEGER NOT NULL,
+		account_id TEXT NOT NULL DEFAULT '',
+		address    TEXT NOT NULL DEFAULT '',
+		event      TEXT NOT NULL,
+		ip         TEXT NOT NULL DEFAULT '',
+		detail     TEXT NOT NULL DEFAULT ''
+	)`
+	sqlAuthEventAt      = `CREATE INDEX IF NOT EXISTS auth_event_at ON auth_event (at)`
+	sqlAuthEventAccount = `CREATE INDEX IF NOT EXISTS auth_event_account ON auth_event (account_id, id)`
+
 	// The robinmail nodes of the cluster. A node writes its own row when it
 	// starts and renews seen_at while it runs. address is where the other
 	// nodes reach it; cert is the SHA-256 of the certificate it shows them

@@ -409,7 +409,7 @@ func TestJMAPEndToEnd(t *testing.T) {
 	}
 
 	// Logout ends it.
-	if resp, _ := web.do("POST", "/auth/logout", "", nil); resp.StatusCode != 204 {
+	if resp, _ := web.do("POST", "/auth/logout", "{}", nil); resp.StatusCode != 204 {
 		t.Errorf("logout: %d", resp.StatusCode)
 	}
 	if resp, _ := web.do("POST", apiURL, `{"using":[],"methodCalls":[]}`, nil); resp.StatusCode != 401 {

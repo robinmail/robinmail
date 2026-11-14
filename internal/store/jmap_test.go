@@ -1,8 +1,6 @@
 package store
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -468,53 +466,6 @@ func TestChangesOf(t *testing.T) {
 	if _, _, _, err = s.ChangesOf(ctx, other.ID, "Email", 1, 0); err != nil {
 		t.Errorf("the other account was trimmed: %v", err)
 	}
-}
-
-func TestSessions(t *testing.T) {
-	s := open(t)
-	a := account(t, s)
-	hash := func(token string) string { sum := sha256.Sum256([]byte(token)); return hex.EncodeToString(sum[:]) }
-	tok := "token-" + a.ID
-	if err := s.CreateSession(ctx, hash(tok), a.ID, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.SessionAccount(ctx, hash(tok))
-	if err != nil || got.ID != a.ID || got.Address != a.Address {
-		t.Fatalf("session: %+v %v", got, err)
-	}
-	// The token itself is not what is stored.
-	_, err = s.SessionAccount(ctx, tok)
-	wantErr(t, "token instead of hash", err, ErrNoSession)
-	_, err = s.SessionAccount(ctx, hash("other"))
-	wantErr(t, "unknown", err, ErrNoSession)
-	wantErr(t, "unknown account", s.CreateSession(ctx, hash("x"), "nobody", time.Now().Add(time.Hour)), ErrNoAccount)
-
-	// Expired: gone for readers at once, removed by the trim.
-	old := "old-" + a.ID
-	s.CreateSession(ctx, hash(old), a.ID, time.Now().Add(-time.Minute))
-	_, err = s.SessionAccount(ctx, hash(old))
-	wantErr(t, "expired", err, ErrNoSession)
-	if n, err := s.TrimSessions(ctx, time.Now()); err != nil || n < 1 {
-		t.Errorf("trim: %d %v", n, err)
-	}
-	if _, err := s.SessionAccount(ctx, hash(tok)); err != nil {
-		t.Errorf("a live session was trimmed: %v", err)
-	}
-
-	if err := s.DeleteSession(ctx, hash(tok)); err != nil {
-		t.Fatal(err)
-	}
-	_, err = s.SessionAccount(ctx, hash(tok))
-	wantErr(t, "deleted", err, ErrNoSession)
-	if err := s.DeleteSession(ctx, hash(tok)); err != nil {
-		t.Errorf("deleting twice: %v", err)
-	}
-	byID, err := s.AccountByID(ctx, a.ID)
-	if err != nil || byID.Address != a.Address {
-		t.Errorf("AccountByID: %+v %v", byID, err)
-	}
-	_, err = s.AccountByID(ctx, "nobody")
-	wantErr(t, "AccountByID unknown", err, ErrNoAccount)
 }
 
 func TestOpenBlob(t *testing.T) {

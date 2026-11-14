@@ -19,7 +19,21 @@ type Account struct {
 	PasswordHash string
 	CreatedAt    time.Time
 	State        int64
+	// AuthSeq moves whenever a way into the account is withdrawn: a changed
+	// password, a revoked session or app password, the first app password.
+	// Connections that stay open compare it to know when to check theirs.
+	AuthSeq           int64
+	PasswordChangedAt time.Time
+	// AppPasswords is how many app passwords the account has. With any, the
+	// account password no longer opens IMAP, SMTP and JMAP over Basic auth.
+	AppPasswords int
+	// TOTP says whether the web login asks for a code.
+	TOTP bool
 }
+
+// NoPassword is the password_hash of an account that cannot log in with a
+// password: one that an OIDC login made. No password verifies against it.
+const NoPassword = "!"
 
 // defaultMailboxes are created with every account, with ids 1 to 5.
 var defaultMailboxes = []struct{ name, role string }{
@@ -65,11 +79,18 @@ func (s *Store) CreateAccount(ctx context.Context, address, passwordHash string)
 	return Account{ID: id, Address: address, PasswordHash: passwordHash, CreatedAt: now, State: 1}, nil
 }
 
-const accountColumns = `id, address, password_hash, created_at, modseq`
+const accountColumns = `id, address, password_hash, created_at, modseq, auth_seq, password_changed_at,
+	(SELECT count(*) FROM app_password p WHERE p.account_id = account.id),
+	EXISTS (SELECT 1 FROM totp t WHERE t.account_id = account.id AND t.confirmed_at > 0)`
 
 func scanAccount(row []any) Account {
-	return Account{ID: asString(row[0]), Address: asString(row[1]), PasswordHash: asString(row[2]),
-		CreatedAt: time.Unix(asInt(row[3]), 0), State: asInt(row[4])}
+	a := Account{ID: asString(row[0]), Address: asString(row[1]), PasswordHash: asString(row[2]),
+		CreatedAt: time.Unix(asInt(row[3]), 0), State: asInt(row[4]), AuthSeq: asInt(row[5]),
+		AppPasswords: int(asInt(row[7])), TOTP: asInt(row[8]) != 0}
+	if at := asInt(row[6]); at > 0 {
+		a.PasswordChangedAt = time.Unix(at, 0)
+	}
+	return a
 }
 
 // Account looks an account up by address.
@@ -115,12 +136,23 @@ func (s *Store) State(ctx context.Context, account string) (int64, error) {
 // that is asked answers from its own copy, without the leader. A copy that
 // is behind shows a change one poll later.
 func (s *Store) ModSeqs(ctx context.Context, accounts []string) (map[string]int64, error) {
+	return s.seqs(ctx, "modseq", accounts)
+}
+
+// AuthSeqs is ModSeqs for auth_seq: what a second internal/notify hub
+// polls, so that open IMAP sessions and event streams hear, on every node,
+// that a login was withdrawn.
+func (s *Store) AuthSeqs(ctx context.Context, accounts []string) (map[string]int64, error) {
+	return s.seqs(ctx, "auth_seq", accounts)
+}
+
+func (s *Store) seqs(ctx context.Context, column string, accounts []string) (map[string]int64, error) {
 	out := map[string]int64{}
 	for start := 0; start < len(accounts); start += maxIDsPerRead {
 		chunk := accounts[start:min(start+maxIDsPerRead, len(accounts))]
 		vals, kv := values("i", chunk)
 		b := &batch{base: map[string]any{}}
-		b.add(`SELECT id, modseq FROM account WHERE id IN (VALUES `+vals+`)`, kv...)
+		b.add(`SELECT id, `+column+` FROM account WHERE id IN (VALUES `+vals+`)`, kv...)
 		res, err := s.db.Query(ctx, rqlite.None, b.stmts...)
 		if err != nil {
 			return nil, fmt.Errorf("store: %w", err)

@@ -16,60 +16,8 @@ import (
 	"time"
 
 	"github.com/mikepage/robinmail/internal/store"
+	"github.com/mikepage/robinmail/internal/users"
 )
-
-// fakeAccounts keeps accounts and sessions in memory. Passwords are
-// "hashed" as "hash:" plus the password, which fakeVerify undoes.
-type fakeAccounts struct {
-	mu       sync.Mutex
-	accounts map[string]store.Account
-	sessions map[string]session
-	now      func() time.Time
-}
-
-type session struct {
-	account string
-	expires time.Time
-}
-
-func (f *fakeAccounts) Account(_ context.Context, address string) (store.Account, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	a, ok := f.accounts[address]
-	if !ok {
-		return store.Account{}, store.ErrNoAccount
-	}
-	return a, nil
-}
-
-func (f *fakeAccounts) CreateSession(_ context.Context, hash, account string, expires time.Time) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.sessions[hash] = session{account, expires}
-	return nil
-}
-
-func (f *fakeAccounts) SessionAccount(_ context.Context, hash string) (store.Account, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	s, ok := f.sessions[hash]
-	if !ok || !f.now().Before(s.expires) {
-		return store.Account{}, store.ErrNoSession
-	}
-	for _, a := range f.accounts {
-		if a.ID == s.account {
-			return a, nil
-		}
-	}
-	return store.Account{}, store.ErrNoSession
-}
-
-func (f *fakeAccounts) DeleteSession(_ context.Context, hash string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.sessions, hash)
-	return nil
-}
 
 type userCtx struct{}
 
@@ -90,14 +38,20 @@ const (
 func newSite(t *testing.T) *site {
 	st := &site{t: t, clock: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)}
 	now := func() time.Time { return st.clock }
-	st.accounts = &fakeAccounts{now: now, sessions: map[string]session{}, accounts: map[string]store.Account{
-		"anna@example.test": {ID: "acct-anna", Address: "anna@example.test", PasswordHash: "hash:correct horse"},
-		"bob@example.test":  {ID: "acct-bob", Address: "bob@example.test", PasswordHash: "hash:battery staple"},
-	}}
+	st.accounts = newFakeAccounts(now,
+		store.Account{ID: "acct-anna", Address: "anna@example.test", PasswordHash: "hash:correct horse"},
+		store.Account{ID: "acct-bob", Address: "bob@example.test", PasswordHash: "hash:battery staple"})
 	st.s = &Server{
 		Hostname: "mail.example.test",
 		Accounts: st.accounts,
+		Audit:    st.accounts,
 		Now:      now,
+		HashPassword: func(password string) (string, error) {
+			if len(password) < 8 {
+				return "", users.ErrWeakPassword
+			}
+			return "hash:" + password, nil
+		},
 		Verify: func(hash, password string) bool {
 			st.verified.Add(1)
 			return hash != "" && hash == "hash:"+password
@@ -129,7 +83,7 @@ func from(addr string) reqOpt  { return func(r *http.Request) { r.RemoteAddr = a
 
 func (st *site) do(method, url, body string, opts ...reqOpt) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, url, strings.NewReader(body))
-	if body != "" {
+	if body != "" || (method != "GET" && method != "HEAD") {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	for _, o := range opts {
@@ -145,10 +99,20 @@ func (st *site) login(base, user, password string, opts ...reqOpt) *httptest.Res
 	return st.do("POST", base+"/auth/login", string(b), opts...)
 }
 
-// sessionCookie returns the cookie a response set.
-func sessionCookie(rec *httptest.ResponseRecorder) *http.Cookie {
+// setCookie returns the first cookie a response set.
+func setCookie(rec *httptest.ResponseRecorder) *http.Cookie {
 	for _, c := range rec.Result().Cookies() {
 		return c
+	}
+	return nil
+}
+
+// cookieNamed returns the cookie of that name a response set.
+func cookieNamed(rec *httptest.ResponseRecorder, name string) *http.Cookie {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == name {
+			return c
+		}
 	}
 	return nil
 }
@@ -165,12 +129,12 @@ func TestLoginAndSession(t *testing.T) {
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"accountId":"acct-anna","username":"anna@example.test"}` {
 		t.Errorf("body %s", got)
 	}
-	c := sessionCookie(rec)
+	c := setCookie(rec)
 	if c == nil {
 		t.Fatal("no cookie")
 	}
 	if c.Name != "__Host-robinmail" || !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" ||
-		c.Domain != "" || c.MaxAge != int(SessionTTL/time.Second) {
+		c.Domain != "" || c.MaxAge != 0 {
 		t.Errorf("cookie %+v", c)
 	}
 	if len(c.Value) < 40 {
@@ -186,7 +150,7 @@ func TestLoginAndSession(t *testing.T) {
 		t.Errorf("sessions: %v", st.accounts.sessions)
 	}
 	// Two logins, two tokens.
-	if c2 := sessionCookie(st.login(tlsBase, "anna@example.test", "correct horse")); c2.Value == c.Value {
+	if c2 := setCookie(st.login(tlsBase, "anna@example.test", "correct horse")); c2.Value == c.Value {
 		t.Error("the same token twice")
 	}
 
@@ -213,14 +177,15 @@ func TestLoginAndSession(t *testing.T) {
 		}
 	}
 
-	// Sessions end: after 30 days, and at logout.
-	st.clock = st.clock.Add(SessionTTL + time.Second)
+	// Sessions end: when they were not used for the idle time (the
+	// lifetimes have a test of their own), and at logout.
+	st.clock = st.clock.Add(SessionIdle + time.Second)
 	if rec := st.do("GET", tlsBase+"/auth/session", "", cookie(c)); rec.Code != 401 {
 		t.Errorf("expired session: %d", rec.Code)
 	}
-	c = sessionCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
+	c = setCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
 	rec = st.do("POST", tlsBase+"/auth/logout", "", cookie(c))
-	gone := sessionCookie(rec)
+	gone := setCookie(rec)
 	if rec.Code != 204 || gone == nil || gone.MaxAge >= 0 || gone.Value != "" {
 		t.Errorf("logout: %d %+v", rec.Code, gone)
 	}
@@ -232,7 +197,7 @@ func TestLoginAndSession(t *testing.T) {
 	}
 
 	// On the plain listener, for development: no Secure, no __Host- prefix.
-	c = sessionCookie(st.login(plainBase, "anna@example.test", "correct horse"))
+	c = setCookie(st.login(plainBase, "anna@example.test", "correct horse"))
 	if c == nil || c.Name != "robinmail" || c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
 		t.Errorf("plain cookie %+v", c)
 	}
@@ -254,7 +219,7 @@ func TestLoginRefusals(t *testing.T) {
 	} {
 		before := st.verified.Load()
 		rec := st.login(tlsBase, tc.user, tc.password)
-		if rec.Code != 401 || sessionCookie(rec) != nil {
+		if rec.Code != 401 || setCookie(rec) != nil {
 			t.Errorf("%q: %d", tc.user, rec.Code)
 		}
 		if st.verified.Load() != before+1 {
@@ -284,7 +249,7 @@ func TestLoginRefusals(t *testing.T) {
 		"GET":              {"GET", ``, "", 405},
 	} {
 		rec := st.do(tc.method, tlsBase+"/auth/login", tc.body, header("Content-Type", tc.contentType))
-		if rec.Code != tc.want || sessionCookie(rec) != nil {
+		if rec.Code != tc.want || setCookie(rec) != nil {
 			t.Errorf("%s: %d, want %d", name, rec.Code, tc.want)
 		}
 	}
@@ -304,7 +269,7 @@ func TestLoginRateLimit(t *testing.T) {
 	}
 	checks := st.verified.Load()
 	rec := st.login(tlsBase, "anna@example.test", "correct horse", from("203.0.113.9:1000"))
-	if rec.Code != 429 || rec.Header().Get("Retry-After") == "" || sessionCookie(rec) != nil {
+	if rec.Code != 429 || rec.Header().Get("Retry-After") == "" || setCookie(rec) != nil {
 		t.Errorf("after %d failures: %d, Retry-After %q", maxFailsPerAddr, rec.Code, rec.Header().Get("Retry-After"))
 	}
 	if st.verified.Load() != checks {
@@ -361,8 +326,8 @@ func TestLoginRateLimit(t *testing.T) {
 // checked: a page on another site cannot use the user's session.
 func TestOriginCheck(t *testing.T) {
 	st := newSite(t)
-	c := sessionCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
-	plain := sessionCookie(st.login(plainBase, "anna@example.test", "correct horse"))
+	c := setCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
+	plain := setCookie(st.login(plainBase, "anna@example.test", "correct horse"))
 	for _, tc := range []struct {
 		name string
 		base string
@@ -396,8 +361,8 @@ func TestOriginCheck(t *testing.T) {
 				t.Errorf("%s: POST %s: %d", tc.name, path, rec.Code)
 			}
 			if path == "/auth/logout" && rec.Code == 204 { // log in again for the next case
-				c = sessionCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
-				plain = sessionCookie(st.login(plainBase, "anna@example.test", "correct horse"))
+				c = setCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
+				plain = setCookie(st.login(plainBase, "anna@example.test", "correct horse"))
 			}
 		}
 		rec := st.login(tc.base, "anna@example.test", "correct horse", tc.opts...)
@@ -435,7 +400,7 @@ func TestBasicAuth(t *testing.T) {
 	if rec.Code != 200 || rec.Body.String() != "jmap for acct-anna anna@example.test" {
 		t.Fatalf("basic: %d %s", rec.Code, rec.Body.String())
 	}
-	if sessionCookie(rec) != nil {
+	if setCookie(rec) != nil {
 		t.Error("Basic auth set a cookie")
 	}
 	checks := st.verified.Load()
@@ -568,7 +533,7 @@ func TestHostCheck(t *testing.T) {
 		}
 	}
 	rec := st.do("POST", "https://evil.example/auth/login", `{"username":"anna@example.test","password":"correct horse"}`)
-	if rec.Code != 421 || sessionCookie(rec) != nil {
+	if rec.Code != 421 || setCookie(rec) != nil {
 		t.Errorf("login under another host: %d", rec.Code)
 	}
 	// The host of a dev origin is accepted on the plain listener.
@@ -586,7 +551,7 @@ func TestHostCheck(t *testing.T) {
 // Every response carries the security headers; HSTS only over TLS.
 func TestSecurityHeaders(t *testing.T) {
 	st := newSite(t)
-	c := sessionCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
+	c := setCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
 	for _, tc := range []struct{ method, url string }{
 		{"GET", tlsBase + "/"},
 		{"GET", tlsBase + "/assets/missing.js"},

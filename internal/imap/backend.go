@@ -98,6 +98,16 @@ type Summary struct {
 // UIDRange is an inclusive range of UIDs.
 type UIDRange struct{ Lo, Hi uint32 }
 
+// Revocable is a User whose login can be withdrawn while a session runs:
+// the app password it logged in with is revoked, or the password changed.
+// A backend's User that implements it has its sessions ended when that
+// happens, with a BYE.
+type Revocable interface {
+	// Revoked returns a channel that is closed when the login no longer
+	// stands, and a function that ends the watching.
+	Revoked() (<-chan struct{}, func())
+}
+
 // UIDPair is a message's UID before and after a copy.
 type UIDPair struct{ From, To uint32 }
 

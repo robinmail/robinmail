@@ -753,7 +753,11 @@ func (a *app) trim() error {
 	if _, err := a.store.TrimLoginFailures(a.ctx, now.Add(-web.LoginWindow)); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.stdout, "removed %d change rows, %d delivery keys and %d sessions\n", changes, keys, sessions)
+	events, err := a.store.TrimAuthEvents(a.ctx, now.Add(-a.auditRetention()))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "removed %d change rows, %d delivery keys, %d sessions and %d auth events\n", changes, keys, sessions, events)
 	return nil
 }
 

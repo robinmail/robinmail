@@ -372,9 +372,12 @@ func TestIMAPAndJMAPOnTwoNodes(t *testing.T) {
 	}
 	event("the expunge", `"Email"`)
 
-	// 6. Failed logins are counted for all doors together: ten wrong
-	// passwords over IMAP close the web login for the address, on this
-	// node at once and on the other through the shared counters.
+	// 6. Failed logins of mail clients are counted for all nodes together:
+	// ten wrong passwords over IMAP on node A close IMAP for the address,
+	// on node A at once and on node B through the shared counters, and
+	// SMTP submission with them. The web login has a counter of its own
+	// and stays open: a phone with a stale password must not lock its
+	// owner out of the webmail.
 	for i := 0; i < 10; i++ {
 		c := dialIMAP(t, "bad", a.imapTLS)
 		if got := c.cmd(fmt.Sprintf(`LOGIN %s wrong-%d`, anna, i)); !strings.HasPrefix(got[len(got)-1], "NO [AUTHENTICATIONFAILED]") {
@@ -386,16 +389,16 @@ func TestIMAPAndJMAPOnTwoNodes(t *testing.T) {
 	if got := c.cmd(fmt.Sprintf(`LOGIN %s "correct horse"`, anna)); !strings.HasPrefix(got[len(got)-1], "NO [UNAVAILABLE] too many failed logins") {
 		t.Fatalf("the right password after ten wrong ones: %v", got)
 	}
-	web := newJMAPClient(t, "http://"+a.web)
-	if resp, data := web.do("POST", "/auth/login", fmt.Sprintf(`{"username":%q,"password":"correct horse"}`, anna), nil); resp.StatusCode != 429 {
-		t.Fatalf("web login on node A after ten failed IMAP logins: %d %s", resp.StatusCode, data)
+	// Node B saw none of the failures. The tenth was written before node
+	// A answered it, so node B knows without a wait: no retry here.
+	cb := dialIMAP(t, "limitedB", b.imapTLS)
+	if got := cb.cmd(fmt.Sprintf(`LOGIN %s "correct horse"`, anna)); !strings.HasPrefix(got[len(got)-1], "NO [UNAVAILABLE]") {
+		t.Fatalf("node B after ten failed logins on node A: %v", got)
 	}
-	waitFor(t, "node B to refuse the login too", func() bool {
-		c := dialIMAP(t, "limitedB", b.imapTLS)
-		defer c.conn.Close()
-		got := c.cmd(fmt.Sprintf(`LOGIN %s "correct horse"`, anna))
-		return strings.HasPrefix(got[len(got)-1], "NO [UNAVAILABLE]")
-	})
+	web := newJMAPClient(t, "http://"+b.web)
+	if resp, data := web.do("POST", "/auth/login", fmt.Sprintf(`{"username":%q,"password":"correct horse"}`, anna), nil); resp.StatusCode != 200 {
+		t.Fatalf("web login on node B after ten failed IMAP logins: %d %s", resp.StatusCode, data)
+	}
 	// The sessions that were logged in are not thrown out.
 	one.ok("NOOP")
 }

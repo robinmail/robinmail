@@ -44,6 +44,10 @@ type conn struct {
 	countedUser string // the name counted against MaxConnsPerUser
 	changes     <-chan struct{}
 	stopChanges func()
+	// revoked is closed when the login was withdrawn (Revocable); nil for
+	// a user whose login cannot be.
+	revoked     <-chan struct{}
+	stopRevoked func()
 	sel         *selected
 
 	// What the client enabled (RFC 5161): CONDSTORE (RFC 7162), IMAP4rev2
@@ -70,6 +74,20 @@ type conn struct {
 }
 
 var errShutdown = errors.New("imap: server is shutting down")
+
+// byeRevoked ends a session whose login was withdrawn. RFC 3501 7.1.5:
+// BYE is how a server says it is about to close the connection; RFC 5530
+// gives no response code that fits better than none.
+const byeRevoked = "* BYE this login was revoked; log in again"
+
+func (c *conn) isRevoked() bool {
+	select {
+	case <-c.revoked:
+		return c.revoked != nil
+	default:
+		return false
+	}
+}
 
 func newConn(s *Server, nc net.Conn, ip string) *conn {
 	c := &conn{srv: s, nc: nc, ip: ip}
@@ -279,6 +297,9 @@ func (c *conn) serve() {
 		if c.stopChanges != nil {
 			c.stopChanges()
 		}
+		if c.stopRevoked != nil {
+			c.stopRevoked()
+		}
 		c.nc.Close()
 	}()
 	if tc, isTLS := c.nc.(*tls.Conn); isTLS {
@@ -299,6 +320,11 @@ func (c *conn) serve() {
 		}
 		if c.srv.isClosing() {
 			c.printf("* BYE the server is shutting down")
+			c.flush()
+			return
+		}
+		if c.isRevoked() {
+			c.printf(byeRevoked)
 			c.flush()
 			return
 		}
@@ -326,6 +352,8 @@ func (c *conn) readFailed(parts []part, skip int64, err error) {
 	}
 	var ne net.Error
 	switch {
+	case errors.Is(err, errShutdown) && c.isRevoked() && !c.srv.isClosing():
+		c.printf(byeRevoked)
 	case errors.Is(err, errShutdown):
 		c.printf("* BYE the server is shutting down")
 	case errors.Is(err, errLineTooLong):
@@ -685,6 +713,18 @@ func (c *conn) login(name, password string) reply {
 	}
 	c.user = user
 	c.changes, c.stopChanges = user.Changes()
+	if r, ok := user.(Revocable); ok {
+		// A session waiting for a command, or in IDLE, is woken the way a
+		// shutdown wakes it; one in a command sees it when that is done.
+		c.revoked, c.stopRevoked = r.Revoked()
+		go func(revoked <-chan struct{}) {
+			select {
+			case <-revoked:
+				c.wake()
+			case <-c.ctx.Done():
+			}
+		}(c.revoked)
+	}
 	c.state = stateAuth
 	c.srv.Logger.Info("imap: login", "user", user.Username(), "ip", c.ip)
 	return okCode("CAPABILITY "+c.capabilities(), "logged in")
@@ -801,6 +841,12 @@ func (c *conn) cmdIdle(tag string, p *parser) (reply, error) {
 			c.wake()
 			<-got
 			c.printf("* BYE the server is shutting down")
+			c.state = stateLogout
+			return reply{}, nil
+		case <-c.revoked:
+			c.wake()
+			<-got
+			c.printf(byeRevoked)
 			c.state = stateLogout
 			return reply{}, nil
 		}
