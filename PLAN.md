@@ -190,7 +190,7 @@ contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspam
                      keycloak.yaml: a Keycloak with a realm, for "make keycloak-test"
 contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev;
                      e2e.sh and oidc-provider for the browser tests
-contrib/lab          the interoperability lab: Postfix, Exim, OpenSMTPD, IMAP clients, DNS, CA   new; "make lab-test"
+contrib/lab          the interoperability lab: Postfix, Exim, OpenSMTPD, IMAP clients, Thunderbird, DNS, CA   new; "make lab-test"
 internal/labtest     tests against that lab             new
 ```
 
@@ -1399,47 +1399,36 @@ Built as follows:
     mailbox is compared over JMAP by SHA-256 of each message and its
     flags. Both pass.
   - Dovecot as a server was not needed: no behaviour was in dispute.
-- **Not driven from here: Thunderbird and iOS Mail.** Neither runs in a
-  container or without a person. To try by hand on the VPS, with a
-  certificate the device trusts (ACME) and `imap.listen_tls: ":993"`,
-  `submission.listen_tls: ":465"`:
-  1. Account setup. Thunderbird: manual config, IMAP `host:993`
-     SSL/TLS, "Normal password", user name the full address; SMTP
-     `host:465` SSL/TLS. iOS: Mail, Add Account, Other, IMAP, the same.
-     There is no autoconfig yet (phase 8), so both ask for the server.
-     Expect: the folder list with Inbox, Drafts, Sent, Junk and Trash
-     recognised as such (special-use), not as plain folders.
-  2. First sync of a mailbox with a few hundred messages: counts and
+- **Thunderbird and iOS Mail.** Thunderbird is driven in the lab since
+  phase 7b: sync, new mail by IDLE, flags, move and copy, delete and
+  empty Trash, folders, send, reply, drafts, both ways against JMAP.
+  iOS Mail does not run without a person and a device. To try by hand on
+  the VPS, with a certificate the device trusts (ACME) and
+  `imap.listen_tls: ":993"`, `submission.listen_tls: ":465"`:
+  1. iOS Mail, all of it: Mail, Add Account, Other, IMAP, `host:993`
+     with SSL, user name the full address, SMTP `host:465`. Expect
+     Inbox, Drafts, Sent, Junk and Trash recognised as such; counts and
      unread counts equal to the webmail; a message with attachments and
-     one with non-ASCII subject and sender open correctly.
-  3. New mail without refresh: leave the inbox open, send mail from
-     outside. Thunderbird should use IDLE on the selected folder; iOS may
-     fetch on its schedule instead. Note which it does and how long it
+     one with a non-ASCII subject open correctly; flag, read, move,
+     delete and send show in the webmail and the reverse. Note whether
+     new mail comes by IDLE or on its fetch schedule, and how long it
      takes.
-  4. Flag and read: mark read and flag in the client, see it in the
-     webmail within a second or two; and the reverse, without touching
-     the client.
-  5. Move a message to another folder, and several at once; check the
-     webmail shows the same Email in the new mailbox. Drag a message
-     onto a folder it is already in (Thunderbird allows copy with Ctrl):
-     nothing should double.
-  6. Delete: to Trash, then "Empty Trash" (Thunderbird: also "Compact").
-     The message must be gone in the webmail. Check Thunderbird's
-     setting "When I delete a message": "Just mark it as deleted" shows
-     the `$deleted` keyword in JMAP; the webmail does not hide such
-     mail.
-  7. Create, rename, nest and delete a folder; a folder with a
-     non-ASCII name; subscribe and unsubscribe (Thunderbird only shows
+  2. Thunderbird's account dialog: manual config, IMAP `host:993`
+     SSL/TLS, "Normal password", SMTP `host:465` SSL/TLS. The lab starts
+     from a finished profile. There is no autoconfig yet (phase 8), so
+     the dialog asks for the server.
+  3. Thunderbird's setting "When I delete a message: Just mark it as
+     deleted": the `$deleted` keyword shows in JMAP and the webmail does
+     not hide such mail. The lab uses the default, move to Trash.
+  4. Subscribe and unsubscribe in Thunderbird's dialog (it only shows
      subscribed folders: one made in the webmail is subscribed, one made
      over IMAP by another client is not until that client subscribes).
-  8. Send from the client: the copy lands in Sent (APPEND), a draft is
-     saved to Drafts and replaced while typing.
-  9. Search in the client, in subjects and in bodies, and note the time
-     on a large mailbox (body search reads every message).
-  10. Leave both clients connected for a day: no repeated logins in the
-      log (the 30 minute timer against the client's keep-alive), no
-      duplicate messages, and the login failure counter not tripped by a
-      client that retries a stale password.
+  5. Search in the client, in subjects and in bodies, and the time on a
+     large mailbox (body search reads every message).
+  6. Leave both clients connected for a day: no repeated logins in the
+     log (the 30 minute timer against the client's keep-alive), no
+     duplicate messages, and the login failure counter not tripped by a
+     client that retries a stale password.
 - **Not handled.**
   - No `\Recent`, `QRESYNC`, `SORT`, `THREAD`, `MULTIAPPEND`, `CATENATE`,
     `NOTIFY`, `COMPRESS`, quotas or ACLs. `BINARY` is `FETCH` only.
@@ -1761,16 +1750,174 @@ Built as follows:
   - Logging out at the provider: robinmail ends its own session, not the
     provider's, and does not hear when the provider ends its session
     (no front- or back-channel logout).
-  - The first exit line as written: Thunderbird itself was not driven.
-    Two other IMAP clients were (the lab), and the manual check below is
-    for Thunderbird and iOS Mail.
-- **By hand, with a real client**: add the account in Thunderbird with
-  the account password while it has no app password (works); make an app
-  password in the webmail; Thunderbird asks for a password at the next
-  check (the old one is refused, the open connections were closed with
-  BYE); enter the app password for IMAP and SMTP (works); revoke it in
-  the webmail and see Thunderbird ask again.
+  - The first exit line as written, Thunderbird with an app password,
+    was first checked in phase 7b.
+- **By hand, with a real client** (iOS Mail, Apple Mail; Thunderbird does
+  this in the lab now): add the account with the account password while
+  it has no app password (works); make an app password in the webmail;
+  the client asks for a password at the next check (the old one is
+  refused, the open connections were closed); enter the app password for
+  IMAP and SMTP (works); revoke it in the webmail and see the client ask
+  again.
 
+### Phase 7b: Thunderbird in the lab — done
+
+Phases 6 and 7 both ended on "Thunderbird syncs" and "Thunderbird logs in
+with an app password", and both were checked with other clients and a
+list of things to try by hand. This phase runs the real program.
+
+- Thunderbird in a container of the lab, driven by the harness.
+- Every case looks at both sides: what Thunderbird shows, what robinmail
+  has over JMAP, and the IMAP and SMTP traces for what went over the wire.
+- Exit: `make lab-test` passes with the Thunderbird cases in it.
+
+Built as follows:
+
+- **Thunderbird 153.7.0 ESR**, Debian 13's package
+  (`1:153.7.0esr-1~deb13u1`, pinned in `contrib/lab/thunderbird/Dockerfile`;
+  the build fails on the version when Debian replaces it), started with
+  `--headless`: no Xvfb, no display. The container `thunderbird`
+  (10.77.25.7) only waits; a test writes a profile and starts the program
+  on it (`/lab/thunderbird.sh`). `policies.json` makes the lab CA a
+  trusted authority and turns updates and telemetry off; the lab has no
+  way out for the rest.
+- **The profile** is a `user.js` the harness writes: one IMAP account
+  (`mx.robin.test:993`, TLS, normal password) and one SMTP server (465,
+  TLS) for a user the test just made. Nothing happens until the test
+  asks: no login at startup, no timer that checks for mail, no download
+  of bodies for offline use, no junk filter, no index, no first-run pages
+  or questions. The password is not in the profile: the harness stores it
+  in Thunderbird's login manager once it runs, which is what the password
+  dialog does with "remember", and replaces it there when a case needs
+  another one.
+- **Driven over Marionette** (`--marionette --remote-allow-system-access`),
+  with a client in Go on the standard library
+  (`internal/labtest/marionette_test.go`): the protocol is
+  `length:JSON` frames and the harness needs four commands, so Mozilla's
+  Python driver would have cost a Python in the image and a second
+  language in the harness for nothing. The connection is the standard
+  input and output of a `socat` that `docker compose exec` runs in the
+  container: Marionette's port never leaves it. Scripts run with the
+  privileges of Thunderbird's own code after a library
+  (`internal/labtest/thunderbird.js`) that calls its mail interfaces, not
+  a WebExtension: `nsIImapService` to list and select folders, the folder
+  and message database for the lists, the message service to open a
+  message, the copy service to move and copy, the folder's own
+  `deleteMessages`, `emptyTrash`, `createSubfolder`, `rename` and
+  `deleteSelf`, and a real compose window (`OpenComposeWindowWithParams`,
+  `cmd_sendNow`, `SaveAsDraft`, `OpenComposeWindow` for a reply), so
+  sending, filing in Sent and saving drafts run the code a person's click
+  runs.
+- **What it took.** `updateFolderWithListener` forgets its listener when
+  the folder is busy; `nsIImapService.selectFolder` does not.
+  `Components` does not exist in Marionette's sandbox. Marionette's own
+  handling of dialogs misses the ones a compose window opens, so every
+  script races a watcher for `commonDialog` windows and the harness hears
+  what Thunderbird asks ("Login to server mx.robin.test with username …
+  failed. [Enter New Password] [Cancel] [Retry]"). `MOZ_LOG=IMAP:4`
+  writes Thunderbird's own protocol log next to the profile; the tests
+  print its end when they fail, and the replay tests below were written
+  from it. `TestThunderbirdEval` runs a script file in the Thunderbird a
+  test left running (`ROBINMAIL_TB_KEEP=1`).
+- **The cases** (`internal/labtest/thunderbird*_test.go`; `make
+  thunderbird-test` runs only these, about 70 seconds). All pass.
+
+  | Case | Result |
+  |---|---|
+  | First sync of 300 messages in 9 folders (one nested, names with umlauts, `&` and Japanese), flags and tags, ten Emails in two mailboxes: lists, counts, unread counts and flags equal to JMAP, an Email with two labels in both folders, five messages opened and compared byte for byte, the five roles recognised | pass; the sync takes 0.4 s over five connections |
+  | Mark read, flag, tag (`$label1`), and off again, one and several: seen over JMAP | pass |
+  | A flag, a read mark and a tag set over JMAP show in the Inbox | pass, without a refresh, 2 to 3 s |
+  | Move and copy, one and several; the Email keeps its id; a copy into a folder it is in doubles nothing | pass |
+  | A move and a second label made over JMAP show (out of the Inbox without a refresh) | pass |
+  | Delete to Trash, empty Trash (the Email is destroyed); a destroy over JMAP shows | pass |
+  | Create, nest, rename and delete a folder with a non-ASCII name; its messages keep their other labels | pass |
+  | A mailbox made over JMAP shows; one destroyed there | pass; the destroyed one goes at Thunderbird's next start |
+  | Send with an attachment to a local user and to Postfix; in Sent exactly once | pass |
+  | Reply: `In-Reply-To`, `References`, the quote; the original is `$answered` | pass |
+  | Save a draft, change it, save again: one draft, the second version | pass |
+  | Mail delivered over SMTP by Postfix shows without a refresh | pass, 0.1 to 1.1 s after delivery |
+  | Account password works; refused for IMAP and SMTP once the account has an app password, Thunderbird shows the failed login; app password works; revoked, Thunderbird shows the failed login again, also with a second app password left; account password back when none is left | pass |
+  | robinmail restarts under an idle Thunderbird: the next click logs in again, the mail that came meanwhile is there once | pass |
+
+- **What Thunderbird does on the wire.**
+
+  | | |
+  |---|---|
+  | Login | `authenticate PLAIN` and waits for the challenge, though `SASL-IR` is offered; then `ID ("name" "Thunderbird" "version" "153.7.0")` and `ENABLE UTF8=ACCEPT` on every connection |
+  | Connections | up to five, each parked in `IDLE` on the folder it selected last; a first sync used five |
+  | Folder list | `list (subscribed) "" "*" return (special-use)`, then `list "" "INBOX"`; it takes Drafts, Sent, Junk and Trash from the special-use attributes |
+  | Sync | `select`, `UID fetch 1:* (FLAGS)`, then one `UID fetch` of `UID RFC822.SIZE FLAGS BODY.PEEK[HEADER.FIELDS (…)]` for all new UIDs; later `noop` and `UID fetch <next>:* (FLAGS)` |
+  | `CONDSTORE` | not used (no `CHANGEDSINCE`, no `MODSEQ`): changed flags reach it as the untagged `FETCH` of `IDLE` and `NOOP`, for which it needs the UID in them |
+  | Opening a message | `UID fetch n (UID RFC822.SIZE BODY[])`, which sets `\Seen` |
+  | Flags | `uid store n +Flags (\Seen)`, `+FLAGS ($label1)`; tags are the keywords `$label1` to `$label5`; it reads our lower-case `$forwarded` as forwarded |
+  | Move, copy | `uid move`, `uid copy` (no `COPY` plus `EXPUNGE`) |
+  | Delete | `uid move n "Trash"`; empty Trash is `store 1:* +FLAGS.SILENT (\Deleted)`, `expunge`, `list "" "Trash/*"` and `delete` of each folder in it |
+  | Folders | `create` then `subscribe`; rename is `close`, `rename`, `subscribe` to the new names, `unsubscribe` from the old ones; deleting a folder is `rename` into `Trash/` |
+  | Sent | after the SMTP server took the message: `append "Sent" (\Seen) UTF8 (~{n+}` |
+  | Drafts | `append "Drafts" (\Draft) UTF8 (~{n+}`; a second save appends the new version, then `uid store 1 +Flags (\Seen \Deleted)` and `uid expunge 1` |
+  | Submission | port 465, `EHLO [10.77.25.7]`, `AUTH PLAIN` with the initial response, `MAIL FROM:<…> BODY=8BITMIME SIZE=n`; `QUIT` only after five idle seconds: until then the next message goes out on the same connection without a new `AUTH` (up to ten per connection) |
+
+- **Fixed in robinmail.** A submission session stayed authorized after
+  its login was withdrawn. Thunderbird sent mail with the account
+  password after the account had got its first app password, on the
+  connection it had kept from the message before (it keeps one for five
+  seconds; another client may keep it for as long as the server lets
+  it), and would have with a revoked app password. Such a session is now told `421 4.7.0 … This
+  login was withdrawn` and closed, at once when it waits for a command,
+  the way an IMAP session gets its `BYE` (`smtp.RevocableAuthenticator`,
+  the same watch on `auth_seq`). 421 and not a refusal at `MAIL`: a
+  client takes a closed connection in its stride, connects again and is
+  refused at `AUTH`, where it asks its user for a password. Tests without
+  Docker: `internal/smtp/interop_thunderbird_test.go` replays the
+  session; `TestAuthEndToEnd` holds a submission session open on one node
+  over an app password made and revoked on the other.
+- **Nothing to fix in IMAP.** `internal/imap/interop_thunderbird_test.go`
+  replays Thunderbird's commands as it spells them, from login to empty
+  Trash, so that it stays so.
+- **Decided.**
+  - Sent: robinmail files no copy of a message that comes in over SMTP
+    submission. The client does, with `APPEND`, as every mail client
+    expects to; a copy of ours next to it would double every sent
+    message. A message sent from the
+    webmail is filed by the webmail. The lab checks: one Email with that
+    Message-ID, in Sent, seen.
+  - `UNSUBSCRIBE` of a name that is no longer there answers OK.
+    Thunderbird sends it after every `RENAME` and after the `DELETE`s of
+    empty Trash. RFC 3501 6.3.7 has NO for a subscription that cannot be
+    removed; one that went with its mailbox is removed. Tolerant, or
+    every rename would end in an error box.
+  - Untagged `FETCH` carries the UID once a session used a `UID`
+    command, also in `IDLE` (RFC 3501 asks for it only in the answer to
+    a `UID` command). Thunderbird takes flag changes from it.
+- **Seen and left.**
+  - Thunderbird keeps showing a mailbox that was destroyed over JMAP
+    until it starts again: it lists the folders, gets the answer without
+    that one, and keeps its own.
+  - It counts an Email with two labels in both folders, as phase 6 said
+    it would.
+  - A Thunderbird with a password that is no longer good costs two
+    failed logins for every check of the mail (it tries IMAP twice) and
+    two for every message it tries to send (`AUTH PLAIN`, then `AUTH
+    LOGIN`). Five clicks reach the limit of ten per address, which then
+    refuses the right password too for fifteen minutes; Thunderbird
+    shows robinmail's words, "too many failed logins; try again later".
+    The harness met the limit of 50 per IP itself and now forgets that
+    counter when it is half full.
+- **Fixed in the harness.** `dropQueued`, from phase 5c, never deleted
+  anything: rqlite's command line ignores a statement given as an
+  argument. It goes in on standard input now, and the undeliverable
+  messages of the TLS cases no longer stay in the lab's queue.
+- **The development instance** got a database of its own on the way
+  (`rqlite-dev`, 127.0.0.1:4005, in `contrib/compose/compose.yaml`): it
+  shared the one on 4001 with the Go tests, which fill it with throwaway
+  domains and whose servers' queue workers took its rows. `seed.sh`
+  points an old `dev/robinmail.json` at the new one and says what to do
+  once; nothing is migrated.
+- **Stays manual.** iOS Mail, Apple Mail and Outlook: none runs in a
+  container. Thunderbird's account dialog and autoconfig, which phase 8
+  adds; its subscribe dialog, its search, the "just mark it as deleted"
+  setting, and a connection left open for a day (the list in phase 6).
+  OAuth2 in Thunderbird: robinmail offers none.
 ### Phase 8: completeness
 
 - Aliases and catch-all addresses.
