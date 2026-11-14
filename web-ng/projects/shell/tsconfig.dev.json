@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "paths": {
+      "@robinmail/jmap": [
+        "../../projects/jmap/src/public-api.ts"
+      ],
+      "@robinmail/webmail": [
+        "../../projects/webmail/src/public-api.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "../jmap/src/**/*.ts",
+    "../webmail/src/**/*.ts"
+  ],
+  "exclude": [
+    "../**/*.spec.ts",
+    "../jmap/src/lib/test/**"
+  ]
+}

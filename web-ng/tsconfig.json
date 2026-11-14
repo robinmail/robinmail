@@ -1,0 +1,56 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": false,
+    "noImplicitReturns": true,
+    "paths": {
+      "@robinmail/jmap": [
+        "./dist/jmap"
+      ],
+      "@robinmail/webmail": [
+        "./dist/webmail"
+      ]
+    },
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "ES2022",
+    "module": "preserve",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ]
+  },
+  "angularCompilerOptions": {
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true
+  },
+  "files": [],
+  "references": [
+    {
+      "path": "./projects/jmap/tsconfig.lib.json"
+    },
+    {
+      "path": "./projects/jmap/tsconfig.spec.json"
+    },
+    {
+      "path": "./projects/webmail/tsconfig.lib.json"
+    },
+    {
+      "path": "./projects/webmail/tsconfig.spec.json"
+    },
+    {
+      "path": "./projects/shell/tsconfig.app.json"
+    },
+    {
+      "path": "./projects/shell/tsconfig.dev.json"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../out-tsc/spec",
+    "types": [
+      "vitest/globals",
+      "node"
+    ],
+    "paths": {
+      "@robinmail/jmap": [
+        "../../projects/jmap/src/public-api.ts"
+      ],
+      "@robinmail/webmail": [
+        "../../projects/webmail/src/public-api.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.d.ts",
+    "src/**/*.spec.ts"
+  ]
+}

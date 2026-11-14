@@ -1,0 +1,16 @@
+{
+  "name": "@robinmail/webmail",
+  "version": "0.0.1",
+  "peerDependencies": {
+    "@angular/common": "^22.2.0",
+    "@angular/core": "^22.2.0",
+    "@angular/cdk": "^22.2.0",
+    "@angular/forms": "^22.2.0",
+    "@angular/router": "^22.2.0",
+    "@robinmail/jmap": "^0.0.1"
+  },
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "sideEffects": false
+}

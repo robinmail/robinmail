@@ -1,0 +1,139 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "cli": {
+    "packageManager": "npm",
+    "analytics": false
+  },
+  "newProjectRoot": "projects",
+  "projects": {
+    "jmap": {
+      "projectType": "library",
+      "root": "projects/jmap",
+      "sourceRoot": "projects/jmap/src",
+      "prefix": "rm",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:ng-packagr",
+          "configurations": {
+            "production": {
+              "tsConfig": "projects/jmap/tsconfig.lib.prod.json"
+            },
+            "development": {
+              "tsConfig": "projects/jmap/tsconfig.lib.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "projects/jmap/tsconfig.spec.json"
+          }
+        }
+      }
+    },
+    "webmail": {
+      "projectType": "library",
+      "root": "projects/webmail",
+      "sourceRoot": "projects/webmail/src",
+      "prefix": "rm",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:ng-packagr",
+          "configurations": {
+            "production": {
+              "tsConfig": "projects/webmail/tsconfig.lib.prod.json"
+            },
+            "development": {
+              "tsConfig": "projects/webmail/tsconfig.lib.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "projects/webmail/tsconfig.spec.json"
+          }
+        }
+      }
+    },
+    "shell": {
+      "projectType": "application",
+      "root": "projects/shell",
+      "sourceRoot": "projects/shell/src",
+      "prefix": "rm",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "projects/shell/src/main.ts",
+            "tsConfig": "projects/shell/tsconfig.app.json",
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "projects/shell/public"
+              }
+            ],
+            "styles": [
+              "projects/shell/src/styles.css"
+            ],
+            "outputPath": {
+              "base": "dist/shell",
+              "browser": ""
+            }
+          },
+          "configurations": {
+            "production": {
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "500kB",
+                  "maximumError": "1MB"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "4kB",
+                  "maximumError": "8kB"
+                }
+              ],
+              "outputHashing": "all",
+              "optimization": {
+                "scripts": true,
+                "styles": {
+                  "minify": true,
+                  "inlineCritical": false
+                },
+                "fonts": false
+              }
+            },
+            "development": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true,
+              "tsConfig": "projects/shell/tsconfig.dev.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "configurations": {
+            "production": {
+              "buildTarget": "shell:build:production"
+            },
+            "development": {
+              "buildTarget": "shell:build:development"
+            }
+          },
+          "defaultConfiguration": "development",
+          "options": {
+            "port": 4200,
+            "proxyConfig": "proxy.conf.mjs"
+          }
+        }
+      }
+    }
+  }
+}
