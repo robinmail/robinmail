@@ -100,7 +100,7 @@ export async function destroyBySubject(page: Page, subject: string, unread: stri
   })
 }
 
-const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:sieve']
+const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:sieve', 'urn:ietf:params:jmap:vacationresponse']
 
 // jmap sends method calls with the page's session and returns the
 // arguments of each response. accountId is filled in.

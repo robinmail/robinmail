@@ -279,6 +279,7 @@ func (b *batch) change(typ, sel string, kv ...any) {
 //	AddLoginFailure        not again: it counts
 //	CreateSieveScript, UpdateSieveScript, ActivateSieveScript,
 //	DestroySieveScript     not again: counters, modseq, and guards
+//	SetVacationResponse    not again: modseq, and the ifInState guard
 //	VacationOnce           not again: its answer is whether this run took
 //	                       the turn; a second run would say no
 //	TrimVacationSent       again: a delete by condition

@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 10
+const schemaVersion = 11
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -160,6 +160,7 @@ var schema = []string{
 	sqlEmailFTS, sqlEmailFTSDelete,
 	sqlAliasTable, sqlAliasDomain, sqlAliasTarget,
 	sqlSieveTable, sqlSieveActive, sqlVacationSentTable, sqlVacationSentAt,
+	sqlVacationTable,
 
 	`INSERT INTO schema_version (version) SELECT ` + fmt.Sprint(schemaVersion) + ` WHERE NOT EXISTS (SELECT 1 FROM schema_version)`,
 }
@@ -230,6 +231,8 @@ var migrations = map[int64][]string{
 		`ALTER TABLE account ADD COLUMN next_sieve INTEGER NOT NULL DEFAULT 1`,
 		sqlSieveTable, sqlSieveActive, sqlVacationSentTable, sqlVacationSentAt,
 	},
+	// 11: JMAP's VacationResponse.
+	10: {sqlVacationTable},
 }
 
 const (
@@ -293,6 +296,20 @@ const (
 		PRIMARY KEY (account_id, key)
 	) WITHOUT ROWID`
 	sqlVacationSentAt = `CREATE INDEX IF NOT EXISTS vacation_sent_at ON vacation_sent (at)`
+
+	// The vacation response of an account (RFC 8621 8): at most one row.
+	// from_at and to_at bound when it applies; NULL is no bound. A NULL
+	// subject or body is the server's to fill in.
+	sqlVacationTable = `CREATE TABLE IF NOT EXISTS vacation (
+		account_id TEXT NOT NULL PRIMARY KEY,
+		enabled    INTEGER NOT NULL DEFAULT 0,
+		from_at    INTEGER,
+		to_at      INTEGER,
+		subject    TEXT,
+		text_body  TEXT,
+		html_body  TEXT,
+		modseq     INTEGER NOT NULL
+	) WITHOUT ROWID`
 
 	// A web login. token_hash is the SHA-256 of the token in the cookie, so
 	// a copy of this table logs nobody in. id is what the user's list of

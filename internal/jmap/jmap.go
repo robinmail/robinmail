@@ -36,7 +36,7 @@ const (
 )
 
 // capabilities are the capabilities a request may name in "using".
-var capabilities = map[string]bool{CapCore: true, CapMail: true, CapSubmission: true, CapSieve: true}
+var capabilities = map[string]bool{CapCore: true, CapMail: true, CapSubmission: true, CapSieve: true, CapVacation: true}
 
 // Store is what the handler needs from storage. *store.Store has it.
 type Store interface {
@@ -66,6 +66,9 @@ type Store interface {
 	CreateIdentity(ctx context.Context, account string, i store.Identity, ifState int64) (store.Identity, int64, error)
 	UpdateIdentity(ctx context.Context, account string, id int64, u store.IdentityUpdate, ifState int64) (int64, error)
 	DestroyIdentity(ctx context.Context, account string, id, ifState int64) (int64, error)
+
+	VacationResponse(ctx context.Context, account string) (store.VacationResponse, error)
+	SetVacationResponse(ctx context.Context, account string, v store.VacationResponse, ifState int64) (int64, error)
 
 	SieveScripts(ctx context.Context, account string) ([]store.SieveScript, error)
 	CreateSieveScript(ctx context.Context, account, name string, content []byte, ifState int64) (store.SieveScript, int64, error)
@@ -279,7 +282,7 @@ func baseURL(r *http.Request) string {
 // sessionState changes when the session object would (RFC 8620 2). Ours
 // depends on the user and on the limits and capabilities of this build.
 func (h *Handler) sessionState(u User) string {
-	b, _ := json.Marshal([]any{u, h.limits, store.SortProperties, MaxMailboxDepth, sieveCapability(), "3"})
+	b, _ := json.Marshal([]any{u, h.limits, store.SortProperties, MaxMailboxDepth, sieveCapability(), "4"})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:8])
 }
@@ -313,6 +316,8 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 			CapSubmission: map[string]any{},
 			// RFC 9661 1.3: the name and version of the Sieve implementation.
 			CapSieve: map[string]any{"implementation": "robinmail internal/sieve"},
+			// RFC 8621 1.3.3: an empty object, here and in the account.
+			CapVacation: map[string]any{},
 		},
 		"accounts": map[string]any{
 			u.AccountID: map[string]any{
@@ -326,16 +331,18 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 					// the server sets, in which it can be cancelled.
 					CapSubmission: map[string]any{"maxDelayedSend": 0, "submissionExtensions": map[string]any{}},
 					CapSieve:      sieveCapability(),
+					CapVacation:   map[string]any{},
 				},
 			},
 		},
-		"primaryAccounts": map[string]any{CapCore: u.AccountID, CapMail: u.AccountID, CapSubmission: u.AccountID, CapSieve: u.AccountID},
-		"username":        u.Username,
-		"apiUrl":          base + "/jmap/api",
-		"downloadUrl":     base + "/jmap/download/{accountId}/{blobId}/{name}?type={type}",
-		"uploadUrl":       base + "/jmap/upload/{accountId}/",
-		"eventSourceUrl":  base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
-		"state":           h.sessionState(u),
+		"primaryAccounts": map[string]any{CapCore: u.AccountID, CapMail: u.AccountID, CapSubmission: u.AccountID, CapSieve: u.AccountID,
+			CapVacation: u.AccountID},
+		"username":       u.Username,
+		"apiUrl":         base + "/jmap/api",
+		"downloadUrl":    base + "/jmap/download/{accountId}/{blobId}/{name}?type={type}",
+		"uploadUrl":      base + "/jmap/upload/{accountId}/",
+		"eventSourceUrl": base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
+		"state":          h.sessionState(u),
 	})
 }
 

@@ -25,6 +25,9 @@ type FilterStore interface {
 	// VacationOnce answers whether an automatic reply with this key may
 	// go out now, and remembers a yes.
 	VacationOnce(ctx context.Context, account, key string, period time.Duration) (bool, error)
+	// VacationResponse is the account's automatic reply as set over JMAP
+	// (RFC 8621 8).
+	VacationResponse(ctx context.Context, account string) (store.VacationResponse, error)
 }
 
 // scriptCache keeps parsed scripts by the hash of their text, so a script
@@ -124,7 +127,9 @@ func (d *Deliverer) filter(ctx context.Context, acct store.Account, in *incoming
 		return plan{}, errTempFail
 	}
 	if script == nil {
-		return plan{keep: true}, nil
+		p := plan{keep: true}
+		d.vacationResponse(ctx, acct, in, &p)
+		return p, nil
 	}
 	var boxes []store.Mailbox
 	loaded := false
@@ -167,6 +172,7 @@ func (d *Deliverer) filter(ctx context.Context, acct store.Account, in *incoming
 			p.vacation = a.Vacation
 		}
 	}
+	d.vacationResponse(ctx, acct, in, &p)
 	return p, nil
 }
 

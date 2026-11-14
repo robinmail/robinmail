@@ -7,6 +7,7 @@ import type { Id, Invocation, MethodName, Methods, ResultReference, Session } fr
 
 export const USING = [
   'urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:sieve',
+  'urn:ietf:params:jmap:vacationresponse',
 ]
 
 // HttpError is a response that is not JMAP: 401 without a session, 5xx.

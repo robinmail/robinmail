@@ -215,3 +215,60 @@ func (d *Deliverer) vacation(ctx context.Context, acct store.Account, in *incomi
 	}
 	in.log.Info("automatic reply queued", "account", acct.Address, "to", clean(in.from), "days", days)
 }
+
+// The vacation response of JMAP (RFC 8621 8) is the same automatic reply
+// by another way in: the user sets a text and two dates instead of
+// writing a script. A script that has its own vacation action, or that
+// refuses the message, has said what it wants; otherwise an enabled
+// response whose dates fit is added to the plan, and from there on it is
+// the vacation action, rules and all.
+
+// vacationResponseHandle names the JMAP reply for "once per sender":
+// changing its text does not make everybody hear from it again.
+const vacationResponseHandle = "jmap-vacationresponse"
+
+// defaultVacationText is the body when the user gave none (RFC 8621 8:
+// "an appropriate default body SHOULD be generated").
+const defaultVacationText = "This is an automatic reply: I am away and will read your message when I am back.\r\n"
+
+func (d *Deliverer) vacationResponse(ctx context.Context, acct store.Account, in *incoming, p *plan) {
+	if d.Filters == nil || p.vacation != nil || p.reject != nil {
+		return
+	}
+	v, err := d.Filters.VacationResponse(ctx, acct.ID)
+	if err != nil {
+		// The message matters more than the reply to it.
+		in.log.Warn("reading the vacation response failed", "account", acct.Address, "err", err)
+		return
+	}
+	if v.Active(d.now()) {
+		p.vacation = vacationReply(v)
+	}
+}
+
+// vacationReply turns a vacation response into the vacation action.
+func vacationReply(v store.VacationResponse) *sieve.VacationReply {
+	r := &sieve.VacationReply{Handle: vacationResponseHandle}
+	if v.Subject != nil {
+		r.Subject = message.OneLine(*v.Subject, 250)
+	}
+	var text string
+	switch {
+	case v.TextBody != nil:
+		text = *v.TextBody
+	case v.HTMLBody != nil:
+		// "the server SHOULD generate a plaintext body part from the
+		// htmlBody".
+		text = message.HTMLText(*v.HTMLBody, 64<<10)
+	default:
+		text = defaultVacationText
+	}
+	if v.HTMLBody == nil {
+		r.Reason = text
+		return r
+	}
+	entity := message.Build(nil, &message.BuildPart{Type: "multipart/alternative", SubParts: []*message.BuildPart{
+		{Type: "text/plain", Body: []byte(text)}, {Type: "text/html", Body: []byte(*v.HTMLBody)}}})
+	r.MIME, r.Reason = true, strings.TrimPrefix(string(entity), "MIME-Version: 1.0\r\n")
+	return r
+}

@@ -118,6 +118,9 @@ func init() {
 		"EmailSubmission/queryChanges": {CapSubmission, submissionQueryChanges},
 		"EmailSubmission/set":          {CapSubmission, submissionSet},
 
+		"VacationResponse/get": {CapVacation, vacationGet},
+		"VacationResponse/set": {CapVacation, vacationSet},
+
 		"SieveScript/get":      {CapSieve, sieveScriptGet},
 		"SieveScript/set":      {CapSieve, sieveScriptSet},
 		"SieveScript/query":    {CapSieve, sieveScriptQuery},

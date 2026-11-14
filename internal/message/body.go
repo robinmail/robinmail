@@ -256,6 +256,10 @@ func partText(p *Part, max int) string {
 	return s
 }
 
+// HTMLText is the text of an HTML document as a reader sees it, without
+// markup, scripts and styles, up to about max bytes.
+func HTMLText(src string, max int) string { return htmlText(src, max) }
+
 // PartText is the text of a text part as a reader sees it, up to about max
 // bytes: an HTML part without its markup.
 func PartText(p *Part, max int) string { return partText(p, max) }

@@ -63,6 +63,7 @@ Every mail table starts with `account_id`.
 |---|---|---|
 | `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
 | `sieve_script` | id, name, blob, size, active, created_at, modseq | Sieve scripts (RFC 9661); the script is a blob of the account; at most one per account is active |
+| `vacation` | enabled, from_at, to_at, subject, text_body, html_body, modseq | JMAP's VacationResponse: at most one row per account |
 | `vacation_sent` | key, at | automatic replies that went out: a hash of the reply and of whom it was for; trimmed after 45 days |
 | `alias` | address, target, domain, wildcard, created_at | one row per target of an alias; `address` is an address or a pattern with one `*` (`*@domain` is the catch-all); not per account |
 | `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq, next_sieve | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts` |
@@ -78,7 +79,7 @@ Every mail table starts with `account_id`.
 | `email_fts` | rowid, subject, addr, body, attach, hdr | the full-text index: an FTS5 table, contentless (the words and their places, not the text); the rowid is the account's `seq` times 2^32 plus the email id; a trigger on `email` removes a row with its email; not per account and not encrypted |
 | `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom; `$deleted` is IMAP's `\Deleted` |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
-| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission, Identity or SieveScript; op created, updated or destroyed; `at` is for trimming |
+| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission, Identity, SieveScript or VacationResponse; op created, updated or destroyed; `at` is for trimming |
 | `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
 | `submission` | id, email_id, thread_id, identity_id, message_id, blob, size, mail_from, recipients, rcpt_count, undo, queue, created_at, send_at, next_try, tries, claimed_by, claimed_until, destroyed, submit_key, modseq | outbound queue: one row per message; `recipients` is JSON with the state of each; `blob` is the message as it goes out; a node works on a row while its claim lasts |
 | `identity` | id, name, email, reply_to, bcc, text_signature, html_signature, modseq | JMAP identities; id 1 is made with the account |
@@ -1935,7 +1936,7 @@ Built as follows:
 - Exit: each item shown working with a test.
 
 Built in this order, each item committed with its tests: 1 full-text
-search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse, 5 quotas, 6 MTA-STS
+search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas, 6 MTA-STS
 serving and TLS-RPT, 7 autoconfig, 8 operations, 9 README, 10 lab and
 cluster cases.
 
@@ -2247,6 +2248,37 @@ Built as follows:
     page knows three fields and "contains"; everything else is the
     script tab. A vacation reply is made from the script; JMAP's
     VacationResponse (next item) is a second way to the same code.
+- **JMAP VacationResponse** (RFC 8621 8). Capability
+  `urn:ietf:params:jmap:vacationresponse`; the object with the id
+  `singleton` (`isEnabled`, `fromDate`, `toDate`, `subject`, `textBody`,
+  `htmlBody`); `VacationResponse/get` and `/set`, where create and
+  destroy answer `singleton`. Schema version 11, table `vacation`.
+  - **Backed by the vacation machinery of Sieve.** It is not a second
+    implementation and not a generated script: at delivery, after the
+    account's script has run, an enabled response whose dates fit
+    ("on or after" `fromDate`, "before" `toDate`) is put into the plan
+    as a vacation action, and from there it is that action: the same
+    rules (never to lists, bulk, notifications or automatic mail, only
+    to mail that names the user), the same once per sender, the same
+    reply through the Submitter with the null reverse-path. The period
+    is 7 days; the key is one fixed handle, so changing the text does
+    not make everybody hear from it again. A script that has its own
+    `vacation`, or that refuses the message, comes first.
+  - **The reply.** `subject` or else `Auto: ` and the original subject;
+    `textBody`, or text made from `htmlBody`, or a default sentence; with
+    an `htmlBody` the reply is `multipart/alternative`.
+  - **Webmail.** `/settings/vacation`: on and off, from and until (in the
+    browser's time zone, stored as UTC), subject, message. An HTML body
+    another client set is kept until the message is changed here.
+  - **Tests.** `internal/jmap` from RFC 8621 8 (the singleton, patches,
+    every refusal), `internal/store`, `internal/delivery` (dates, the
+    defaults, HTML, once per sender across a changed text, a script's
+    own vacation first), Playwright (`e2e/vacation.spec.ts`): turned on
+    in the page, a message over SMTP gets the reply with
+    `Auto-Submitted`, one with `List-Id` gets none.
+  - **Not handled.** One more read per delivered message and account
+    (the `vacation` row). The period is fixed. The reply has no
+    signature of the identity.
 
 ## Open questions
 

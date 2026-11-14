@@ -32,7 +32,7 @@ type Notifier interface {
 
 // pushTypes are the types a StateChange can name: the data types of RFC
 // 8621 that this server has, in the order they are written.
-var pushTypes = []string{"Mailbox", "Thread", "Email", "EmailDelivery", "EmailSubmission", "Identity", "SieveScript"}
+var pushTypes = []string{"Mailbox", "Thread", "Email", "EmailDelivery", "EmailSubmission", "Identity", "SieveScript", "VacationResponse"}
 
 const (
 	// DefaultMinPing and maxPing bound the ping interval a client may ask

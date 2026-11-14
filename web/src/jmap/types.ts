@@ -161,6 +161,18 @@ export interface SearchSnippet {
   preview: string | null
 }
 
+// VacationResponse (RFC 8621 8): the automatic reply of the account. There
+// is one, with the id "singleton". Dates are UTC; null is no bound.
+export interface VacationResponse {
+  id: Id
+  isEnabled: boolean
+  fromDate: string | null
+  toDate: string | null
+  subject: string | null
+  textBody: string | null
+  htmlBody: string | null
+}
+
 // SieveScript (RFC 9661 2): a script of the account. The script itself is
 // the blob; at most one script is active.
 export interface SieveScript {
@@ -305,6 +317,8 @@ export interface Methods {
     args: Omit<SetArgs<Email>, 'create'> & { create?: Record<string, EmailCreate> }
     response: SetResponse<Email>
   }
+  'VacationResponse/get': { args: GetArgs; response: GetResponse<VacationResponse> }
+  'VacationResponse/set': { args: SetArgs<VacationResponse>; response: SetResponse<VacationResponse> }
   'SieveScript/get': { args: GetArgs; response: GetResponse<SieveScript> }
   'SieveScript/set': {
     args: SetArgs<SieveScript> & { onSuccessActivateScript?: Id | null; onSuccessDeactivateScript?: boolean | null }

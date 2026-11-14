@@ -201,3 +201,47 @@ func TestMailboxPaths(t *testing.T) {
 		}
 	}
 }
+
+// RFC 8621 8: the vacation response of an account.
+func TestVacationResponse(t *testing.T) {
+	s := open(t)
+	a := account(t, s)
+	v, err := s.VacationResponse(ctx, a.ID)
+	if err != nil || v.Enabled || v.Subject != nil || v.From != nil {
+		t.Fatalf("an account that never set one: %+v, %v", v, err)
+	}
+	from, to := time.Date(2026, 12, 24, 0, 0, 0, 0, time.UTC), time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC)
+	subject, body := "Away", "Back in January."
+	before := state(t, s, a)
+	st, err := s.SetVacationResponse(ctx, a.ID, VacationResponse{Enabled: true, From: &from, To: &to, Subject: &subject, TextBody: &body}, before)
+	if err != nil || st != before+1 {
+		t.Fatalf("set: %d, %v", st, err)
+	}
+	v, err = s.VacationResponse(ctx, a.ID)
+	if err != nil || !v.Enabled || !v.From.Equal(from) || !v.To.Equal(to) || *v.Subject != subject || *v.TextBody != body || v.HTMLBody != nil {
+		t.Fatalf("read back: %+v, %v", v, err)
+	}
+	// "messages that are received on or after [fromDate]" and "before [toDate]".
+	for when, want := range map[time.Time]bool{from.Add(-time.Second): false, from: true, to.Add(-time.Second): true, to: false} {
+		if got := v.Active(when); got != want {
+			t.Errorf("Active(%s) = %v", when, got)
+		}
+	}
+	if _, err := s.SetVacationResponse(ctx, a.ID, VacationResponse{}, before); !errors.Is(err, ErrStateMismatch) {
+		t.Errorf("ifInState: %v", err)
+	}
+	// Off again, and without bounds: on whenever enabled.
+	if _, err := s.SetVacationResponse(ctx, a.ID, VacationResponse{}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := s.VacationResponse(ctx, a.ID); v.Enabled || v.From != nil || v.Subject != nil || v.Active(from) {
+		t.Errorf("after turning it off: %+v", v)
+	}
+	if !(VacationResponse{Enabled: true}).Active(from) {
+		t.Error("enabled without dates is not active")
+	}
+	c, err := s.Changes(ctx, a.ID, before)
+	if err != nil || c.Other["VacationResponse"] == nil || len(c.Other["VacationResponse"].Updated) != 1 {
+		t.Errorf("changes: %+v, %v", c.Other, err)
+	}
+}

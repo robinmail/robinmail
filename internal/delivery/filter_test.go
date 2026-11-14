@@ -41,6 +41,7 @@ type fakeFilters struct {
 	scripts map[string]string // account id -> script
 	boxes   map[string][]store.Mailbox
 	sent    map[string]time.Time // vacation keys
+	away    map[string]store.VacationResponse
 	now     func() time.Time
 	fail    error
 	reads   int
@@ -69,6 +70,10 @@ func (f *fakeFilters) CreateMailbox(_ context.Context, account string, parent in
 	m := store.Mailbox{ID: id + 1, ParentID: parent, Name: name}
 	f.boxes[account] = append(f.boxes[account], m)
 	return m, nil
+}
+
+func (f *fakeFilters) VacationResponse(_ context.Context, account string) (store.VacationResponse, error) {
+	return f.away[account], f.fail
 }
 
 func (f *fakeFilters) VacationOnce(_ context.Context, account, key string, period time.Duration) (bool, error) {
@@ -478,5 +483,88 @@ if header :contains "subject" "lunch" { vacation "I'm out and can't meet for lun
 	e.deliver(t, "mike@example.test", strings.Replace(lunch, "lunch", "supper", 1))
 	if len(e.replies) != 2 {
 		t.Errorf("two reasons without a handle: %d replies", len(e.replies))
+	}
+}
+
+// RFC 8621 8: the vacation response set over JMAP is sent by the rules of
+// the vacation action, while it is enabled and between its dates.
+func TestVacationResponseAtDelivery(t *testing.T) {
+	str := func(s string) *string { return &s }
+	msg := func(n int) string {
+		return fmt.Sprintf("From: Bob <a@sender.test>\r\nTo: mike@example.test\r\nSubject: Question %d\r\nMessage-ID: <v%d@sender.test>\r\n\r\nx\r\n", n, n)
+	}
+	e := filterSetup(t, "")
+	from, to := e.clock.Add(-time.Hour), e.clock.Add(time.Hour)
+	e.filters.away = map[string]store.VacationResponse{"acct-mike": {Enabled: true, From: &from, To: &to,
+		Subject: str("Out of office"), TextBody: str("Back on Monday.")}}
+	if err := e.deliver(t, "mike@example.test", msg(1)); err != nil || len(e.replies) != 1 || len(e.st.got) != 1 {
+		t.Fatalf("enabled: %v, %d replies, %d stored", err, len(e.replies), len(e.st.got))
+	}
+	m := message.Parse([]byte(e.replies[0].raw))
+	subject, _ := message.Get(m.Headers, "Subject")
+	auto, _ := message.Get(m.Headers, "Auto-Submitted")
+	if strings.TrimSpace(subject) != "Out of office" || strings.TrimSpace(auto) != "auto-replied" || m.BodyText(100) != "Back on Monday." {
+		t.Errorf("the reply:\n%s", e.replies[0].raw)
+	}
+	// Once per sender, also after the text changed.
+	e.filters.away["acct-mike"] = store.VacationResponse{Enabled: true, TextBody: str("Back on Tuesday.")}
+	if e.deliver(t, "mike@example.test", msg(2)); len(e.replies) != 1 {
+		t.Errorf("a second reply to the same sender: %d", len(e.replies))
+	}
+	// The rules of RFC 3834 hold for it as for a script's vacation.
+	list := strings.Replace(msg(3), "Subject:", "List-Id: <x.example>\r\nSubject:", 1)
+	other := env("mike@example.test")
+	other.From = "carl@elsewhere.test"
+	if e.d.Deliver(context.Background(), other, []byte(list)); len(e.replies) != 1 {
+		t.Errorf("a reply to list mail: %d", len(e.replies))
+	}
+
+	// Not enabled, before fromDate, at toDate: no reply.
+	for name, v := range map[string]store.VacationResponse{
+		"not enabled":     {TextBody: str("x")},
+		"before fromDate": {Enabled: true, From: &to},
+		"at toDate":       {Enabled: true, To: &e.clock},
+	} {
+		e := filterSetup(t, "")
+		e.filters.away = map[string]store.VacationResponse{"acct-mike": v}
+		if e.deliver(t, "mike@example.test", msg(1)); len(e.replies) != 0 {
+			t.Errorf("%s: %d replies", name, len(e.replies))
+		}
+	}
+
+	// Without a subject and a body the server fills them in; with HTML
+	// the reply has both forms, the text made from the HTML.
+	e = filterSetup(t, "")
+	e.filters.away = map[string]store.VacationResponse{"acct-mike": {Enabled: true}}
+	e.deliver(t, "mike@example.test", msg(1))
+	m = message.Parse([]byte(e.replies[0].raw))
+	if subject, _ := message.Get(m.Headers, "Subject"); strings.TrimSpace(subject) != "Auto: Question 1" || !strings.Contains(m.BodyText(200), "automatic reply") {
+		t.Errorf("defaults:\n%s", e.replies[0].raw)
+	}
+	e = filterSetup(t, "")
+	e.filters.away = map[string]store.VacationResponse{"acct-mike": {Enabled: true, HTMLBody: str("<p>Back on <b>Monday</b>.</p><script>x()</script>")}}
+	e.deliver(t, "mike@example.test", msg(1))
+	m = message.Parse([]byte(e.replies[0].raw))
+	if m.Root.Type != "multipart/alternative" || len(m.Leaves) != 2 || m.Leaves[1].Type != "text/html" ||
+		strings.TrimSpace(m.BodyText(100)) != "Back on Monday." || strings.Count(e.replies[0].raw, "MIME-Version") != 1 {
+		t.Errorf("an HTML response:\n%s", e.replies[0].raw)
+	}
+
+	// A script's own vacation comes first; one that refuses the message
+	// gets no reply sent either.
+	e = filterSetup(t, "")
+	e.filters.away = map[string]store.VacationResponse{"acct-mike": {Enabled: true, TextBody: str("from JMAP")}}
+	e.filters.scripts["acct-mike"] = `require "vacation"; vacation "from the script";`
+	e.deliver(t, "mike@example.test", msg(1))
+	if len(e.replies) != 1 || !strings.Contains(e.replies[0].raw, "from the script") {
+		t.Errorf("script and response: %+v", e.replies)
+	}
+	// A script without vacation leaves the response in place.
+	e = filterSetup(t, "")
+	e.filters.away = map[string]store.VacationResponse{"acct-mike": {Enabled: true, TextBody: str("from JMAP")}}
+	e.filters.scripts["acct-mike"] = `require "fileinto"; fileinto "Work";`
+	e.deliver(t, "mike@example.test", msg(1))
+	if len(e.replies) != 1 || !strings.Contains(e.replies[0].raw, "from JMAP") || fmt.Sprint(e.st.got[0].mailboxes) != "[6]" {
+		t.Errorf("a filing script and the response: %+v %+v", e.replies, e.st.got)
 	}
 }
