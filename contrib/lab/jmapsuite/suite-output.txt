@@ -1,5 +1,5 @@
 # contrib/lab/lab.sh suite -r t   (JMAP-TestSuite 2fa1934, robinmail at the commit of this file)
-# 173 files: 159 ok (49 of them skip inside: capabilities robinmail does not offer), 4 skipped (no account pair), 10 failed
+# 173 files: 162 ok (43 of them skip inside: capabilities robinmail does not offer), 4 skipped (no account pair), 7 failed
 t/AddressBook/changes/basic.t ................................................ ok
 t/AddressBook/foreign-account.t .............................................. ok
 t/AddressBook/get/basic.t .................................................... ok
@@ -66,8 +66,10 @@ t/Email/import/download-after-import.t ....................................... o
 t/Email/import/good-imports.t ................................................ ok
 t/Email/import/invalid-email.t ............................................... ok
 t/Email/import/one-fails-another-succeeds.t .................................. ok
+t/Email/query/filtering.t .................................................... ok
 t/Email/query/no-existing-entities.t ......................................... ok
 t/Email/query/sorting.t ...................................................... ok
+t/Email/queryChanges/simple.t ................................................ ok
 t/Email/set/create/attachments-using-blob-id.t ............................... ok
 t/Email/set/create/attachments.t ............................................. ok
 t/Email/set/create/blob-not-found.t .......................................... ok
@@ -80,6 +82,7 @@ t/Email/set/create/created-response-required-properties.t .................... o
 t/Email/set/create/email-body-part-must-be-present.t ......................... ok
 t/Email/set/create/email-body-value-restrictions.t ........................... ok
 t/Email/set/create/empty-set-fields-are-null.t ............................... ok
+t/Email/set/create/header-header-field-name.t ................................
 t/Email/set/create/headers-property-forbidden-in-body-structure.t ............ ok
 t/Email/set/create/headers-property-forbidden.t .............................. ok
 t/Email/set/create/html-body-using-blob-id.t ................................. ok
@@ -89,6 +92,7 @@ t/Email/set/create/no-charset-with-partid.t .................................. o
 t/Email/set/create/no-content-headers-top-level.t ............................ ok
 t/Email/set/create/no-date-server-provides-one.t ............................. ok
 t/Email/set/create/no-duplicate-header-representations.t ..................... ok
+t/Email/set/create/no-duplicate-structural-representations.t .................
 t/Email/set/create/no-message-id-server-provides-one.t ....................... ok
 t/Email/set/create/no-size-with-partid.t ..................................... ok
 t/Email/set/create/only-one-part-in-html-body.t .............................. ok
@@ -113,14 +117,19 @@ t/Identity/set/basic.t ....................................................... o
 t/MDN/foreign-account.t ...................................................... ok
 t/MDN/parse/basic.t .......................................................... ok
 t/Mailbox/changes/cannot-calculate-changes.t ................................. ok
+t/Mailbox/changes/changed-properties.t .......................................
 t/Mailbox/changes/container-state-tracking.t ................................. ok
 t/Mailbox/changes/max-changes-has-more-changes.t ............................. ok
 t/Mailbox/changes/no-changes.t ............................................... ok
 t/Mailbox/changes/with-changes.t ............................................. ok
 t/Mailbox/foreign-account.t .................................................. ok
+t/Mailbox/get/limiting-properties-in-response.t ..............................
 t/Mailbox/get/no-existing-entities.t ......................................... ok
+t/Mailbox/get/some-entities.t ................................................
 t/Mailbox/query/filtering-with-filter-conditions.t ........................... ok
+t/Mailbox/query/filtering-with-filter-operators.t ............................
 t/Mailbox/query/no-existing-entities.t ....................................... ok
+t/Mailbox/query/sorting-and-limiting.t .......................................
 t/Mailbox/queryChanges/basic.t ............................................... ok
 t/Mailbox/set/create/all-settable-fields-provided.t .......................... ok
 t/Mailbox/set/create/defaults-omitted.t ...................................... ok
@@ -143,6 +152,7 @@ t/Quota/foreign-account.t .................................................... o
 t/Quota/get/basic.t .......................................................... ok
 t/Quota/query/basic.t ........................................................ ok
 t/SearchSnippet/foreign-account.t ............................................ ok
+t/SearchSnippet/get/basic.t .................................................. ok
 t/Thread/changes/changes.t ................................................... ok
 t/Thread/changes/max-changes-has-more-changes.t .............................. ok
 t/Thread/changes/no-changes.t ................................................ ok
@@ -165,8 +175,6 @@ t/getMessages-htmlBody.t ..................................................... o
 t/previews.t ................................................................. ok
 Test Summary Report
 -------------------
-t/Email/query/filtering.t                                                  (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
-t/Email/queryChanges/simple.t                                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
 t/Email/set/create/header-header-field-name.t                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
 t/Email/set/create/no-duplicate-structural-representations.t               (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
 t/Mailbox/changes/changed-properties.t                                     (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
@@ -174,8 +182,7 @@ t/Mailbox/get/limiting-properties-in-response.t                            (Wsta
 t/Mailbox/get/some-entities.t                                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
 t/Mailbox/query/filtering-with-filter-operators.t                          (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
 t/Mailbox/query/sorting-and-limiting.t                                     (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
-t/SearchSnippet/get/basic.t                                                (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
-Files=173, Tests=169, 73 wallclock secs ( 0.19 usr  0.15 sys + 63.88 cusr  5.97 csys = 70.19 CPU)
+Files=173, Tests=169, 77 wallclock secs ( 0.27 usr  0.14 sys + 67.78 cusr  9.52 csys = 77.71 CPU)
 Result: FAIL
 
 # skipped inside, by capability:
@@ -185,5 +192,3 @@ Result: FAIL
   16 SKIP server does not support urn:ietf:params:jmap:contacts
    2 SKIP server does not support urn:ietf:params:jmap:mdn
    3 SKIP server does not support urn:ietf:params:jmap:principals
-   3 SKIP server does not support urn:ietf:params:jmap:quota
-   3 SKIP server does not support urn:ietf:params:jmap:vacationresponse

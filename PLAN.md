@@ -1159,11 +1159,14 @@ Built as follows:
   2fa1934, Perl) runs in a container of its own inside the lab: `lab.sh
   suite`, 73 seconds. The adapter
   (`contrib/lab/jmapsuite/Robinmail.pm`) makes a new user for every test
-  with `robinmail user add`. First run: 24 of 173 files failed. Now: 110
-  pass, 49 skip themselves for capabilities robinmail does not offer
-  (calendars, contacts, blob, quota, MDN, principals, vacation response),
-  4 skip for want of two accounts that share (the `/copy` tests), 10 fail
-  (`contrib/lab/jmapsuite/suite-output.txt`).
+  with `robinmail user add`. First run: 24 of 173 files failed. At the end of
+  this phase: 110 pass, 49 skip themselves for capabilities robinmail
+  did not offer (calendars, contacts, blob, quota, MDN, principals,
+  vacation response), 4 skip for want of two accounts that share (the
+  `/copy` tests), 10 fail. **After phase 8: 119 pass, 43 skip
+  themselves (calendars, contacts, blob, MDN, principals), 4 skip, 7
+  fail** (`contrib/lab/jmapsuite/suite-output.txt`): the search files
+  pass, and the Quota and VacationResponse files run and pass.
   - Fixed in `internal/jmap` and `internal/message`
     (`internal/jmap/testsuite_test.go`): `subParts` on parts that are not
     multiparts only when asked for, and then also in `textBody`,
@@ -1925,11 +1928,12 @@ Built as follows:
   points an old `dev/robinmail.json` at the new one and says what to do
   once; nothing is migrated.
 - **Stays manual.** iOS Mail, Apple Mail and Outlook: none runs in a
-  container. Thunderbird's account dialog and autoconfig, which phase 8
-  adds; its subscribe dialog, its search, the "just mark it as deleted"
+  container. Thunderbird's account dialog as a person clicks through it
+  (phase 8 drives the code behind it: the lookup, the check of the
+  password, the creation of the account); its subscribe dialog, its search, the "just mark it as deleted"
   setting, and a connection left open for a day (the list in phase 6).
   OAuth2 in Thunderbird: robinmail offers none.
-### Phase 8: completeness — in progress
+### Phase 8: completeness — done
 
 - Aliases and catch-all addresses.
 - JMAP `VacationResponse`.
@@ -1941,9 +1945,36 @@ Built as follows:
 - Exit: each item shown working with a test.
 
 Built in this order, each item committed with its tests: 1 full-text
-search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas (done), 6 MTA-STS
-serving and TLS-RPT (done), 7 autoconfig (done), 8 operations (done), 9 README (done), 10 lab and
-cluster cases (done).
+search, 2 aliases, 3 Sieve, 4 VacationResponse, 5 quotas, 6 MTA-STS
+serving and TLS-RPT, 7 autoconfig, 8 operations, 9 README, 10 lab and
+cluster cases. All ten are done. Each has its own section below with what
+it does not handle; what was left out on purpose, in one place:
+
+- ManageSieve (RFC 5804): scripts are managed over JMAP and the webmail.
+  It is a protocol of its own with its own listener, login and tests,
+  not a cheap addition.
+- Substring search over IMAP: `SEARCH BODY` and `TEXT` match whole words,
+  as the index does. ImapTest's `search-body` script fails for that and
+  is listed as known.
+- DANE, in sending and in TLS reports: it needs a resolver that validates
+  DNSSEC.
+- A signature on the Apple profile, an `autodiscover.<domain>` host and
+  autoconfig over plain HTTP.
+- Incremental backups, restoring one account, and a backup that is exact
+  to the blob in the seconds around the copy (see Operations).
+- A reload of the master key file without a restart.
+
+Not verified by anything in this phase: Outlook's Autodiscover against a
+real Outlook; TLS reports against a real receiver of reports; the ACME
+path for the `mta-sts.` and `autoconfig.` names (the tests use
+certificate files); a restore of a backup made by an older schema.
+
+Test runs at the end of the phase: `go vet` and `go test -race ./...`
+clean; `make`; the browser suite 27 passed (one earlier run had one
+failure in `mail.spec.ts`, the step that loads remote images, which
+passed alone and in the next full run: a flake that is not understood);
+the cluster suite a to j; the lab suite with `TestPhase8` and
+`TestThunderbirdAutoconfig`; JMAP-TestSuite 119 pass, 7 fail.
 
 Built as follows:
 
@@ -2035,7 +2066,9 @@ Built as follows:
   - **JMAP-TestSuite** after this item: 113 files pass, 7 fail (was 110
     and 10): `Email/query/filtering`, `Email/queryChanges/simple` and
     `SearchSnippet/get/basic` pass now. The 7 left are the ones phase 5c
-    explains.
+    explains. At the end of phase 8, with the quota and vacation
+    response capabilities there: 119 pass, the same 7 fail (the suite
+    has no tests for Sieve).
   - **Not handled.** No stemming, no prefix or substring search in
     bodies, no ranking (results keep the sort of the query). The search
     box searches one mailbox, not all mail: the list is a mailbox's and
@@ -2751,7 +2784,9 @@ Built as follows:
 
 - Where the master key comes from in production: a file is all there is. A
   lost key file loses all mail, so it needs a backup that is not next to the
-  blobs.
+  blobs, and not next to the backups of phase 8 either. The key can be
+  replaced since phase 8 (`key add`, `rotate`, `prune`); a node still
+  reads the file only at start, and nothing but the file holds it.
 - Delivery keys derived from content mean a byte-identical message from the
   same sender within a week is dropped as a retry. Intended, but worth
   knowing.
@@ -2778,8 +2813,9 @@ Built as follows:
 - The `dev` section (`retry_seconds`, `smtp_trace`) is in every binary. A
   production config with it set gets a warning at start for the first and
   a very large log for the second. A build tag would keep them out.
-- The JMAP-TestSuite is pinned to one commit and changes daily. Ten files
-  fail, six of them over readings of the RFC that could be raised with its
+- The JMAP-TestSuite is pinned to one commit and changes daily. Seven
+  files fail: one for `updatedProperties` of `Mailbox/changes`, which we
+  leave null, six over readings of the RFC that could be raised with its
   authors.
 - RFC 9106's own test vectors use a secret and associated data, which
   `x/crypto`'s exported `argon2.IDKey` does not take. `x/crypto` runs them
@@ -2831,7 +2867,7 @@ Built as follows:
   with `keepalive`; the server could also finish a `/set` it started.
 - The webmail's assets are served uncompressed: 680 kB of script and
   210 kB of CSS, 195 kB and 26 kB with gzip. Compress at build time and
-  serve by `Accept-Encoding`, or leave it to phase 8.
+  serve by `Accept-Encoding`. Not done in phase 8.
 - The navigation shows `unreadEmails`, which the webmail can keep exact
   while a change is on its way, not `unreadThreads`, which fits collapsed
   threads better but only the server can count.
@@ -2870,11 +2906,37 @@ Built as follows:
 - The MTA-STS TXT record is looked up for every delivery to a domain, and
   the resolver's cache is the only one in front of it.
 - A bounce is stored in the Inbox without going through Rspamd or any
-  filter; with Sieve (phase 8) it should pass through the user's rules.
+  filter. Sieve is there since phase 8; a bounce our own queue makes
+  still skips the user's script.
 - The tests of all packages share one rqlite database. Queue rows are now
   purged by the tests that make them, but a `serve` on the development
   database still works whatever is queued there. Seen in phase 7: a
   development server started during a full test run took the rows of
   the queue tests ("2 of 12 arrived") in two runs of five. A database
   for the tests apart from the development one, a third rqlite in the
-  compose file, would end that.
+  compose file, would end that. The compose file has it since
+  (`rqlite-dev`, port 4005) and `seed.sh` moves an instance over; a
+  development server that was started before and never restarted is
+  still on the tests' database, and during phase 8 one was: its queue
+  worker took rows of `internal/queue`'s tests now and then.
+- The tests of backup, restore, key rotation and the other operations
+  start an rqlite container each, because they change or read every
+  account of a database. They are skipped without Docker, so on a
+  machine without it those commands are untested.
+- IMAP `SEARCH BODY` and `TEXT` find words, not substrings (RFC 9051
+  6.4.4 says substring). A trigram index next to the word index would
+  give substrings at about three times the index size. Worth it for the
+  one client test that notices?
+- A backup takes the list of blobs from the live database around the
+  copy, not from the copy. Reading the copy needs a reader for SQLite
+  files, which the dependency rule keeps out. A small one of our own
+  (the table b-trees of three tables), or accept the narrow window?
+- `/healthz` answers anybody, under any host name. It says one word, but
+  it tells a scanner that a robinmail is there. Bind it to the metrics
+  listener instead, or keep it where a load balancer can reach it?
+- A TLS report is claimed before it is sent, so a node that dies in
+  between loses that report. The other order sends some twice.
+- `user remove` deletes an account in one batch. For an account with
+  hundreds of thousands of messages that is one very large Raft entry.
+- The repository has no LICENSE file. Until it has one nobody but its
+  author may use the code.
