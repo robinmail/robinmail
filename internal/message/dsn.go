@@ -197,16 +197,29 @@ func reportType(p *Part) string {
 }
 
 // ParseDSN reads a delivery status notification. ok is false when the
-// message is not one: not a multipart/report with report-type
-// delivery-status, or without a message/delivery-status part that names a
+// message is not one: no multipart/report with report-type
+// delivery-status, or no message/delivery-status part that names a
 // recipient.
+//
+// One thing that is not RFC 3464 is read as well: a multipart of another
+// kind that has a message/delivery-status part directly in it. OpenSMTPD
+// (7.6) sends its notifications as multipart/mixed, with the same three
+// parts a report has. Its status part is as good as any, and without this
+// a message that bounced there would stay "sent" for its sender. A report
+// someone forwards sits a level deeper, inside a message/rfc822 part, and
+// is not taken for one.
 func ParseDSN(m *Message) (d *DSN, ok bool) {
-	if reportType(m.Root) != "delivery-status" {
+	parts := m.Leaves
+	switch kind := reportType(m.Root); {
+	case kind == "delivery-status":
+	case kind == "" && m.Root.Type != "multipart/report" && strings.HasPrefix(m.Root.Type, "multipart/"):
+		parts = m.Root.SubParts
+	default:
 		return nil, false
 	}
 	d = &DSN{}
 	var status *Part
-	for _, p := range m.Leaves {
+	for _, p := range parts {
 		switch p.Type {
 		case "message/delivery-status", "message/global-delivery-status":
 			if status == nil {

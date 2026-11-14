@@ -1,0 +1,81 @@
+Return-Path: <>
+Received: from mx.postfix.test (mx.postfix.test [10.77.25.11])
+	by mx.robin.test (robinmail) with ESMTPS id BD8703B703AA7270
+	(TLS 1.3 TLS_AES_128_GCM_SHA256)
+	for <alice@robin.test>;
+	Sat, 14 Nov 2026 11:24:23 +0000
+Received: by mx.postfix.test (Postfix)
+	id 6A06A4FACC; Sat, 14 Nov 2026 11:24:23 +0000 (UTC)
+Date: Sat, 14 Nov 2026 11:24:23 +0000 (UTC)
+From: Mail Delivery System <MAILER-DAEMON@postfix.test>
+Subject: Undelivered Mail Returned to Sender
+To: alice@robin.test
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="688AA4FAC9.1794655463/mx.postfix.test"
+Content-Transfer-Encoding: 8bit
+Message-Id: <20261114112423.6A06A4FACC@mx.postfix.test>
+
+This is a MIME-encapsulated message.
+
+--688AA4FAC9.1794655463/mx.postfix.test
+Content-Description: Notification
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+This is the mail system at host mx.postfix.test.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients. It's attached below.
+
+For further assistance, please send mail to postmaster.
+
+If you do so, please include this problem report. You can
+delete your own text from the attached returned message.
+
+                   The mail system
+
+<ghost@late.postfix.test>: unknown user: "ghost"
+
+--688AA4FAC9.1794655463/mx.postfix.test
+Content-Description: Delivery report
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mx.postfix.test
+X-Postfix-Queue-ID: 688AA4FAC9
+X-Postfix-Sender: rfc822; alice@robin.test
+Arrival-Date: Sat, 14 Nov 2026 11:24:23 +0000 (UTC)
+
+Final-Recipient: rfc822; ghost@late.postfix.test
+Original-Recipient: rfc822;ghost@late.postfix.test
+Action: failed
+Status: 5.1.1
+Diagnostic-Code: X-Postfix; unknown user: "ghost"
+
+--688AA4FAC9.1794655463/mx.postfix.test
+Content-Description: Undelivered Message
+Content-Type: message/rfc822
+Content-Transfer-Encoding: 8bit
+
+Return-Path: <alice@robin.test>
+Received: from mx.robin.test (mx.robin.test [10.77.25.10])
+	(using TLSv1.3 with cipher TLS_AES_128_GCM_SHA256 (128/128 bits)
+	 key-exchange x25519 server-signature ECDSA (prime256v1) server-digest SHA256)
+	(No client certificate requested)
+	by mx.postfix.test (Postfix) with ESMTPS id 688AA4FAC9
+	for <ghost@late.postfix.test>; Sat, 14 Nov 2026 11:24:23 +0000 (UTC)
+Received: by mx.robin.test (robinmail) (JMAP) id 343CB09CAAF11DE8;
+	Sat, 14 Nov 2026 11:24:20 +0000
+Date: Sat, 14 Nov 2026 11:24:20 +0000
+From: alice@robin.test
+To: ghost@late.postfix.test
+Subject: lab lab0a09485739ce
+Message-ID: <92e05c233a4c7b03ca92c29a0798968d@mx.robin.test>
+X-Lab: lab0a09485739ce
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+to nobody
+
+--688AA4FAC9.1794655463/mx.postfix.test--

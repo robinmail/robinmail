@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -454,5 +456,46 @@ func TestIncomingDSNIsRecorded(t *testing.T) {
 	d.Deliver(context.Background(), env, []byte("From: MAILER-DAEMON@mx.far.test\r\nSubject: Undelivered\r\n\r\nYour mail to gone@far.test bounced.\r\n"))
 	if len(qs.dsnFor) != 1 {
 		t.Errorf("recorded %d times: %v", len(qs.dsnFor), qs.dsnFor)
+	}
+}
+
+// The notifications of Postfix, Exim and OpenSMTPD as they arrived in the
+// interoperability lab (contrib/lab; the files are those of
+// internal/message). Each must reach the submission, also OpenSMTPD's,
+// which is a multipart/mixed, and each must leave a reason that reads as a
+// reply (RFC 8621 7, smtpReply), also where the report has no
+// Diagnostic-Code.
+func TestPeerNotificationsAreRecorded(t *testing.T) {
+	for peer, want := range map[string]store.Recipient{
+		"postfix":   {Status: "5.1.1", Reply: `550 5.1.1 unknown user: "ghost"`},
+		"exim":      {Status: "5.0.0", Reply: "550 5.0.0 reported by mx.exim.test without a reason"},
+		"opensmtpd": {Status: "5.3.0", Reply: "550 5.3.0 reported by mx.opensmtpd.test without a reason"},
+	} {
+		t.Run(peer, func(t *testing.T) {
+			raw, err := os.ReadFile("../message/testdata/dsn-" + peer + ".eml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// As it came over SMTP: without the Return-Path the
+			// delivery adds.
+			if _, rest, ok := bytes.Cut(raw, []byte("Return-Path: <>\r\n")); ok {
+				raw = rest
+			}
+			d, _ := setup(t, "")
+			qs := &queueStore{}
+			d.Submissions = qs
+			env := &smtp.Envelope{RemoteIP: net.ParseIP("192.0.2.7"), Helo: "mx." + peer + ".test", From: "", Rcpts: []string{"mike@example.test"}}
+			if err := d.Deliver(context.Background(), env, raw); err != nil {
+				t.Fatal(err)
+			}
+			if len(qs.dsnFor) != 1 || !strings.HasSuffix(qs.dsnFor[0], "@mx.robin.test") {
+				t.Fatalf("recorded for %v", qs.dsnFor)
+			}
+			reps := qs.reports[0]
+			if len(reps) != 1 || reps[0].Address != "ghost@late."+peer+".test" || reps[0].State != store.RcptFailed ||
+				reps[0].Status != want.Status || reps[0].Reply != want.Reply || reps[0].MTA != "mx."+peer+".test" {
+				t.Errorf("reports %+v", reps)
+			}
+		})
 	}
 }

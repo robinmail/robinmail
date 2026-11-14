@@ -508,6 +508,12 @@ func (w *Worker) set(sub *store.Submission, i int, o outcome) {
 	if o.state != "" {
 		r.State = o.state
 	}
+	// What robinmail found out by itself reads like a reply too, with a
+	// code, so every reason has one form: in deliveryStatus (RFC 8621 7,
+	// smtpReply) and in the Diagnostic-Code of a bounce.
+	if o.reply != "" {
+		o.reply = smtp.StatusReply(o.status, o.reply)
+	}
 	r.Reply, r.Status, r.MTA, r.At, r.Mailbox = o.reply, o.status, o.mta, w.now().Unix(), o.mailbox
 }
 

@@ -203,7 +203,8 @@ func TestRetryScheduleAndExpiry(t *testing.T) {
 		if n := x.run(); n != 0 {
 			t.Fatalf("an attempt one second before it was due (after %d attempts)", len(attempts))
 		}
-		if r := got.Recipients[0]; r.State != store.RcptQueued || !strings.Contains(r.Reply, "connection refused") || r.Status != "4.4.1" {
+		if r := got.Recipients[0]; r.State != store.RcptQueued || !strings.Contains(r.Reply, "connection refused") || r.Status != "4.4.1" ||
+			!strings.HasPrefix(r.Reply, "451 4.4.1 ") { // a reply code first: RFC 8621 7, smtpReply
 			t.Fatalf("recipient between attempts: %+v", r)
 		}
 		x.advance(time.Second)

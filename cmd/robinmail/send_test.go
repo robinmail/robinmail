@@ -661,7 +661,7 @@ func TestSendRetriesThenBounces(t *testing.T) {
 	a.expect(bounce,
 		`^Return-Path: <>\r\n`,
 		`\r\nFinal-Recipient: rfc822; zoe@down\.test\r\nAction: failed\r\nStatus: 4\.4\.7\r\n`,
-		`Diagnostic-Code: smtp; delivery was tried for 120h0m0s without success; the last attempt: connecting to\r?\n? ?mx\.down\.test`,
+		`Diagnostic-Code: smtp; 451 4\.4\.7 delivery was tried for 120h0m0s without success; the last attempt: 451\r?\n? ?4\.4\.1 connecting to\r?\n? ?mx\.down\.test`,
 		`\r\nSubject: Are you there\?\r\n`)
 	waitFor(t, "the final status", func() bool { d, _ := status(); return d == "no" })
 	// And that was the last of it.

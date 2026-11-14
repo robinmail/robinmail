@@ -45,6 +45,29 @@ func (r Reply) String() string {
 
 func (r Reply) Error() string { return "smtp: " + r.String() }
 
+// StatusReply is the text of a reply for something no server put into
+// words: a connection that failed, a rule of our own, a report that came
+// without the reply. It starts with a reply code that fits the class of
+// the enhanced status code, as RFC 8621 7 wants of an smtpReply and as a
+// reader of a Diagnostic-Code expects. A text that already starts with a
+// reply code is returned as it is.
+func StatusReply(status, text string) string {
+	if len(text) >= 4 && text[3] == ' ' && text[0] >= '2' && text[0] <= '5' &&
+		text[1] >= '0' && text[1] <= '9' && text[2] >= '0' && text[2] <= '9' {
+		return text
+	}
+	code := "550"
+	switch {
+	case strings.HasPrefix(status, "2."):
+		code = "250"
+	case strings.HasPrefix(status, "4."):
+		code = "451"
+	case !strings.HasPrefix(status, "5."):
+		status = "5.0.0"
+	}
+	return strings.TrimSpace(code + " " + status + " " + text)
+}
+
 func localReply(code int, enhanced, text string) Reply {
 	return Reply{Code: code, Enhanced: enhanced, Lines: []string{enhanced + " " + text}, Local: true}
 }

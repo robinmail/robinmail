@@ -463,18 +463,34 @@ func (d *Deliverer) noteDSN(ctx context.Context, from string, accounts []store.A
 	}
 	var reports []store.Recipient
 	for _, r := range dsn.Recipients {
-		rep := store.Recipient{Address: r.Address, Reply: r.Diagnostic, Status: r.Status, MTA: r.RemoteMTA, At: d.now().Unix()}
+		rep := store.Recipient{Address: r.Address, Status: r.Status, MTA: r.RemoteMTA, At: d.now().Unix()}
 		if rep.MTA == "" {
 			rep.MTA = dsn.ReportingMTA
 		}
 		switch r.Action {
 		case "failed":
 			rep.State = store.RcptFailed
+			if !strings.HasPrefix(rep.Status, "4.") && !strings.HasPrefix(rep.Status, "5.") {
+				rep.Status = "5.0.0"
+			}
 		case "delivered":
 			rep.State = store.RcptDelivered
+			if !strings.HasPrefix(rep.Status, "2.") {
+				rep.Status = "2.0.0"
+			}
 		default:
 			continue // delayed, relayed, expanded: nothing final
 		}
+		// The reason, as a reply. Reports differ: Postfix quotes the
+		// remote server's reply, or gives a text of its own for a
+		// failure of its own; Exim and OpenSMTPD give no
+		// Diagnostic-Code at all for theirs. The sender should still
+		// read who said so.
+		text := r.Diagnostic
+		if text == "" {
+			text = "reported by " + rep.MTA + " without a reason"
+		}
+		rep.Reply = smtp.StatusReply(rep.Status, text)
 		reports = append(reports, rep)
 	}
 	for _, a := range accounts {
