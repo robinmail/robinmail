@@ -68,8 +68,28 @@ function refresh(force = false, hidden = false) {
   const now = Date.now()
   if (!force && now - last < 2000) return
   last = now
-  void store.refresh()
-  void compose.refreshSubmissions().catch(() => {})
+  void pump()
+}
+// One round of requests at a time, whoever asks: push can report several
+// changes in a second (a draft being saved, a message on its way out), and
+// the server takes four requests at once per account. A round asked for
+// while one runs makes one more follow.
+let pumping = false
+let pumpAgain = false
+async function pump() {
+  if (pumping) {
+    pumpAgain = true
+    return
+  }
+  pumping = true
+  try {
+    do {
+      pumpAgain = false
+      await Promise.allSettled([store.refresh(), compose.refreshSubmissions()])
+    } while (pumpAgain)
+  } finally {
+    pumping = false
+  }
 }
 // Right after a send things move fast: the undo time runs out, the queue
 // delivers, a bounce may come back. Look every three seconds until the

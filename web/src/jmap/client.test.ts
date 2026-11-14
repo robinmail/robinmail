@@ -174,3 +174,62 @@ describe('login endpoints', () => {
     expect(await currentAccount(async () => Response.json({ accountId: 'a', username: 'u@x' }))).toEqual({ accountId: 'a', username: 'u@x' })
   })
 })
+
+describe('concurrency', () => {
+  // RFC 8620 2: maxConcurrentRequests is "the maximum number of concurrent
+  // requests the server will accept to the API endpoint"; one more gets a
+  // "limit" problem (3.6.1). The client keeps the rest waiting.
+  it('never has more API requests in flight than the server takes', async () => {
+    const server = new FakeServer()
+    let inFlight = 0
+    let most = 0
+    const release: Array<() => void> = []
+    const client = new JmapClient({
+      fetch: async (u, i) => {
+        if (String(u) !== '/jmap/api') return server.fetch(u, i)
+        inFlight++
+        most = Math.max(most, inFlight)
+        await new Promise<void>((go) => release.push(go))
+        inFlight--
+        return server.fetch(u, i)
+      },
+    })
+    await client.loadSession()
+    expect(client.maxConcurrentRequests).toBe(4)
+    const done: number[] = []
+    const all = Array.from({ length: 11 }, (_, n) =>
+      client
+        .batch()
+        .send()
+        .then(() => done.push(n)),
+    )
+    // Let the requests start: four are out, seven wait.
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+    expect(inFlight).toBe(4)
+    expect(release).toHaveLength(4)
+    // Each answer lets one more go, in the order they were asked.
+    while (done.length < 11) {
+      release.shift()?.()
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+    }
+    await Promise.all(all)
+    expect(most).toBe(4)
+    expect(done).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(inFlight).toBe(0)
+  })
+
+  it('gives the place back when a request fails', async () => {
+    let fail = true
+    const server = new FakeServer()
+    const client = new JmapClient({
+      fetch: async (u, i) => {
+        if (String(u) === '/jmap/api' && fail) throw new Error('offline')
+        return server.fetch(u, i)
+      },
+    })
+    await client.loadSession()
+    for (let n = 0; n < 6; n++) await expect(client.batch().send()).rejects.toThrow('offline')
+    fail = false
+    await Promise.all(Array.from({ length: 6 }, () => client.batch().send()))
+  })
+})

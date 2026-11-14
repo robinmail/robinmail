@@ -1,6 +1,7 @@
 package jmap
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Tests of the core protocol, written from RFC 8620 and using its examples.
@@ -175,8 +177,9 @@ func TestRFC8620RequestErrors(t *testing.T) {
 
 // RFC 8620 3.6.1, maxConcurrentRequests: a request that comes while the
 // account already has that many running is refused with the limit error.
+// Here it first waits a moment for one of them to finish (QueueWait).
 func TestRFC8620MaxConcurrentRequests(t *testing.T) {
-	h := &Handler{Limits: Limits{MaxConcurrentRequests: 2}}
+	h := &Handler{Limits: Limits{MaxConcurrentRequests: 2}, QueueWait: 30 * time.Millisecond}
 	h.init()
 	if !h.acquire(testUser.AccountID) || !h.acquire(testUser.AccountID) {
 		t.Fatal("could not take the two slots")
@@ -213,8 +216,91 @@ func TestRFC8620MaxConcurrentRequests(t *testing.T) {
 			t.Errorf("status %d", code)
 		}
 	}
-	if len(h.inFlight) != 0 {
-		t.Errorf("slots still taken: %v", h.inFlight)
+	if len(h.inFlight) != 0 || len(h.waiting) != 0 {
+		t.Errorf("slots still taken: %v, waiting: %v", h.inFlight, h.waiting)
+	}
+}
+
+// A request over the limit is not refused at once: it waits for a slot,
+// which is how several tabs that hear of a change at the same moment (push)
+// all get their answer. It is refused when none comes free in time, when
+// too many wait already, and it stops waiting when its client goes away.
+func TestRequestsWaitForASlot(t *testing.T) {
+	h := &Handler{Limits: Limits{MaxConcurrentRequests: 1}, QueueWait: 5 * time.Second}
+	h.init()
+	h.acquire(testUser.AccountID)
+	done := make(chan int, 1)
+	go func() {
+		status, _, _ := post(t, h, "application/json", `{"using":["urn:ietf:params:jmap:core"],"methodCalls":[["Core/echo",{},"1"]]}`)
+		done <- status
+	}()
+	select {
+	case status := <-done:
+		t.Fatalf("answered %d while the slot was taken", status)
+	case <-time.After(100 * time.Millisecond):
+	}
+	h.release(testUser.AccountID)
+	select {
+	case status := <-done:
+		if status != 200 {
+			t.Fatalf("after waiting: %d", status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the waiting request was not answered when the slot came free")
+	}
+
+	// 40 at once with one slot: all are answered, one after the other.
+	var wg sync.WaitGroup
+	codes := make([]int, 30)
+	for i := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i], _, _ = post(t, h, "application/json", `{"using":["urn:ietf:params:jmap:core"],"methodCalls":[["Core/echo",{},"1"]]}`)
+		}()
+	}
+	wg.Wait()
+	for i, code := range codes {
+		if code != 200 {
+			t.Errorf("request %d: %d", i, code)
+		}
+	}
+
+	// More waiting than may: the rest is refused at once.
+	h.acquire(testUser.AccountID)
+	ctx, cancel := context.WithCancel(context.Background())
+	results := make(chan bool, maxWaitingRequests+5)
+	for i := 0; i < maxWaitingRequests+5; i++ {
+		go func() { results <- h.waitSlot(ctx, testUser.AccountID) }()
+	}
+	refused := 0
+	deadline := time.After(2 * time.Second)
+	for refused < 5 {
+		select {
+		case got := <-results:
+			if got {
+				t.Fatal("a request got a slot that is taken")
+			}
+			refused++
+		case <-deadline:
+			t.Fatalf("%d requests were refused at once, want 5", refused)
+		}
+	}
+	// The clients of the waiting ones go away: they stop waiting.
+	cancel()
+	for i := 0; i < maxWaitingRequests; i++ {
+		select {
+		case got := <-results:
+			if got {
+				t.Fatal("a request got a slot that is taken")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("a request kept waiting after its client went away")
+		}
+	}
+	h.release(testUser.AccountID)
+	if len(h.inFlight) != 0 || len(h.waiting) != 0 {
+		t.Errorf("slots still taken: %v, waiting: %v", h.inFlight, h.waiting)
 	}
 }
 

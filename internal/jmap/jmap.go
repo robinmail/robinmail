@@ -131,6 +131,9 @@ var DefaultLimits = Limits{
 	MaxObjectsInSet:       500,
 }
 
+// DefaultQueueWait is how long an API request waits for a slot.
+const DefaultQueueWait = 5 * time.Second
+
 // Limits that are not part of the core capability.
 const (
 	// maxQueryLimit is the most ids one /query returns.
@@ -170,6 +173,10 @@ type Handler struct {
 	// Closing, when it is closed, ends the open event sources: the server
 	// is stopping.
 	Closing <-chan struct{}
+	// QueueWait is how long an API request waits for one of the account's
+	// maxConcurrentRequests slots before it is refused (DefaultQueueWait
+	// when 0; negative: not at all).
+	QueueWait time.Duration
 
 	once     sync.Once
 	mux      *http.ServeMux
@@ -178,6 +185,9 @@ type Handler struct {
 	inFlight map[string]int // account id -> API requests being processed
 	uploads  map[string]int // account id -> uploads being received
 	streams  map[string]int // account id -> event sources open
+	waiting  map[string]int // account id -> API requests waiting for a slot
+	// slotFreed is closed, and replaced, whenever a request finishes.
+	slotFreed chan struct{}
 }
 
 func (h *Handler) init() {
@@ -199,6 +209,8 @@ func (h *Handler) init() {
 		h.inFlight = map[string]int{}
 		h.uploads = map[string]int{}
 		h.streams = map[string]int{}
+		h.waiting = map[string]int{}
+		h.slotFreed = make(chan struct{})
 		h.mux = http.NewServeMux()
 		h.mux.HandleFunc("GET /.well-known/jmap", h.serveSession)
 		h.mux.HandleFunc("GET /jmap/session", h.serveSession)

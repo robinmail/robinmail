@@ -165,6 +165,33 @@ export class JmapClient {
     this.onUnauthorized = opts.onUnauthorized ?? (() => {})
   }
 
+  // API requests in flight, and the ones waiting for a place. The server
+  // takes maxConcurrentRequests at once per account (RFC 8620 2) and
+  // refuses the next with a "limit" problem; a client is to stay under
+  // it. Since push, a refresh can come at any moment, also in the middle
+  // of a send or a save.
+  private active = 0
+  private waiting: Array<() => void> = []
+
+  get maxConcurrentRequests(): number {
+    const core = this.session?.capabilities['urn:ietf:params:jmap:core'] as { maxConcurrentRequests?: number } | undefined
+    return Math.max(1, core?.maxConcurrentRequests ?? 4)
+  }
+
+  private async slot<T>(fn: () => Promise<T>): Promise<T> {
+    // A request that waited takes over the place of the one that let it
+    // go: the count does not drop in between, so no third can slip in.
+    if (this.active >= this.maxConcurrentRequests) await new Promise<void>((go) => this.waiting.push(go))
+    else this.active++
+    try {
+      return await fn()
+    } finally {
+      const next = this.waiting.shift()
+      if (next) next()
+      else this.active--
+    }
+  }
+
   private async http(path: string, init: RequestInit): Promise<Response> {
     const res = await this.fetch(path, { credentials: 'same-origin', ...init })
     if (res.status === 401) {
@@ -199,15 +226,17 @@ export class JmapClient {
   async request(methodCalls: Invocation[]): Promise<Invocation[]> {
     if (!this.session) await this.loadSession()
     const body = JSON.stringify({ using: USING, methodCalls })
-    const res = await this.http(localPath(this.session!.apiUrl), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body,
-      // A change must reach the server also when the tab is closed right
-      // after the click: the page showed it as done already. (Browsers
-      // allow keepalive for small bodies only.)
-      keepalive: body.length < 60_000 && methodCalls.some((c) => c[0].endsWith('/set')),
-    })
+    const res = await this.slot(() =>
+      this.http(localPath(this.session!.apiUrl), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body,
+        // A change must reach the server also when the tab is closed right
+        // after the click: the page showed it as done already. (Browsers
+        // allow keepalive for small bodies only.)
+        keepalive: body.length < 60_000 && methodCalls.some((c) => c[0].endsWith('/set')),
+      }),
+    )
     if (!res.ok) {
       // A request-level error is a problem document with a type URN.
       let type = 'serverFail'

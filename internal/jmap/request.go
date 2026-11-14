@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mikepage/robinmail/internal/store"
@@ -150,6 +151,68 @@ func (h *Handler) release(account string) {
 	if h.inFlight[account]--; h.inFlight[account] <= 0 {
 		delete(h.inFlight, account)
 	}
+	// Whoever waits for a slot looks again.
+	close(h.slotFreed)
+	h.slotFreed = make(chan struct{})
+}
+
+// maxWaitingRequests is how many requests of one account may wait for a
+// slot; the next is refused at once.
+const maxWaitingRequests = 32
+
+// waitSlot takes one of the account's slots, and when all are taken waits
+// for one, for at most QueueWait. Only then is the request refused with
+// the limit error of RFC 8620 3.6.1.
+//
+// Why it waits: push tells every tab and client of an account about a
+// change in the same moment, and each then asks for the changes. Three
+// tabs are six requests at once; refused, each would have to try again,
+// and the user's own click in between would be refused with them. A
+// request that waits a few milliseconds is answered instead.
+func (h *Handler) waitSlot(ctx context.Context, account string) bool {
+	wait := h.QueueWait
+	if wait == 0 {
+		wait = DefaultQueueWait
+	}
+	var deadline <-chan time.Time
+	counted := false
+	defer func() {
+		if counted {
+			h.mu.Lock()
+			if h.waiting[account]--; h.waiting[account] <= 0 {
+				delete(h.waiting, account)
+			}
+			h.mu.Unlock()
+		}
+	}()
+	for {
+		h.mu.Lock()
+		if h.inFlight[account] < h.limits.MaxConcurrentRequests {
+			h.inFlight[account]++
+			h.mu.Unlock()
+			return true
+		}
+		if wait < 0 || (!counted && h.waiting[account] >= maxWaitingRequests) {
+			h.mu.Unlock()
+			return false
+		}
+		if !counted {
+			counted = true
+			h.waiting[account]++
+			t := time.NewTimer(wait)
+			defer t.Stop()
+			deadline = t.C
+		}
+		freed := h.slotFreed
+		h.mu.Unlock()
+		select {
+		case <-freed:
+		case <-deadline:
+			return false
+		case <-ctx.Done():
+			return false
+		}
+	}
 }
 
 // serveAPI is the API endpoint (RFC 8620 3).
@@ -159,7 +222,7 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, errNotJSON, "the content type of the request must be application/json", nil)
 		return
 	}
-	if !h.acquire(u.AccountID) {
+	if !h.waitSlot(r.Context(), u.AccountID) {
 		problem(w, http.StatusBadRequest, errLimit, "too many requests at once for this account", map[string]any{"limit": "maxConcurrentRequests"})
 		return
 	}
