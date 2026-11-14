@@ -256,6 +256,10 @@ func partText(p *Part, max int) string {
 	return s
 }
 
+// PartText is the text of a text part as a reader sees it, up to about max
+// bytes: an HTML part without its markup.
+func PartText(p *Part, max int) string { return partText(p, max) }
+
 // BodyText is the text body (RFC 8621 4.1.4, textBody) as plain text, the
 // parts under each other, up to about max bytes. A message that only has
 // HTML gives the text of that.
