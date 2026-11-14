@@ -1942,7 +1942,7 @@ Built as follows:
 
 Built in this order, each item committed with its tests: 1 full-text
 search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas (done), 6 MTA-STS
-serving and TLS-RPT (done), 7 autoconfig (done), 8 operations (done), 9 README, 10 lab and
+serving and TLS-RPT (done), 7 autoconfig (done), 8 operations (done), 9 README (done), 10 lab and
 cluster cases.
 
 Built as follows:

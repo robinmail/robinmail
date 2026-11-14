@@ -24,7 +24,9 @@
 #
 # The test that sends mail between two servers (cmd/robinmail) also wants
 # ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003, the second database of that
-# compose file.
+# compose file. The tests of backup, restore and master key rotation start
+# an rqlite container of their own for each run (docker run, removed
+# afterwards) and are skipped without Docker.
 #
 # Development (make dev): contrib/dev/seed.sh makes an instance in ./dev
 # with the user dev@robinmail.test (password in that script) and some mail.
