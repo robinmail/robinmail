@@ -1,7 +1,8 @@
 # robinmail: plan
 
 robinmail is a JMAP-first mail server in Go. It receives mail, stores it, sends
-it, and serves it over JMAP (RFC 8620, RFC 8621). The webmail is a Vue app in
+it, and serves it over JMAP (RFC 8620, RFC 8621) and, for mail clients, over
+IMAP (RFC 3501, RFC 9051). The webmail is a Vue app in
 `web/` that talks JMAP and ships inside the Go binary. Spam filtering and SPF/DKIM/DMARC are delegated to
 Rspamd. Metadata lives in rqlite. Message files live on each node's own disk,
 encrypted, and robinmail copies them between nodes itself, so a cluster can
@@ -23,7 +24,7 @@ This is a learning project. There is no production target yet.
 | Nodes | Not stateless: metadata is in rqlite, blobs are on each node's disk. Any node serves any account | No owner per account and no forwarding. rqlite's leader orders the writes. |
 | Between nodes | Nodes find each other through the `node` table in rqlite and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates whose fingerprint is in that table | No CA and no shared secret to distribute. Who may join is decided by who can write to rqlite, which holds everything anyway. |
 | Mailboxes | An Email can be in several mailboxes (labels) | Full JMAP `mailboxIds`. |
-| IMAP | Last phase, but UIDs exist from day one | No store migration later. |
+| IMAP | Built in phase 6 on UIDs that exist from day one. A label is a folder; a message with three labels is in three folders | No store migration later. Mail clients only speak IMAP. |
 | Webmail | Vue single-page app in `web/`: plain Vite, Vue Router, Nuxt UI (without Nuxt). Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. Nuxt UI is MIT and has the dashboard and inbox components a mail client needs. |
 | Origin | One hostname. robinmail serves the API under `/jmap`, `/.well-known/jmap` and `/auth`, and the embedded webmail everywhere else | Same origin: no CORS, `SameSite=Strict` works. |
 | Web auth | Session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`) plus an `Origin` check on every JMAP request. Sessions are rows in rqlite | The client never holds a token. Any node accepts the cookie. |
@@ -62,12 +63,12 @@ Every mail table starts with `account_id`.
 | Table | Columns | Notes |
 |---|---|---|
 | `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
-| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity | id is random and never changes; counters live here; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers |
+| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers |
 | `session` | token_hash, account_id, expires_at | web login; the hash is SHA-256 of the token in the cookie |
 | `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq, subscribed | a rename changes `name` only |
 | `email` | id, blob, size, received_at, thread_id, message_id, sender, recipients, cc, bcc, subject, sent_at, preview, has_attachment, modseq | header fields cached for lists, filters and sorting |
 | `email_mailbox` | email_id, mailbox_id, uid | one row per label; the IMAP UID belongs to the row |
-| `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom |
+| `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom; `$deleted` is IMAP's `\Deleted` |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
 | `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission or Identity; op created, updated or destroyed; `at` is for trimming |
 | `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
@@ -79,7 +80,7 @@ Every mail table starts with `account_id`.
 | `node` | id, address, cert, started_at, seen_at | the robinmail nodes: where the others reach each, the SHA-256 of its certificate, its heartbeat |
 | `login_failure` | key, started, count | failed logins per address and per IP in a 15 minute window, for all nodes together |
 | `guard` | ok | always empty; how a batch checks a precondition (below) |
-| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3, 3 to 4 and 4 to 5) |
+| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3, 3 to 4, 4 to 5 and 5 to 6) |
 
 Rules:
 
@@ -105,7 +106,10 @@ Rules:
 - **UIDs.** Adding an Email to a mailbox takes that mailbox's `uidnext`. A move
   is remove plus add, so the message gets a new UID in the target, as IMAP
   expects. In IMAP an Email with three labels shows up in three folders.
-  `modseq` doubles as `CONDSTORE` later.
+  `modseq` doubles as `CONDSTORE`'s: a message's is its Email's, a
+  mailbox's highest is the account's. A mailbox's `uidvalidity` is the
+  second it was made, or one more than the last one the account gave out
+  if that is not later, so a name never gets a value it had before.
 - **Blobs.** Written to a temp file, synced and renamed into place before the
   batch that references them. A crash leaves an unreferenced blob, never a
   row without a blob. A sweeper on every node removes that node's
@@ -134,7 +138,8 @@ Rules:
   a second. The sweeper's "is this blob still referenced" decides a
   deletion and uses `strong`. The login failure counters use `none` with a
   freshness bound of 5 seconds, so a login never waits for the leader.
-  Change polling for push may use `none` too.
+  The poll that finds changes made on other nodes (`internal/notify`)
+  uses `none` too.
 - **Writes and retries.** When a leader dies mid-write rqlite cannot say
   whether the batch was applied. A batch is sent again only if a second run
   is harmless: a delivery (its `delivered` row refuses the second run as a
@@ -164,7 +169,8 @@ internal/message     MIME to JMAP body structure, HTML view   new
 internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, static app new
 internal/queue       outbound delivery: MX, MTA-STS, retries, bounces   new
-internal/imap        IMAP server                        new
+internal/notify      who hears of a change: a hub per node, a poll for other nodes   new
+internal/imap        IMAP server, protocol only         new
 web/                 Vue webmail (Vite, Nuxt UI); src/jmap is the client, e2e the browser test
 Makefile             web build, binary with the webmail, tests, dev
 Dockerfile           the binary with the webmail in an image
@@ -172,7 +178,7 @@ contrib/rspamd       Rspamd config, DKIM signing        port as is; dkim_signing
 contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
                      cluster.yaml, cluster.sh: three rqlite and three robinmail nodes
 contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev
-contrib/lab          the interoperability lab: Postfix, Exim, OpenSMTPD, DNS, CA   new; "make lab-test"
+contrib/lab          the interoperability lab: Postfix, Exim, OpenSMTPD, IMAP clients, DNS, CA   new; "make lab-test"
 internal/labtest     tests against that lab             new
 ```
 
@@ -1167,12 +1173,276 @@ Built as follows:
   it if we offered it), a peer that drops the connection mid-transaction,
   IDN domains, rate limits. msmtp was not used; swaks was.
 
-### Phase 6: push and IMAP
+### Phase 6: push and IMAP — done
 
 - JMAP push over EventSource. A node polls `modseq` for the accounts that have
   a connection open on it.
 - IMAP4rev1 on 993 with `IDLE`, `UIDPLUS`, `MOVE`, `SPECIAL-USE`, `CONDSTORE`.
 - Exit: Thunderbird and iOS Mail sync, move, flag and see new mail arrive.
+
+Built as follows:
+
+- **Change notifications** (`internal/notify`). Every node has a hub that
+  JMAP event streams and IMAP sessions subscribe to, per account. It hears
+  of a change in two ways. A write through the node's own store calls the
+  hub before it returns (`store.OnChange`, set for every batch that bumps
+  the modseq). A write on another node is found by polling: while an
+  account has listeners, the hub reads its `modseq` once a second, all
+  such accounts in one query at level `none`, and wakes the listeners of
+  accounts whose modseq moved. A wake-up carries no data; the listener
+  reads the state. No node tells another about a write: the writer cannot
+  know which nodes listen for the account, so every write would call
+  every node, and the poll would still be needed for calls that get lost.
+  A node without listeners asks nothing. Measured with two nodes on one
+  rqlite: a listener on the other node is woken 6 to 50 ms after the
+  write with a 50 ms poll, and within a second with the default.
+- **JMAP push** (RFC 8620 7.3): `GET /jmap/eventsource/?types=&closeafter=&ping=`
+  answers `text/event-stream` with `state` events that hold a
+  StateChange. Every type's state string is the account modseq, so the
+  handler reports the types whose objects changed since the state it sent
+  last, from the change log: `Mailbox`, `Thread`, `Email`,
+  `EmailDelivery` (only when an Email was created), `EmailSubmission`,
+  `Identity`. The event id is the state, so a client that reconnects with
+  `Last-Event-ID` is told at once what it missed. `ping` is kept between
+  5 seconds and an hour; 16 streams per account per node; streams end
+  when the server stops. `PushSubscription` (RFC 8620 7.2) is not
+  offered: it needs an outbound HTTPS client with verification, expiry
+  and retries, and message encryption (RFC 8291).
+- **API requests wait for a slot.** With push, every tab and client of an
+  account asks for the changes in the same moment, and the fifth request
+  at once was refused with the `limit` error (the browser test lost an
+  undo to that). A request over `maxConcurrentRequests` now waits up to 5
+  seconds for a slot, 32 at most per account, and is refused only then.
+- **Webmail.** `web/src/jmap/push.ts` keeps one EventSource (`types=*`,
+  `ping=30`). A `state` event, and every time the connection comes up,
+  makes the page fetch changes, also while the tab is hidden. An error
+  closes the connection and a new one is made after 1, 2, 4 ... 60
+  seconds (75 to 100% of each), from 1 second again once one opened; 75
+  seconds without an event or ping counts as an error. While push is not
+  connected the 30 second timer asks as before. The JMAP client keeps at
+  most `maxConcurrentRequests` requests in flight and queues the rest;
+  the mail page runs one round of refresh requests at a time.
+- **IMAP** (`internal/imap`, protocol only; `cmd/robinmail/imap.go` puts
+  the store behind its `Backend` and `User` interfaces). Config section
+  `imap {listen_tls, listen, max_connections, max_connections_per_ip,
+  max_connections_per_user}`: 993 with TLS from the first byte, and
+  optionally 143, which announces `LOGINDISABLED` and refuses `LOGIN` and
+  `AUTHENTICATE` until `STARTTLS` (a command sent in the same packet as
+  `STARTTLS` ends the connection). Logins go through
+  `web.Server.Login`, so IMAP shares the failure counters with the web
+  login and SMTP AUTH on all nodes; three failed logins end a
+  connection.
+  - Capabilities before login: `IMAP4rev1 IMAP4rev2 LITERAL+ SASL-IR ID
+    ENABLE`, plus `AUTH=PLAIN` under TLS or `STARTTLS LOGINDISABLED`
+    without. After login also `IDLE NAMESPACE UNSELECT UIDPLUS MOVE
+    SPECIAL-USE CHILDREN LIST-EXTENDED LIST-STATUS CONDSTORE ESEARCH
+    SEARCHRES BINARY STATUS=SIZE UTF8=ACCEPT`.
+  - Commands: `CAPABILITY NOOP LOGOUT ID STARTTLS LOGIN AUTHENTICATE
+    ENABLE SELECT EXAMINE CREATE DELETE RENAME SUBSCRIBE UNSUBSCRIBE LIST
+    LSUB NAMESPACE STATUS APPEND IDLE CHECK CLOSE UNSELECT EXPUNGE SEARCH
+    FETCH STORE COPY MOVE` and `UID FETCH|STORE|SEARCH|COPY|MOVE|EXPUNGE`.
+  - IMAP4rev2 (RFC 9051) after `ENABLE IMAP4rev2`: mailbox names in UTF-8,
+    `SEARCH` answers with `ESEARCH`, no `RECENT` and `UNSEEN` in `SELECT`
+    but a `LIST` line, `[CLOSED]` when another mailbox is selected,
+    `STATUS` with `SIZE` and `DELETED`. The rev1 commands keep working.
+  - `QRESYNC` is not offered. It needs to say which UIDs left a mailbox
+    since a modseq (`VANISHED`); the change log knows which Emails
+    changed, not which UID each had in which mailbox, so it would take a
+    table of expunged UIDs written by every removal.
+- **How the store's model shows in IMAP.**
+  - A mailbox is a label. An Email with three labels is a message in
+    three folders, with a UID of its own in each. Its flags are the same
+    in all of them, because keywords belong to the Email.
+  - Mailbox names are paths from `parent_id` with `/` between the levels;
+    the mailbox with the role `inbox` is `INBOX`. On the wire they are
+    modified UTF-7, or UTF-8 after `ENABLE IMAP4rev2` or `UTF8=ACCEPT`.
+    Roles are the special-use attributes (`\Drafts \Sent \Junk \Trash`).
+    A mailbox whose own name contains `/`, and one at the top called
+    "inbox" that is not the inbox, cannot be named and are not shown.
+  - Flags: `\Seen \Flagged \Answered \Draft` are `$seen $flagged
+    $answered $draft`; other keywords are flags as they are. `\Deleted`
+    is the keyword `$deleted`, which JMAP has no meaning for and shows
+    like any keyword. There is no `\Recent`: `RECENT` is always 0.
+  - `COPY` adds the target's label: the same Email, the target's next
+    UID. A message that is in the target already stays as it is there and
+    `COPYUID` names the UID it has (Gmail does the same). `MOVE` adds the
+    target and takes the source away, so the Email keeps its id and JMAP
+    sees an update; a `MOVE` into the mailbox the message is in gives it
+    a new UID.
+  - `EXPUNGE` (and `CLOSE`, `UID EXPUNGE`) takes the messages with
+    `$deleted` out of the mailbox. An Email that has another label only
+    loses this one, and the `$deleted` keyword with it, so the copies
+    elsewhere are not swept up by the next expunge there. An Email
+    without another label is destroyed. Nothing is moved to Trash: mail
+    clients do that themselves before they expunge, and expunge in Trash
+    has to mean gone.
+  - `DELETE` of a mailbox takes its messages out of it by the same rule.
+    A mailbox with children is refused; one with a role too.
+  - `RENAME` keeps the mailbox, its UIDs and its UIDVALIDITY; renaming
+    `INBOX` moves its messages to a new mailbox, as RFC 3501 6.3.5 says.
+  - `HIGHESTMODSEQ` is the account modseq and a message's `MODSEQ` its
+    Email's: a mailbox's value also moves when something else in the
+    account changes, which costs a client an empty `CHANGEDSINCE` fetch.
+  - `CREATE` over IMAP makes an unsubscribed mailbox (a client subscribes
+    itself); over JMAP the default stays subscribed.
+- **A session's view.** A session that selected a mailbox holds the list
+  of its messages (UID, Email id, flags, modseq, size, date); sequence
+  numbers are positions in it. It changes only when the client is told:
+  after a command, and during `IDLE`, the session reads the mailbox again
+  if the hub said something changed (all UIDs, and the messages with a
+  higher modseq, in one query) and sends `FETCH` for changed flags,
+  `EXPUNGE` for UIDs that went, `EXISTS` for new ones. `EXPUNGE` is held
+  back while answering `FETCH`, `STORE` and `SEARCH` (RFC 3501 7.4.1); a
+  message that went meanwhile keeps its number until then.
+- **Store.** `ViewMailbox`, `SetFlags` (add, remove, replace, with
+  `UNCHANGEDSINCE`), `CopyMessages` and `Expunge` work on UID ranges and
+  are one batch each. A batch stamps the emails it is about with the new
+  modseq and names the set by that stamp in its later statements; one
+  with nothing to do fails on a guard and bumps nothing. Schema version
+  6: `account.uidvalidity`, the last UIDVALIDITY the account gave out. A
+  new mailbox gets the later of that plus one and the clock.
+- **What it costs.** `FETCH` of flags, UID, size, date and modseq is
+  answered from the session. `ENVELOPE`, `BODYSTRUCTURE` and any body
+  section read and decrypt the whole message, also for one header field:
+  a client's first sync of a mailbox reads every message once.
+  `SEARCH` by flags, UID, size, internal date and modseq costs nothing;
+  `FROM TO CC BCC SUBJECT` and the `SENT` dates are answered from the
+  cached header columns in one query (a message is opened only when a
+  field was cut at 250 characters, has comments in it, or its `Date` is
+  within a day of the date asked for); `HEADER`, `BODY` and `TEXT` open
+  every message the cheaper keys left. There is no index until phase 8.
+- **Limits.** 30 minutes without a command, also during `IDLE`, ends a
+  session with `BYE` (one minute before login). 1000 connections, 20 per
+  address, 20 per user by default. A command line may have 64 KiB, a
+  literal that is not a message 64 KiB, a message the SMTP limit; a
+  non-synchronizing literal over the limit ends the connection. 20
+  commands in a row that are not IMAP end it too.
+- **Tests.**
+  - `internal/imap` against an in-memory backend with the store's label
+    rules: the sample session of RFC 3501 section 8 line for line, the
+    examples of 6.1 to 6.4.8 and 7.4.2 (every search key, the part
+    numbering example as a real message, the `BODYSTRUCTURE` examples),
+    and each extension from its RFC: 2177, 4315, 6851, 6154, 2342, 7888,
+    2971, 5161, 7162, 3691, 5258, 5819, 4959 with 4616, 4731, 5182,
+    3516, 6855, modified UTF-7 (3501 5.1.3) and IMAP4rev2 after `ENABLE`
+    (9051). Autologout, connection limits, shutdown, a selected mailbox
+    that is deleted. Fuzz tests: a logged-in session fed arbitrary
+    commands, the MIME tree, modified UTF-7, the `LIST` pattern matcher
+    against its definition.
+  - `TestIMAPAndJMAPOnTwoNodes` (`cmd/robinmail`): two `serve` on one
+    rqlite. Mail over SMTP on node B is `EXISTS` in an `IDLE` on node A
+    (0.7 s) and a StateChange on A's event source; a flag over JMAP is an
+    untagged `FETCH` (1 s); a `MOVE` in IMAP is `EXPUNGE` for the other
+    session and an updated Email in `Email/changes`; `COPY` is one Email
+    in two mailboxes; `EXPUNGE` drops a label, then destroys the Email;
+    ten failed IMAP logins close the web login on both nodes.
+  - `internal/notify`, `internal/store` (two stores on one rqlite, the
+    batches above), `internal/jmap` (RFC 8620 7.1 and 7.3), Vitest for the
+    webmail's push, Playwright (`e2e/push.spec.ts`): mail delivered by the
+    command line shows within seconds without a reload, a lost connection
+    is made again with growing pauses, and with push blocked the timer
+    finds the mail.
+- **The lab** (`make lab-test`). A container `imapclients` with clients
+  that are not ours, on the lab network, checking robinmail's certificate
+  against the lab CA.
+  - Dovecot's ImapTest (the project's binary for Debian 13 from its
+    `latest` release, built from commit bc23019, checksum pinned; its
+    source does not build against Debian's Dovecot 2.4.1). Scripted
+    tests: 72 groups, 36 pass, 30 skip themselves for capabilities
+    robinmail does not offer (`SORT`, `THREAD`, `CATENATE`, `MULTIAPPEND`,
+    `NOTIFY`, `URLAUTH`, `CONTEXT`, `PARTIAL`, `WITHIN`), 6 fail: 13 of
+    597 commands. The first run failed 14 groups. Stress: 20 clients for
+    30 seconds, about 11,000 commands, no complaint except the one
+    explained below.
+  - Fixed after ImapTest: UIDVALIDITY was the second of creation, so a
+    mailbox deleted and made again within a second got the same one; a
+    UID of 4294967295 was read as `*`; the `SENT` search keys went by
+    the UTC date of the `Date` field instead of the date written there;
+    `MOVE` into the same mailbox did nothing; `CREATE` made subscribed
+    mailboxes; a name that is not modified UTF-7 was `BAD` instead of
+    `NO`; `HIGHESTMODSEQ` was not sent when a command enabled CONDSTORE
+    in a selected mailbox; `ESEARCH` with `MIN` or `MAX` reported the
+    highest modseq of all matches; an empty `Sender` or `Reply-To` was
+    not replaced by `From` in `ENVELOPE`; `CHILDINFO` was given for
+    children the patterns listed themselves; an address written with
+    comments inside it was not found by `FROM`.
+  - Left failing, with the reason in `internal/labtest/imap_test.go`:
+    `\Recent` (10 commands in `select`, `copy`, `search-flags`: there is
+    no such flag here); a deleted mailbox that was subscribed does not
+    stay listed as `\NonExistent` (a subscription is a property of the
+    mailbox); the source route of `<@route:user@domain>` is not in the
+    `ENVELOPE`; a message appended with `Content-Transfer-Encoding:
+    binary` and NUL octets is returned as it is.
+  - In the stress run about 20 of 430 searches by header or body text
+    miss a message that another client expunged a moment before. The
+    session still holds its number, UID, flags, size and date and finds
+    it by those; its text went with the Email. ImapTest cannot know and
+    counts it; the test checks that every such search had a text key.
+  - mbsync (isync 1.5.1) and OfflineIMAP 8.0.0 each keep a Maildir in
+    step with an account: a first sync of 12 messages in 4 mailboxes
+    (one nested, with flags, UTF-8, attachments, long bodies), then a
+    flag, a destroy, a new message, a move and a new mailbox over JMAP
+    and a seen mark, a delete and a new message in the Maildir, a second
+    sync, and a third that must change nothing. After each, every
+    mailbox is compared over JMAP by SHA-256 of each message and its
+    flags. Both pass.
+  - Dovecot as a server was not needed: no behaviour was in dispute.
+- **Not driven from here: Thunderbird and iOS Mail.** Neither runs in a
+  container or without a person. To try by hand on the VPS, with a
+  certificate the device trusts (ACME) and `imap.listen_tls: ":993"`,
+  `submission.listen_tls: ":465"`:
+  1. Account setup. Thunderbird: manual config, IMAP `host:993`
+     SSL/TLS, "Normal password", user name the full address; SMTP
+     `host:465` SSL/TLS. iOS: Mail, Add Account, Other, IMAP, the same.
+     There is no autoconfig yet (phase 8), so both ask for the server.
+     Expect: the folder list with Inbox, Drafts, Sent, Junk and Trash
+     recognised as such (special-use), not as plain folders.
+  2. First sync of a mailbox with a few hundred messages: counts and
+     unread counts equal to the webmail; a message with attachments and
+     one with non-ASCII subject and sender open correctly.
+  3. New mail without refresh: leave the inbox open, send mail from
+     outside. Thunderbird should use IDLE on the selected folder; iOS may
+     fetch on its schedule instead. Note which it does and how long it
+     takes.
+  4. Flag and read: mark read and flag in the client, see it in the
+     webmail within a second or two; and the reverse, without touching
+     the client.
+  5. Move a message to another folder, and several at once; check the
+     webmail shows the same Email in the new mailbox. Drag a message
+     onto a folder it is already in (Thunderbird allows copy with Ctrl):
+     nothing should double.
+  6. Delete: to Trash, then "Empty Trash" (Thunderbird: also "Compact").
+     The message must be gone in the webmail. Check Thunderbird's
+     setting "When I delete a message": "Just mark it as deleted" shows
+     the `$deleted` keyword in JMAP; the webmail does not hide such
+     mail.
+  7. Create, rename, nest and delete a folder; a folder with a
+     non-ASCII name; subscribe and unsubscribe (Thunderbird only shows
+     subscribed folders: one made in the webmail is subscribed, one made
+     over IMAP by another client is not until that client subscribes).
+  8. Send from the client: the copy lands in Sent (APPEND), a draft is
+     saved to Drafts and replaced while typing.
+  9. Search in the client, in subjects and in bodies, and note the time
+     on a large mailbox (body search reads every message).
+  10. Leave both clients connected for a day: no repeated logins in the
+      log (the 30 minute timer against the client's keep-alive), no
+      duplicate messages, and the login failure counter not tripped by a
+      client that retries a stale password.
+- **Not handled.**
+  - No `\Recent`, `QRESYNC`, `SORT`, `THREAD`, `MULTIAPPEND`, `CATENATE`,
+    `NOTIFY`, `COMPRESS`, quotas or ACLs. `BINARY` is `FETCH` only.
+  - Subscriptions to mailboxes that do not exist, and names left behind
+    as `\Noselect` when a mailbox with children is deleted.
+  - A message with two labels counts twice in a client's totals, and a
+    client that deletes it in one folder leaves the other copy.
+  - A session cannot read the text of a message another session expunged
+    before this one was told (RFC 2180 4.1.2 allows the empty answer).
+  - A deleted mailbox ends the connections that have it selected.
+  - IMAP logs in with the account password until phase 7 has app
+    passwords. A wrong password stored in a mail client runs into the
+    shared limit of ten failures per address in 15 minutes, which also
+    closes the web login for that time.
+  - The limits on connections are per node.
 
 ### Phase 7: auth
 
@@ -1197,6 +1467,44 @@ Built as follows:
 - Exit: each item shown working with a test.
 
 ## Open questions
+
+- IMAP's `\Deleted` is the keyword `$deleted`, and the webmail shows mail
+  that carries it like any other. Hide it in JMAP, show it struck
+  through, or leave it: a client set to "just mark as deleted" leaves
+  such mail around for good.
+- A message with several labels is one message per folder in IMAP. A
+  client that deletes it in one folder leaves it in the others, and its
+  totals count it more than once. Gmail lives with the same; an "All
+  mail" view and a rule for what delete means would be the alternative.
+- `HIGHESTMODSEQ` is the account's modseq, so it moves for a mailbox in
+  which nothing changed. Exact would be the highest modseq of the
+  mailbox's own rows, which needs every write to an Email to stamp all
+  its mailboxes.
+- `QRESYNC` needs a record of which UID left which mailbox at which
+  modseq. A table written by every removal would give it, and would let
+  a session send `VANISHED` instead of comparing UID lists; worth it
+  once a client that uses it is slow without.
+- Every `FETCH` of a header field or structure reads and decrypts the
+  whole message, and a first sync does that for every message. The
+  envelope and body structure could be cached in the email row, or the
+  header kept apart from the body.
+- A session reads the whole UID list of its mailbox after every change
+  to the account. Fine for thousands of messages; a mailbox of a million
+  wants the change log instead.
+- One poll a second per node finds changes from other nodes, so push and
+  IDLE are up to a second late across nodes. A nudge between nodes would
+  cut that; so far nothing needs it.
+- An event source is one connection per tab, and a browser opens at most
+  six per host over HTTP/1.1. Go's HTTPS listener offers HTTP/2, where
+  that limit does not apply (not checked here); the plain development
+  listener is HTTP/1.1, so a seventh tab there waits.
+- ImapTest is the Dovecot project's binary from a release tag that moves;
+  the lab pins its checksum, and the build fails when the project
+  replaces it. Its source does not build against a released Dovecot.
+- Failed logins from a mail client with a stale password count against
+  the same ten per address as the web login, and lock the user out of
+  the webmail for the window. App passwords (phase 7) want a counter of
+  their own.
 
 - Where the master key comes from in production: a file is all there is. A
   lost key file loses all mail, so it needs a backup that is not next to the

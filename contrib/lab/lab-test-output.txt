@@ -3,22 +3,434 @@ contrib/lab/lab.sh up
  Image robinmail-lab-postfix Building 
  Image robinmail-lab Building 
  Image robinmail-lab-exim Building 
+ Image robinmail-lab-imapclients Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 2.55kB done
+#1 DONE 0.0s
+
+#2 [opensmtpd internal] load build definition from Dockerfile
+#2 transferring dockerfile: 447B done
+#2 DONE 0.0s
+
+#3 [exim internal] load build definition from Dockerfile
+#3 transferring dockerfile: 576B done
+#3 DONE 0.0s
+
+#4 [robinmail internal] load build definition from Dockerfile
+#4 transferring dockerfile: 908B done
+#4 DONE 0.0s
+
+#5 [imapclients internal] load build definition from Dockerfile
+#5 transferring dockerfile: 2.33kB done
+#5 DONE 0.0s
+
+#6 [postfix internal] load build definition from Dockerfile
+#6 transferring dockerfile: 830B done
+#6 DONE 0.0s
+
+#7 [opensmtpd internal] load metadata for docker.io/library/debian:trixie-20261104-slim
+#7 DONE 0.0s
+
+#8 [postfix internal] load .dockerignore
+#8 transferring context: 2B done
+#8 DONE 0.0s
+
+#9 [imapclients internal] load .dockerignore
+#9 transferring context: 2B done
+#9 DONE 0.0s
+
+#10 [opensmtpd internal] load .dockerignore
+#10 transferring context: 2B done
+#10 DONE 0.0s
+
+#11 [exim internal] load .dockerignore
+#11 transferring context: 2B done
+#11 DONE 0.0s
+
+#12 [imapclients internal] load build context
+#12 transferring context: 68B done
+#12 DONE 0.0s
+
+#13 [postfix internal] load build context
+#13 transferring context: 197B done
+#13 DONE 0.0s
+
+#14 [exim internal] load build context
+#14 transferring context: 91B done
+#14 DONE 0.0s
+
+#15 [opensmtpd internal] load build context
+#15 transferring context: 65B done
+#15 DONE 0.0s
+
+#16 [opensmtpd 1/6] FROM docker.io/library/debian:trixie-20261104-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+#16 resolve docker.io/library/debian:trixie-20261104-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 done
+#16 DONE 0.0s
+
+#17 [exim 2/4] RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends         exim4-daemon-heavy ripmime ca-certificates openssl     && rm -rf /var/lib/apt/lists/*     && useradd -m -s /bin/sh alice && useradd -m -s /bin/sh bob
+#17 CACHED
+
+#18 [exim 3/4] COPY exim4.conf aliases /etc/exim4/
+#18 CACHED
+
+#19 [exim 4/4] COPY entrypoint.sh /entrypoint.sh
+#19 CACHED
+
+#20 [postfix 3/4] COPY main.cf master.cf transport virtual tls_policy grey /etc/postfix/
+#20 CACHED
+
+#21 [postfix 2/4] RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends         postfix postgrey swaks libnet-ssleay-perl libio-socket-ssl-perl ripmime ca-certificates openssl     && rm -rf /var/lib/apt/lists/*     && useradd -m -s /bin/sh alice && useradd -m -s /bin/sh bob
+#21 CACHED
+
+#22 [postfix 4/4] COPY entrypoint.sh /entrypoint.sh
+#22 CACHED
+
+#23 [opensmtpd 3/4] COPY smtpd.conf /etc/smtpd.conf
+#23 CACHED
+
+#24 [opensmtpd 2/4] RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends         opensmtpd ripmime ca-certificates openssl     && rm -rf /var/lib/apt/lists/*     && useradd -m -s /bin/sh alice && useradd -m -s /bin/sh bob
+#24 CACHED
+
+#25 [opensmtpd 4/4] COPY entrypoint.sh /entrypoint.sh
+#25 CACHED
+
+#26 [imapclients 5/6] COPY entrypoint.sh /entrypoint.sh
+#26 CACHED
+
+#27 [imapclients 2/6] RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends         ca-certificates curl git isync offlineimap3 openssl procps     && rm -rf /var/lib/apt/lists/*
+#27 CACHED
+
+#28 [imapclients 3/6] RUN arch=$(uname -m)     && curl -fsSL -o /usr/local/bin/imaptest "https://github.com/dovecot/imaptest/releases/download/latest/imaptest-$arch-debian-13"     && eval "sum=\$IMAPTEST_SHA256_$arch"     && echo "$sum  /usr/local/bin/imaptest" | sha256sum -c -     && chmod 755 /usr/local/bin/imaptest     && git clone -q https://github.com/dovecot/imaptest.git /src/imaptest     && git -C /src/imaptest checkout -q bc2301917a0d7d0acd2e6557dc191988a05e81ba     && mkdir -p /lab/imaptest && cp -R /src/imaptest/src/tests /lab/imaptest/tests && rm -rf /src/imaptest
+#28 CACHED
+
+#29 [imapclients 4/6] RUN useradd -m -s /bin/sh mail1
+#29 CACHED
+
+#30 [imapclients 6/6] COPY messages.mbox /lab/imaptest/messages.mbox
+#30 CACHED
+
+#31 [postfix] exporting to image
+#31 exporting layers done
+#31 exporting manifest sha256:8eeb453acb38faef71535c198bfe5f4cef7f2299cb8f91b079e4ef66ac045b05 done
+#31 exporting config sha256:882895946fe13a2e9994cfb466fd6e53b44ceeeb9b1c83f5f2f8966d4ebacd30 done
+#31 exporting attestation manifest sha256:ff4640edd81735861176fa733ae4ccec536f0712b90c108a48a2be83356f032a 0.0s done
+#31 exporting manifest list sha256:fa1ef24a340212a734fd8f3de3820f64d835c6a11f26162452abbe5b65b2bf80 done
+#31 naming to docker.io/library/robinmail-lab-postfix:latest done
+#31 unpacking to docker.io/library/robinmail-lab-postfix:latest done
+#31 DONE 0.1s
+
+#32 [opensmtpd] exporting to image
+#32 exporting layers done
+#32 exporting manifest sha256:48af2c6f08a124794cd089b4cb9962a3e1aad7769c5bbda14b373e053c59c4da done
+#32 exporting config sha256:d2a1324ba15c3040f6c0111cc3d73d564aa79daec0b8c318f0c26de456f29edb done
+#32 exporting attestation manifest sha256:f6ee2c73d88e11cb7afd02a3359be2b617db0f31ef498668070da7575d975ee6 done
+#32 exporting manifest list sha256:e7e7a992cfeb36004288bc136383c0f320569cf119c940b8b60b43e84a199d9e done
+#32 naming to docker.io/library/robinmail-lab-opensmtpd:latest done
+#32 unpacking to docker.io/library/robinmail-lab-opensmtpd:latest done
+#32 DONE 0.1s
+
+#33 [exim] exporting to image
+#33 exporting layers done
+#33 exporting manifest sha256:8f64020d0934def2104f21fd0812320e620d18a3190fed4aa2d620896c194708 done
+#33 exporting config sha256:9fadddd3836b24bd264d81f43b9109823986a9b27fbd33e177f60b02cf2f0067 done
+#33 exporting attestation manifest sha256:5fc343096a7221743dd3e344f0436b8679ba442489790741d908cc36faddafd2 done
+#33 exporting manifest list sha256:c497043c4d9a0ceaab0f5d927ad61df0ca26798183e8fc493b213001d1d8e3f5 done
+#33 naming to docker.io/library/robinmail-lab-exim:latest done
+#33 unpacking to docker.io/library/robinmail-lab-exim:latest done
+#33 DONE 0.1s
+
+#34 [imapclients] exporting to image
+#34 exporting layers done
+#34 exporting manifest sha256:024d491493391541192235199bc10e391c91c871011322fefcca5a7b9f83aea4 done
+#34 exporting config sha256:ec94a1c20fc7d2f7203a8e580f1a5a1af29fd2bcba94efb2b7d287ece1292465 done
+#34 exporting attestation manifest sha256:22dad8b71b6eff7f1e6e401f5243602475b45d90dddcba5437c6b703cd2210c4 done
+#34 exporting manifest list sha256:bdcf5af95d2921722a9341a24028c41b90f1ad58f87376f0796a308741a8af02 done
+#34 naming to docker.io/library/robinmail-lab-imapclients:latest done
+#34 unpacking to docker.io/library/robinmail-lab-imapclients:latest done
+#34 DONE 0.1s
+
+#35 [imapclients] resolving provenance for metadata file
+#35 DONE 0.0s
+
+#36 [exim] resolving provenance for metadata file
+#36 DONE 0.0s
+
+#37 [postfix] resolving provenance for metadata file
+#37 DONE 0.0s
+
+#38 [opensmtpd] resolving provenance for metadata file
+#38 DONE 0.0s
+
+#39 [robinmail internal] load metadata for docker.io/library/golang:1.27-alpine
+#39 DONE 0.6s
+
+#40 [robinmail internal] load metadata for docker.io/library/node:26-alpine
+#40 DONE 0.6s
+
+#41 [robinmail internal] load metadata for docker.io/library/alpine:3.22
+#41 DONE 0.7s
+
+#42 [robinmail internal] load .dockerignore
+#42 transferring context: 239B done
+#42 DONE 0.0s
+
+#43 [robinmail internal] load build context
+#43 DONE 0.0s
+
+#44 [robinmail stage-2 1/2] FROM docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+#44 resolve docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f done
+#44 DONE 0.0s
+
+#45 [robinmail build 1/8] FROM docker.io/library/golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523
+#45 resolve docker.io/library/golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523
+#45 resolve docker.io/library/golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523 done
+#45 DONE 0.0s
+
+#46 [robinmail web 1/6] FROM docker.io/library/node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5
+#46 resolve docker.io/library/node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 done
+#46 DONE 0.0s
+
+#43 [robinmail internal] load build context
+#43 transferring context: 11.22kB 0.0s done
+#43 DONE 0.0s
+
+#47 [robinmail build 7/8] COPY --from=web /src/web/dist/ internal/web/dist/
+#47 CACHED
+
+#48 [robinmail build 2/8] WORKDIR /src
+#48 CACHED
+
+#49 [robinmail build 4/8] RUN go mod download
+#49 CACHED
+
+#50 [robinmail web 2/6] WORKDIR /src/web
+#50 CACHED
+
+#51 [robinmail build 3/8] COPY go.mod go.sum ./
+#51 CACHED
+
+#52 [robinmail build 5/8] COPY cmd/ cmd/
+#52 CACHED
+
+#53 [robinmail web 4/6] RUN npm ci
+#53 CACHED
+
+#54 [robinmail build 6/8] COPY internal/ internal/
+#54 CACHED
+
+#55 [robinmail web 5/6] COPY web/ ./
+#55 CACHED
+
+#56 [robinmail build 8/8] RUN CGO_ENABLED=0 go build -tags webmail -trimpath -o /robinmail ./cmd/robinmail
+#56 CACHED
+
+#57 [robinmail web 3/6] COPY web/package.json web/package-lock.json ./
+#57 CACHED
+
+#58 [robinmail web 6/6] RUN npm run build
+#58 CACHED
+
+#59 [robinmail stage-2 2/2] COPY --from=build /robinmail /usr/local/bin/robinmail
+#59 CACHED
+
+#60 [robinmail] exporting to image
+#60 exporting layers done
+#60 exporting manifest sha256:e55e309d7494c22772707950e999b7a4e197168c8ff24ecb633b927bea18a305 done
+#60 exporting config sha256:94dd85e2f0ffe80b33a84a592abf7dab4d255eccfe975818a0b69b1cf9251b5f done
+#60 exporting attestation manifest sha256:5110b9975132f3155381a2bf0a6965752a7b252568af61d80a54546799691ecc done
+#60 exporting manifest list sha256:27edd5025f01a4411d58b106fe405ee5c20913e6ee4c828bce80843b80464543 done
+#60 naming to docker.io/library/robinmail-lab:latest done
+#60 unpacking to docker.io/library/robinmail-lab:latest done
+#60 DONE 0.0s
+
+#61 [robinmail] resolving provenance for metadata file
+#61 DONE 0.0s
  Image robinmail-lab-opensmtpd Built 
- Image robinmail-lab-postfix Built 
- Image robinmail-lab-exim Built 
  Image robinmail-lab Built 
+ Image robinmail-lab-exim Built 
+ Image robinmail-lab-imapclients Built 
+ Image robinmail-lab-postfix Built 
+ Network robinmail-lab_gate Creating 
+ Network robinmail-lab_lab Creating 
+ Network robinmail-lab_gate Creating 
+ Volume robinmail-lab_robinmail Creating 
+ Volume robinmail-lab_robinmail Creating 
+ Network robinmail-lab_lab Creating 
+ Volume robinmail-lab_robinmail Created 
+ Volume robinmail-lab_robinmail Created 
+ Network robinmail-lab_lab Created 
+ Network robinmail-lab_lab Created 
+ Container robinmail-lab-dns-1 Creating 
+ Container robinmail-lab-rqlite-1 Creating 
+ Network robinmail-lab_gate Created 
+ Network robinmail-lab_gate Created 
+ Container robinmail-lab-dns-1 Created 
+ Container robinmail-lab-imapclients-1 Creating 
+ Container robinmail-lab-opensmtpd-1 Creating 
+ Container robinmail-lab-exim-1 Creating 
+ Container robinmail-lab-postfix-1 Creating 
+ Container robinmail-lab-notls-1 Creating 
+ Container robinmail-lab-badtls-1 Creating 
+ Container robinmail-lab-web-1 Creating 
+ Container robinmail-lab-rqlite-1 Created 
+ Container robinmail-lab-robinmail-1 Creating 
+ Container robinmail-lab-imapclients-1 Created 
+ Container robinmail-lab-exim-1 Created 
+ Container robinmail-lab-notls-1 Created 
+ Container robinmail-lab-postfix-1 Created 
+ Container robinmail-lab-opensmtpd-1 Created 
+ Container robinmail-lab-robinmail-1 Created 
+ Container robinmail-lab-badtls-1 Created 
+ Container robinmail-lab-web-1 Created 
+ Container robinmail-lab-dns-1 Starting 
+ Container robinmail-lab-rqlite-1 Starting 
+ Container robinmail-lab-dns-1 Started 
+ Container robinmail-lab-web-1 Starting 
+ Container robinmail-lab-opensmtpd-1 Starting 
+ Container robinmail-lab-notls-1 Starting 
+ Container robinmail-lab-exim-1 Starting 
+ Container robinmail-lab-badtls-1 Starting 
+ Container robinmail-lab-postfix-1 Starting 
+ Container robinmail-lab-imapclients-1 Starting 
+ Container robinmail-lab-rqlite-1 Started 
+ Container robinmail-lab-robinmail-1 Starting 
+ Container robinmail-lab-web-1 Started 
+ Container robinmail-lab-opensmtpd-1 Started 
+ Container robinmail-lab-notls-1 Started 
+ Container robinmail-lab-exim-1 Started 
+ Container robinmail-lab-badtls-1 Started 
+ Container robinmail-lab-postfix-1 Started 
+ Container robinmail-lab-imapclients-1 Started 
+ Container robinmail-lab-robinmail-1 Started 
 added robin.test
-created alice@robin.test (account v4fn2cspqfrnmqor)
-created bob@robin.test (account apfh5zufnpd64idz)
+created alice@robin.test (account zxyufgklapxeuzb4)
+created bob@robin.test (account 23f2q4w54lpx6wxd)
+created imaptest@robin.test (account kcx235466p6vwoqp)
+created mbsync@robin.test (account zxnop4vvekwgbt5c)
+created offlineimap@robin.test (account ouxatyotyscn76xt)
 Postfix   3.10.13
 Exim      4.98.2
 OpenSMTPD 7.6.0p1-1
 postgrey  1.37-2.1
 swaks     20240103.0-2
 ripmime   1.4.0.10.debian.1-3+b2
+ImapTest  release latest, commit bc23019
+mbsync    isync 1.5.1
+OfflineIMAP 8.0.0
 CoreDNS   1.15.0
 nginx     1.30.6
 rqlite    v10.7.1
+=== RUN   TestImapTestScripts
+    imap_test.go:74: *** Test append-binary command 3/5 (line 20)
+         - failed: Unexpected untagged match:
+        Match: 1 fetch ($!unordered=2 body[1] {0}
+        )
+        Reply: 1 FETCH (BODY[1] "")
+         - Command (tag 4.8): fetch 1 (body.peek[1])
+    imap_test.go:74: *** Test copy command 16/24 (line 28)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: 3 recent
+         - first expanded: 3 recent
+         - best match: 3 EXISTS
+         - Command: noop
+    imap_test.go:74: *** Test copy command 17/24 (line 32)
+         - failed: Missing 3 untagged replies (3 mismatches)
+         - first unexpanded: 1 fetch ($!unordered=2 flags ($!ignore=$HasNoAttachment $!ignore=$HasAttachment $!ignore=\recent $!noextra $!unordered \recent \seen) internaldate $date1)
+         - first expanded: 1 fetch ( flags (     \recent \seen) internaldate 22-Feb-2008 17:06:23 +0000)
+         - best match: 1 FETCH (FLAGS (\Seen) INTERNALDATE "22-Feb-2008 17:06:23 +0000")
+         - Command: fetch 1:3 (flags internaldate)
+    imap_test.go:74: *** Test copy command 20/24 (line 41)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: 4 recent
+         - first expanded: 4 recent
+         - best match: 4 EXISTS
+         - Command: noop
+    imap_test.go:74: *** Test copy command 21/24 (line 45)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: 4 fetch ($!unordered=2 flags ($!ignore=$HasNoAttachment $!ignore=$HasAttachment $!ignore=\recent $!noextra $!unordered \recent \flagged $$keyword1 $$keyword2) internaldate $date5)
+         - first expanded: 4 fetch ( flags (     \recent \flagged $keyword1 $keyword2) internaldate 22-Feb-2008 17:06:23 +0000)
+         - best match: 4 FETCH (FLAGS (\Flagged $keyword1 $keyword2) INTERNALDATE "22-Feb-2008 17:06:23 +0000")
+         - Command: fetch 4 (flags internaldate)
+    imap_test.go:74: *** Test fetch-envelope command 1/2 (line 4)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: 6 FETCH ($!unordered=2 ENVELOPE ("Thu, 15 Feb 2007 01:02:03 +0200" NIL ((NIL "@route" "user" "domain")) ((NIL "@route" "user" "domain")) ((NIL "@route" "user" "domain")) NIL NIL NIL NIL NIL))
+         - first expanded: 6 FETCH ( ENVELOPE ("Thu, 15 Feb 2007 01:02:03 +0200" NIL ((NIL "@route" "user" "domain")) ((NIL "@route" "user" "domain")) ((NIL "@route" "user" "domain")) NIL NIL NIL NIL NIL))
+         - best match: 6 FETCH (ENVELOPE ("Thu, 15 Feb 2007 01:02:03 +0200" NIL ((NIL NIL "user" "domain")) ((NIL NIL "user" "domain")) ((NIL NIL "user" "domain")) NIL NIL NIL NIL NIL))
+         - Command: fetch 1:* envelope
+    imap_test.go:74: *** Test listext command 26/34 (line 56)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: list ($!unordered $!ban=\noselect \subscribed \nonexistent) $sep $mailbox${sep}test6
+         - first expanded: list (  \subscribed \nonexistent) / imaptest/test6
+         - best match: LIST (\Subscribed \HasNoChildren) "/" imaptest/test1
+         - Command: list (subscribed) "" $mailbox${sep}*
+    imap_test.go:74: *** Test search-flags command 18/47 (line 39)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: search 1 3 4 5
+         - first expanded: search 1 3 4 5
+         - best match: SEARCH
+         - Command: search new
+    imap_test.go:74: *** Test search-flags command 19/47 (line 42)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: search
+         - first expanded: search
+         - best match: SEARCH 1 2 3 4 5
+         - Command: search old
+    imap_test.go:74: *** Test search-flags command 20/47 (line 45)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: search 1 2 3 4 5
+         - first expanded: search 1 2 3 4 5
+         - best match: SEARCH
+         - Command: search recent
+    imap_test.go:74: *** Test select command 3/9 (line 7)
+         - failed: Missing 1 untagged replies (4 mismatches)
+         - first unexpanded: 2 recent
+         - first expanded: 2 recent
+         - best match: 2 EXISTS
+         - Command: examine $mailbox
+    imap_test.go:74: *** Test select command 5/9 (line 18)
+         - failed: Missing 1 untagged replies (1 mismatches)
+         - first unexpanded: status $mailbox ($!unordered=2 messages 2 recent 2 uidnext $uidnext uidvalidity $uidvalidity unseen 2)
+         - first expanded: status imaptest ( messages 2 recent 2 uidnext 3 uidvalidity 1794668505 unseen 2)
+         - best match: STATUS imaptest (MESSAGES 2 RECENT 0 UIDNEXT 3 UIDVALIDITY 1794668505 UNSEEN 2)
+         - Command: status $mailbox (messages recent uidnext uidvalidity unseen)
+    imap_test.go:74: *** Test select command 6/9 (line 22)
+         - failed: Missing 1 untagged replies (4 mismatches)
+         - first unexpanded: 2 recent
+         - first expanded: 2 recent
+         - best match: 2 EXISTS
+         - Command: select $mailbox
+    imap_test.go:90: known: append-binary   1 command(s): a message appended with "Content-Transfer-Encoding: binary" and NUL octets is stored and returned as it is; ImapTest wants BODY[1] of it re-encoded. Mail from SMTP cannot have NULs
+    imap_test.go:90: known: copy            4 command(s): the same: expects \Recent on copied messages
+    imap_test.go:90: known: fetch-envelope  1 command(s): expects the source route of "<@route:user@domain>" in the ENVELOPE: routes are obsolete (RFC 5322 4.4) and internal/message drops them
+    imap_test.go:90: known: listext         1 command(s): expects a deleted mailbox that was subscribed to stay in the list as \NonExistent: a subscription here is a property of the mailbox and goes with it
+    imap_test.go:90: known: search-flags    3 command(s): the same: SEARCH NEW, OLD and RECENT
+    imap_test.go:90: known: select          3 command(s): expects \Recent and a RECENT count: robinmail keeps no \Recent flag (IMAP4rev2 dropped it), RECENT is always 0
+    imap_test.go:101: ImapTest scripts: 72 groups, 36 pass, 6 fail (all known), 30 skipped for capabilities robinmail does not offer
+    imap_test.go:104: ImapTest scripts: base protocol: 11 of 460 commands failed
+    imap_test.go:104: ImapTest scripts: extensions: 2 of 137 commands failed
+--- PASS: TestImapTestScripts (3.60s)
+=== RUN   TestImapTestStress
+    imap_test.go:156: ImapTest stress: 12297 commands in 30 seconds from 20 clients: Logi 1204, List 582, Stat 598, Sele 1193, UIDF 378, Fetc 1189, Fet2 1698, Sear 478, Copy 360, Stor 464, Dele 602, Expu 1185, Appe 823, Noop 232, Chec 107, Logo 1204
+    imap_test.go:185: ImapTest stress: 0 complaints other than missing search results; 17 searches by text missed a message that was expunged under them
+--- PASS: TestImapTestStress (32.04s)
+=== RUN   TestSyncClients
+=== RUN   TestSyncClients/mbsync
+    imap_test.go:576: mbsync, first sync: 154ms
+    imap_test.go:577: after the first sync: 12 messages in 4 mailboxes, the same on both sides
+    imap_test.go:614: mbsync, second sync: 152ms
+    imap_test.go:615: after the second sync: 13 messages in 5 mailboxes, the same on both sides
+    imap_test.go:655: mbsync, third sync: 1.184s
+    imap_test.go:656: after the third sync: 13 messages in 5 mailboxes, the same on both sides
+=== RUN   TestSyncClients/offlineimap
+    imap_test.go:576: offlineimap, first sync: 478ms
+    imap_test.go:577: after the first sync: 12 messages in 4 mailboxes, the same on both sides
+    imap_test.go:614: offlineimap, second sync: 469ms
+    imap_test.go:615: after the second sync: 13 messages in 5 mailboxes, the same on both sides
+    imap_test.go:655: offlineimap, third sync: 439ms
+    imap_test.go:656: after the third sync: 13 messages in 5 mailboxes, the same on both sides
+--- PASS: TestSyncClients (4.67s)
+    --- PASS: TestSyncClients/mbsync (2.33s)
+    --- PASS: TestSyncClients/offlineimap (2.34s)
 === RUN   TestInbound
 === RUN   TestInbound/postfix
 === PAUSE TestInbound/postfix
@@ -28,33 +440,33 @@ rqlite    v10.7.1
 === PAUSE TestInbound/opensmtpd
 === CONT  TestInbound/postfix
 === CONT  TestInbound/opensmtpd
-=== RUN   TestInbound/opensmtpd/ascii
 === RUN   TestInbound/postfix/ascii
 === CONT  TestInbound/exim
+=== RUN   TestInbound/opensmtpd/ascii
 === RUN   TestInbound/exim/ascii
 === NAME  TestInbound/opensmtpd/ascii
-    lab_test.go:113: robinmail's Received: from mx.opensmtpd.test (mx.opensmtpd.test [10.77.25.13]) by mx.robin.test (robinmail) with ESMTPS id B1EA1EC79A23191C (TLS 1.3 TLS_AES_128_GCM_SHA256) for <alice@robin.test>; Sat, 14 Nov 2026 12:14:53 +0000
+    lab_test.go:113: robinmail's Received: from mx.opensmtpd.test (mx.opensmtpd.test [10.77.25.13]) by mx.robin.test (robinmail) with ESMTPS id D6D437EBA4F82710 (TLS 1.3 TLS_AES_128_GCM_SHA256) for <alice@robin.test>; Sat, 14 Nov 2026 15:01:28 +0000
 === NAME  TestInbound/postfix/ascii
-    lab_test.go:113: robinmail's Received: from mx.postfix.test (mx.postfix.test [10.77.25.11]) by mx.robin.test (robinmail) with ESMTPS id AA4B51FF46CDE574 (TLS 1.3 TLS_AES_128_GCM_SHA256) for <alice@robin.test>; Sat, 14 Nov 2026 12:14:53 +0000
+    lab_test.go:113: robinmail's Received: from mx.postfix.test (mx.postfix.test [10.77.25.11]) by mx.robin.test (robinmail) with ESMTPS id C396A1C50AD8B3A6 (TLS 1.3 TLS_AES_128_GCM_SHA256) for <alice@robin.test>; Sat, 14 Nov 2026 15:01:28 +0000
 === NAME  TestInbound/exim/ascii
-    lab_test.go:113: robinmail's Received: from mx.exim.test (mx.exim.test [10.77.25.12]) by mx.robin.test (robinmail) with ESMTPS id F39EBC90129AFF11 (TLS 1.3 TLS_AES_128_GCM_SHA256) for <alice@robin.test>; Sat, 14 Nov 2026 12:14:53 +0000
+    lab_test.go:113: robinmail's Received: from mx.exim.test (mx.exim.test [10.77.25.12]) by mx.robin.test (robinmail) with ESMTPS id FEC9C54DCF401060 (TLS 1.3 TLS_AES_128_GCM_SHA256) for <alice@robin.test>; Sat, 14 Nov 2026 15:01:28 +0000
+    lab_test.go:119: MAIL as exim sends it: "MAIL FROM:<alice@exim.test> SIZE=1437" (pipelined: true)
+=== RUN   TestInbound/exim/tls
 === NAME  TestInbound/opensmtpd/ascii
     lab_test.go:119: MAIL as opensmtpd sends it: "MAIL FROM:<alice@opensmtpd.test>" (pipelined: false)
 === RUN   TestInbound/opensmtpd/tls
 === NAME  TestInbound/postfix/ascii
     lab_test.go:119: MAIL as postfix sends it: "MAIL FROM:<alice@postfix.test> SIZE=347" (pipelined: true)
 === RUN   TestInbound/postfix/tls
-=== NAME  TestInbound/exim/ascii
-    lab_test.go:119: MAIL as exim sends it: "MAIL FROM:<alice@exim.test> SIZE=1437" (pipelined: true)
-=== RUN   TestInbound/exim/tls
 === RUN   TestInbound/postfix/8bit
 === RUN   TestInbound/exim/8bit
+=== RUN   TestInbound/opensmtpd/8bit
+=== NAME  TestInbound/exim/8bit
     lab_test.go:155: MAIL: "MAIL FROM:<alice@exim.test> SIZE=1560"
 === NAME  TestInbound/postfix/8bit
     lab_test.go:155: MAIL: "MAIL FROM:<alice@postfix.test> SIZE=467 BODY=8BITMIME"
-=== RUN   TestInbound/postfix/latin1
 === RUN   TestInbound/exim/latin1
-=== RUN   TestInbound/opensmtpd/8bit
+=== RUN   TestInbound/postfix/latin1
 === RUN   TestInbound/postfix/encoded_headers
 === RUN   TestInbound/exim/encoded_headers
 === RUN   TestInbound/postfix/utf8_headers
@@ -70,6 +482,7 @@ rqlite    v10.7.1
 === RUN   TestInbound/exim/utf8_sender
 === RUN   TestInbound/exim/near_limit
 === RUN   TestInbound/postfix/near_limit
+=== RUN   TestInbound/opensmtpd/encoded_headers
 === NAME  TestInbound/exim/near_limit
     lab_test.go:255: stored 2063262 bytes; the limit is 2097152
 === RUN   TestInbound/exim/over_limit
@@ -77,45 +490,51 @@ rqlite    v10.7.1
 === NAME  TestInbound/postfix/near_limit
     lab_test.go:255: stored 2063201 bytes; the limit is 2097152
 === RUN   TestInbound/postfix/over_limit
-=== RUN   TestInbound/opensmtpd/encoded_headers
-=== NAME  TestInbound/postfix/over_limit
     lab_test.go:265: postfix reports: status 5.3.4, "message size 2268304 exceeds size limit 2097152 of server mx.robin.test[10.77.25.10]"
-=== NAME  TestInbound/exim/over_limit
-    lab_test.go:273: on the wire: ["MAIL FROM:<alice@exim.test> SIZE=1402" "MAIL FROM:<alice@exim.test> SIZE=1560" "MAIL FROM:<alice@exim.test> SIZE=1508" "MAIL FROM:<alice@exim.test> SIZE=1478" "MAIL FROM:<alice@exim.test> SIZE=1594" "MAIL FROM:<jörg@exim.test> SIZE=1589 SMTPUTF8" "MAIL FROM:<alice@exim.test> SIZE=2064037" "MAIL FROM:<alice@exim.test> SIZE=2269397" "552 5.3.4 Message size exceeds fixed maximum message size"]
-=== RUN   TestInbound/exim/recipients
 === RUN   TestInbound/opensmtpd/utf8_headers
+=== NAME  TestInbound/exim/over_limit
+    lab_test.go:273: on the wire: ["MAIL FROM:<alice@exim.test> SIZE=1560" "MAIL FROM:<alice@exim.test> SIZE=1508" "MAIL FROM:<alice@exim.test> SIZE=1478" "MAIL FROM:<alice@exim.test> SIZE=1594" "MAIL FROM:<jörg@exim.test> SIZE=1589 SMTPUTF8" "MAIL FROM:<alice@exim.test> SIZE=2064037" "MAIL FROM:<alice@exim.test> SIZE=2269397" "552 5.3.4 Message size exceeds fixed maximum message size"]
+=== RUN   TestInbound/exim/recipients
 === NAME  TestInbound/postfix/over_limit
-    lab_test.go:273: on the wire: ["MAIL FROM:<alice@postfix.test> SIZE=415 BODY=8BITMIME" "MAIL FROM:<alice@postfix.test> SIZE=385" "MAIL FROM:<alice@postfix.test> SIZE=501 BODY=8BITMIME SMTPUTF8" "MAIL FROM:<jörg@postfix.test> SIZE=467 BODY=8BITMIME SMTPUTF8" "MAIL FROM:<alice@postfix.test> SIZE=2062944"]
+    lab_test.go:273: on the wire: ["MAIL FROM:<alice@postfix.test> SIZE=385" "MAIL FROM:<alice@postfix.test> SIZE=501 BODY=8BITMIME SMTPUTF8" "MAIL FROM:<jörg@postfix.test> SIZE=467 BODY=8BITMIME SMTPUTF8" "MAIL FROM:<alice@postfix.test> SIZE=2062944"]
 === RUN   TestInbound/postfix/recipients
 === NAME  TestInbound/exim/recipients
-    lab_test.go:298: exim: Reporting-MTA "mx.exim.test", status 5.0.0, diagnostic "550 5.1.1 No such user", original Message-ID "lab0f142cde0b4b@harness.lab.test"
+    lab_test.go:298: exim: Reporting-MTA "mx.exim.test", status 5.0.0, diagnostic "550 5.1.1 No such user", original Message-ID "lab90bc4c4576bb@harness.lab.test"
 === RUN   TestInbound/exim/long_line
-=== NAME  TestInbound/postfix/recipients
-    lab_test.go:298: postfix: Reporting-MTA "mx.postfix.test", status 5.1.1, diagnostic "550 5.1.1 No such user", original Message-ID "lab9dfb0081df2f@harness.lab.test"
-=== RUN   TestInbound/postfix/long_line
-=== RUN   TestInbound/exim/too_long_line
-    lab_test.go:343: exim bounced it: --1794658499-eximdsn-184852099
-        Content-type: text/plain; charset=us-ascii
-        This message was created automatically by mail delivery software.
-        A message that you sent could not be delivered to one or more of its
-        recipients. This is a permanent error. The following address(es) failed:
-          alice@robin.test
-            message has lines too long for transport
-        --1794658499-eximdsn-184852099
-        Content-type: message/delivery-status
-        Reporting-MTA: dns; mx.exim.test
-        Action: failed
-        Final-Recipient: rfc822;alice@robin.test
-        Status: 5.0.0
-        --1794658499-eximdsn-184852099
-        Content-type: text/rfc822-headers
-        Return-pa…
-=== RUN   TestInbound/exim/dots
 === NAME  TestInbound/opensmtpd/utf8_headers
     lab_test.go:209: MAIL: "MAIL FROM:<alice@opensmtpd.test>"
 === RUN   TestInbound/opensmtpd/utf8_sender
     lab_test.go:216: opensmtpd has no SMTPUTF8
 === RUN   TestInbound/opensmtpd/near_limit
+=== NAME  TestInbound/postfix/recipients
+    lab_test.go:298: postfix: Reporting-MTA "mx.postfix.test", status 5.1.1, diagnostic "550 5.1.1 No such user", original Message-ID "lab8cb0e59048a6@harness.lab.test"
+=== RUN   TestInbound/postfix/long_line
+=== RUN   TestInbound/exim/too_long_line
+    lab_test.go:343: exim bounced it: --1794668493-eximdsn-986861955
+        Content-type: text/plain; charset=us-ascii
+        
+        This message was created automatically by mail delivery software.
+        
+        A message that you sent could not be delivered to one or more of its
+        recipients. This is a permanent error. The following address(es) failed:
+        
+          alice@robin.test
+            message has lines too long for transport
+        
+        --1794668493-eximdsn-986861955
+        Content-type: message/delivery-status
+        
+        Reporting-MTA: dns; mx.exim.test
+        
+        Action: failed
+        Final-Recipient: rfc822;alice@robin.test
+        Status: 5.0.0
+        
+        --1794668493-eximdsn-986861955
+        Content-type: text/rfc822-headers
+        
+        Return-pa…
+=== RUN   TestInbound/exim/dots
 === RUN   TestInbound/postfix/too_long_line
     lab_test.go:352: postfix changed the line: the longest is now 998
 === RUN   TestInbound/postfix/dots
@@ -123,56 +542,56 @@ rqlite    v10.7.1
     lab_test.go:255: stored 2063245 bytes; the limit is 2097152
 === RUN   TestInbound/opensmtpd/over_limit
     lab_test.go:265: opensmtpd reports: status 5.0.0, ""
-    lab_test.go:273: on the wire: ["MAIL FROM:<alice@opensmtpd.test>" "MAIL FROM:<alice@opensmtpd.test>"]
+    lab_test.go:273: on the wire: ["MAIL FROM:<alice@opensmtpd.test>" "MAIL FROM:<alice@opensmtpd.test>" "MAIL FROM:<alice@opensmtpd.test>"]
 === RUN   TestInbound/opensmtpd/recipients
-    lab_test.go:298: opensmtpd: Reporting-MTA "mx", status 5.0.0, diagnostic "", original Message-ID "lab635284b659a6@harness.lab.test"
+    lab_test.go:298: opensmtpd: Reporting-MTA "mx", status 5.0.0, diagnostic "", original Message-ID "labdfc3e90fec06@harness.lab.test"
 === RUN   TestInbound/opensmtpd/long_line
 === RUN   TestInbound/opensmtpd/too_long_line
     lab_test.go:352: opensmtpd changed the line: the longest is now 76
 === RUN   TestInbound/opensmtpd/dots
---- PASS: TestInbound (0.09s)
-    --- PASS: TestInbound/exim (6.08s)
-        --- PASS: TestInbound/exim/ascii (0.51s)
-        --- PASS: TestInbound/exim/tls (0.41s)
-        --- PASS: TestInbound/exim/8bit (0.52s)
+--- PASS: TestInbound (0.08s)
+    --- PASS: TestInbound/exim (6.31s)
+        --- PASS: TestInbound/exim/ascii (0.54s)
+        --- PASS: TestInbound/exim/tls (0.43s)
+        --- PASS: TestInbound/exim/8bit (0.54s)
         --- PASS: TestInbound/exim/latin1 (0.42s)
-        --- PASS: TestInbound/exim/encoded_headers (0.42s)
-        --- PASS: TestInbound/exim/utf8_headers (0.48s)
-        --- PASS: TestInbound/exim/utf8_sender (0.18s)
-        --- PASS: TestInbound/exim/near_limit (0.40s)
-        --- PASS: TestInbound/exim/over_limit (1.28s)
-        --- PASS: TestInbound/exim/recipients (0.48s)
+        --- PASS: TestInbound/exim/encoded_headers (0.46s)
+        --- PASS: TestInbound/exim/utf8_headers (0.54s)
+        --- PASS: TestInbound/exim/utf8_sender (0.20s)
+        --- PASS: TestInbound/exim/near_limit (0.41s)
+        --- PASS: TestInbound/exim/over_limit (1.30s)
+        --- PASS: TestInbound/exim/recipients (0.51s)
         --- PASS: TestInbound/exim/long_line (0.39s)
         --- PASS: TestInbound/exim/too_long_line (0.17s)
-        --- PASS: TestInbound/exim/dots (0.41s)
-    --- PASS: TestInbound/postfix (6.66s)
-        --- PASS: TestInbound/postfix/ascii (0.51s)
-        --- PASS: TestInbound/postfix/tls (0.41s)
-        --- PASS: TestInbound/postfix/8bit (0.52s)
-        --- PASS: TestInbound/postfix/latin1 (0.41s)
-        --- PASS: TestInbound/postfix/encoded_headers (0.42s)
-        --- PASS: TestInbound/postfix/utf8_headers (0.49s)
-        --- PASS: TestInbound/postfix/utf8_sender (0.48s)
-        --- PASS: TestInbound/postfix/near_limit (0.42s)
-        --- PASS: TestInbound/postfix/over_limit (1.25s)
-        --- PASS: TestInbound/postfix/recipients (0.47s)
-        --- PASS: TestInbound/postfix/long_line (0.39s)
-        --- PASS: TestInbound/postfix/too_long_line (0.48s)
-        --- PASS: TestInbound/postfix/dots (0.42s)
-    --- PASS: TestInbound/opensmtpd (14.91s)
-        --- PASS: TestInbound/opensmtpd/ascii (0.50s)
-        --- PASS: TestInbound/opensmtpd/tls (1.04s)
-        --- PASS: TestInbound/opensmtpd/8bit (1.10s)
-        --- PASS: TestInbound/opensmtpd/latin1 (1.03s)
-        --- PASS: TestInbound/opensmtpd/encoded_headers (1.02s)
-        --- PASS: TestInbound/opensmtpd/utf8_headers (1.07s)
+        --- PASS: TestInbound/exim/dots (0.39s)
+    --- PASS: TestInbound/postfix (7.13s)
+        --- PASS: TestInbound/postfix/ascii (0.55s)
+        --- PASS: TestInbound/postfix/tls (0.43s)
+        --- PASS: TestInbound/postfix/8bit (0.54s)
+        --- PASS: TestInbound/postfix/latin1 (0.42s)
+        --- PASS: TestInbound/postfix/encoded_headers (0.46s)
+        --- PASS: TestInbound/postfix/utf8_headers (0.54s)
+        --- PASS: TestInbound/postfix/utf8_sender (0.53s)
+        --- PASS: TestInbound/postfix/near_limit (0.43s)
+        --- PASS: TestInbound/postfix/over_limit (1.35s)
+        --- PASS: TestInbound/postfix/recipients (0.51s)
+        --- PASS: TestInbound/postfix/long_line (0.40s)
+        --- PASS: TestInbound/postfix/too_long_line (0.54s)
+        --- PASS: TestInbound/postfix/dots (0.45s)
+    --- PASS: TestInbound/opensmtpd (14.93s)
+        --- PASS: TestInbound/opensmtpd/ascii (0.55s)
+        --- PASS: TestInbound/opensmtpd/tls (0.74s)
+        --- PASS: TestInbound/opensmtpd/8bit (1.19s)
+        --- PASS: TestInbound/opensmtpd/latin1 (1.00s)
+        --- PASS: TestInbound/opensmtpd/encoded_headers (1.04s)
+        --- PASS: TestInbound/opensmtpd/utf8_headers (1.15s)
         --- SKIP: TestInbound/opensmtpd/utf8_sender (0.00s)
-        --- PASS: TestInbound/opensmtpd/near_limit (1.04s)
-        --- PASS: TestInbound/opensmtpd/over_limit (2.91s)
-        --- PASS: TestInbound/opensmtpd/recipients (1.92s)
-        --- PASS: TestInbound/opensmtpd/long_line (1.33s)
-        --- PASS: TestInbound/opensmtpd/too_long_line (0.91s)
-        --- PASS: TestInbound/opensmtpd/dots (1.04s)
+        --- PASS: TestInbound/opensmtpd/near_limit (1.05s)
+        --- PASS: TestInbound/opensmtpd/over_limit (3.07s)
+        --- PASS: TestInbound/opensmtpd/recipients (2.08s)
+        --- PASS: TestInbound/opensmtpd/long_line (1.04s)
+        --- PASS: TestInbound/opensmtpd/too_long_line (0.94s)
+        --- PASS: TestInbound/opensmtpd/dots (1.09s)
 === RUN   TestOutbound
 === RUN   TestOutbound/postfix
 === PAUSE TestOutbound/postfix
@@ -184,32 +603,32 @@ rqlite    v10.7.1
 === CONT  TestOutbound/opensmtpd
 === RUN   TestOutbound/postfix/ascii
 === CONT  TestOutbound/exim
-=== RUN   TestOutbound/exim/ascii
 === RUN   TestOutbound/opensmtpd/ascii
-=== NAME  TestOutbound/exim/ascii
-    lab_test.go:485: Received: from mx.robin.test ([10.77.25.10]) by mx.exim.test with esmtps  (TLS1.3) tls TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (Exim 4.98.2) (envelope-from <alice@robin.test>) id 1xSCez-000000000L1-2IXb for alice@exim.test; Sat, 14 Nov 2026 12:15:09 +0000
-    lab_test.go:485: Received: by mx.robin.test (robinmail) (JMAP) id 06FFD0630CED9224; Sat, 14 Nov 2026 12:15:08 +0000
-=== RUN   TestOutbound/exim/tls
-=== NAME  TestOutbound/opensmtpd/ascii
-    lab_test.go:485: Received: from mx.robin.test (mx.robin.test [10.77.25.10]) by mx.opensmtpd.test (OpenSMTPD) with ESMTPS id 94c26fea (TLSv1.3:TLS_AES_256_GCM_SHA384:256:NO) for <alice@opensmtpd.test>; Sat, 14 Nov 2026 12:15:09 +0000 (UTC)
-    lab_test.go:485: Received: by mx.robin.test (robinmail) (JMAP) id 897F937BAD471FA6; Sat, 14 Nov 2026 12:15:08 +0000
-=== RUN   TestOutbound/opensmtpd/tls
+=== RUN   TestOutbound/exim/ascii
 === NAME  TestOutbound/postfix/ascii
-    lab_test.go:485: Received: from mx.robin.test (mx.robin.test [10.77.25.10]) (using TLSv1.3 with cipher TLS_AES_128_GCM_SHA256 (128/128 bits) key-exchange x25519 server-signature ECDSA (prime256v1) server-digest SHA256) (No client certificate requested) by mx.postfix.test (Postfix) with ESMTPS id 9076B5A182 for <alice@postfix.test>; Sat, 14 Nov 2026 12:15:09 +0000 (UTC)
-    lab_test.go:485: Received: by mx.robin.test (robinmail) (JMAP) id A0BEC4EFC307BAFA; Sat, 14 Nov 2026 12:15:08 +0000
+    lab_test.go:485: Received: from mx.robin.test (mx.robin.test [10.77.25.10]) (using TLSv1.3 with cipher TLS_AES_128_GCM_SHA256 (128/128 bits) key-exchange x25519 server-signature ECDSA (prime256v1) server-digest SHA256) (No client certificate requested) by mx.postfix.test (Postfix) with ESMTPS id 07223669F3 for <alice@postfix.test>; Sat, 14 Nov 2026 15:01:48 +0000 (UTC)
+    lab_test.go:485: Received: by mx.robin.test (robinmail) (JMAP) id C1D78E7428BB3B2B; Sat, 14 Nov 2026 15:01:43 +0000
+=== NAME  TestOutbound/opensmtpd/ascii
+    lab_test.go:485: Received: from mx.robin.test (mx.robin.test [10.77.25.10]) by mx.opensmtpd.test (OpenSMTPD) with ESMTPS id c45dd89e (TLSv1.3:TLS_AES_256_GCM_SHA384:256:NO) for <alice@opensmtpd.test>; Sat, 14 Nov 2026 15:01:48 +0000 (UTC)
+    lab_test.go:485: Received: by mx.robin.test (robinmail) (JMAP) id B645C8E6292A8C94; Sat, 14 Nov 2026 15:01:43 +0000
 === RUN   TestOutbound/postfix/tls
+=== RUN   TestOutbound/opensmtpd/tls
+=== NAME  TestOutbound/exim/ascii
+    lab_test.go:485: Received: from mx.robin.test ([10.77.25.10]) by mx.exim.test with esmtps  (TLS1.3) tls TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (Exim 4.98.2) (envelope-from <alice@robin.test>) id 1xSFGF-000000000MW-47rz for alice@exim.test; Sat, 14 Nov 2026 15:01:47 +0000
+    lab_test.go:485: Received: by mx.robin.test (robinmail) (JMAP) id 389C46441E153D15; Sat, 14 Nov 2026 15:01:43 +0000
+=== RUN   TestOutbound/exim/tls
 === RUN   TestOutbound/exim/8bit
 === RUN   TestOutbound/postfix/8bit
 === RUN   TestOutbound/opensmtpd/8bit
+=== RUN   TestOutbound/opensmtpd/webmail_utf8
 === RUN   TestOutbound/postfix/webmail_utf8
 === RUN   TestOutbound/exim/webmail_utf8
-=== RUN   TestOutbound/opensmtpd/webmail_utf8
+=== RUN   TestOutbound/postfix/utf8_headers
 === RUN   TestOutbound/exim/utf8_headers
 === RUN   TestOutbound/opensmtpd/utf8_headers
-=== RUN   TestOutbound/postfix/utf8_headers
-=== RUN   TestOutbound/opensmtpd/utf8_recipient
 === RUN   TestOutbound/postfix/utf8_recipient
 === RUN   TestOutbound/exim/utf8_recipient
+=== RUN   TestOutbound/opensmtpd/utf8_recipient
 === RUN   TestOutbound/opensmtpd/near_limit
 === RUN   TestOutbound/postfix/near_limit
 === RUN   TestOutbound/exim/near_limit
@@ -218,17 +637,18 @@ rqlite    v10.7.1
 === RUN   TestOutbound/opensmtpd/over_limit
     lab_test.go:612: opensmtpd has one limit for its listener and its local users, which cannot be both under and over robinmail's
 === RUN   TestOutbound/opensmtpd/recipients
+=== RUN   TestOutbound/exim/recipients
+=== NAME  TestOutbound/opensmtpd/recipients
     lab_test.go:654: opensmtpd said: 550 Invalid recipient: <nosuch@opensmtpd.test>
 === RUN   TestOutbound/opensmtpd/long_line
-=== RUN   TestOutbound/exim/recipients
 === RUN   TestOutbound/postfix/recipients
 === RUN   TestOutbound/opensmtpd/too_long_line
-=== NAME  TestOutbound/exim/recipients
-    lab_test.go:654: exim said: 550 Unknown user
-=== RUN   TestOutbound/exim/long_line
 === NAME  TestOutbound/postfix/recipients
     lab_test.go:654: postfix said: 550 5.1.1 <nosuch@postfix.test>: Recipient address rejected: User unknown in local recipient table
 === RUN   TestOutbound/postfix/long_line
+=== NAME  TestOutbound/exim/recipients
+    lab_test.go:654: exim said: 550 Unknown user
+=== RUN   TestOutbound/exim/long_line
 === RUN   TestOutbound/postfix/too_long_line
 === RUN   TestOutbound/exim/too_long_line
 === RUN   TestOutbound/opensmtpd/dots
@@ -259,48 +679,48 @@ rqlite    v10.7.1
         e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  textfile0
         84975c6a311ebc8bba9ac44f56acce8eecf332f38cd301da561209e8d55d863c  textfile1
 --- PASS: TestOutbound (0.01s)
-    --- PASS: TestOutbound/opensmtpd (56.85s)
-        --- PASS: TestOutbound/opensmtpd/ascii (1.35s)
-        --- PASS: TestOutbound/opensmtpd/tls (5.09s)
-        --- PASS: TestOutbound/opensmtpd/8bit (5.13s)
-        --- PASS: TestOutbound/opensmtpd/webmail_utf8 (5.03s)
-        --- PASS: TestOutbound/opensmtpd/utf8_headers (5.00s)
+    --- PASS: TestOutbound/opensmtpd (60.50s)
+        --- PASS: TestOutbound/opensmtpd/ascii (5.36s)
+        --- PASS: TestOutbound/opensmtpd/tls (5.00s)
+        --- PASS: TestOutbound/opensmtpd/8bit (4.96s)
+        --- PASS: TestOutbound/opensmtpd/webmail_utf8 (4.91s)
+        --- PASS: TestOutbound/opensmtpd/utf8_headers (5.01s)
         --- PASS: TestOutbound/opensmtpd/utf8_recipient (4.92s)
-        --- PASS: TestOutbound/opensmtpd/near_limit (4.90s)
+        --- PASS: TestOutbound/opensmtpd/near_limit (5.40s)
         --- SKIP: TestOutbound/opensmtpd/over_limit (0.00s)
-        --- PASS: TestOutbound/opensmtpd/recipients (5.42s)
-        --- PASS: TestOutbound/opensmtpd/long_line (4.63s)
-        --- PASS: TestOutbound/opensmtpd/too_long_line (5.32s)
+        --- PASS: TestOutbound/opensmtpd/recipients (4.93s)
+        --- PASS: TestOutbound/opensmtpd/long_line (4.75s)
+        --- PASS: TestOutbound/opensmtpd/too_long_line (5.37s)
         --- PASS: TestOutbound/opensmtpd/dots (4.92s)
-        --- PASS: TestOutbound/opensmtpd/attachments (5.14s)
-    --- PASS: TestOutbound/postfix (61.67s)
-        --- PASS: TestOutbound/postfix/ascii (1.35s)
-        --- PASS: TestOutbound/postfix/tls (5.09s)
-        --- PASS: TestOutbound/postfix/8bit (5.13s)
-        --- PASS: TestOutbound/postfix/webmail_utf8 (5.03s)
-        --- PASS: TestOutbound/postfix/utf8_headers (5.03s)
-        --- PASS: TestOutbound/postfix/utf8_recipient (5.12s)
-        --- PASS: TestOutbound/postfix/near_limit (4.65s)
-        --- PASS: TestOutbound/postfix/over_limit (5.43s)
-        --- PASS: TestOutbound/postfix/recipients (4.73s)
-        --- PASS: TestOutbound/postfix/long_line (4.97s)
+        --- PASS: TestOutbound/opensmtpd/attachments (4.94s)
+    --- PASS: TestOutbound/postfix (65.71s)
+        --- PASS: TestOutbound/postfix/ascii (5.36s)
+        --- PASS: TestOutbound/postfix/tls (5.00s)
+        --- PASS: TestOutbound/postfix/8bit (4.96s)
+        --- PASS: TestOutbound/postfix/webmail_utf8 (4.91s)
+        --- PASS: TestOutbound/postfix/utf8_headers (4.96s)
+        --- PASS: TestOutbound/postfix/utf8_recipient (5.05s)
+        --- PASS: TestOutbound/postfix/near_limit (4.88s)
+        --- PASS: TestOutbound/postfix/over_limit (5.39s)
+        --- PASS: TestOutbound/postfix/recipients (4.84s)
+        --- PASS: TestOutbound/postfix/long_line (4.91s)
         --- PASS: TestOutbound/postfix/too_long_line (5.32s)
-        --- PASS: TestOutbound/postfix/dots (4.91s)
-        --- PASS: TestOutbound/postfix/attachments (4.91s)
-    --- PASS: TestOutbound/exim (65.73s)
-        --- PASS: TestOutbound/exim/ascii (1.35s)
-        --- PASS: TestOutbound/exim/tls (5.09s)
-        --- PASS: TestOutbound/exim/8bit (5.13s)
-        --- PASS: TestOutbound/exim/webmail_utf8 (5.03s)
-        --- PASS: TestOutbound/exim/utf8_headers (5.04s)
-        --- PASS: TestOutbound/exim/utf8_recipient (5.12s)
-        --- PASS: TestOutbound/exim/near_limit (4.65s)
-        --- PASS: TestOutbound/exim/over_limit (5.43s)
-        --- PASS: TestOutbound/exim/recipients (4.72s)
-        --- PASS: TestOutbound/exim/long_line (4.97s)
+        --- PASS: TestOutbound/postfix/dots (4.81s)
+        --- PASS: TestOutbound/postfix/attachments (5.31s)
+    --- PASS: TestOutbound/exim (69.69s)
+        --- PASS: TestOutbound/exim/ascii (5.36s)
+        --- PASS: TestOutbound/exim/tls (5.00s)
+        --- PASS: TestOutbound/exim/8bit (4.96s)
+        --- PASS: TestOutbound/exim/webmail_utf8 (4.91s)
+        --- PASS: TestOutbound/exim/utf8_headers (4.96s)
+        --- PASS: TestOutbound/exim/utf8_recipient (5.05s)
+        --- PASS: TestOutbound/exim/near_limit (5.33s)
+        --- PASS: TestOutbound/exim/over_limit (4.85s)
+        --- PASS: TestOutbound/exim/recipients (4.94s)
+        --- PASS: TestOutbound/exim/long_line (4.91s)
         --- PASS: TestOutbound/exim/too_long_line (5.32s)
-        --- PASS: TestOutbound/exim/dots (8.93s)
-        --- PASS: TestOutbound/exim/attachments (4.95s)
+        --- PASS: TestOutbound/exim/dots (9.17s)
+        --- PASS: TestOutbound/exim/attachments (4.93s)
 === RUN   TestTLS
 === RUN   TestTLS/self-signed,_no_policy
 === RUN   TestTLS/self-signed,_enforce
@@ -308,11 +728,11 @@ rqlite    v10.7.1
 === RUN   TestTLS/no_STARTTLS,_no_policy
 === RUN   TestTLS/no_STARTTLS,_enforce
     more_test.go:32: robinmail holds it: 451 4.7.0 mx.notls.test does not offer STARTTLS, which the MTA-STS policy requires
---- PASS: TestTLS (38.34s)
-    --- PASS: TestTLS/self-signed,_no_policy (1.28s)
-    --- PASS: TestTLS/self-signed,_enforce (17.10s)
-    --- PASS: TestTLS/no_STARTTLS,_no_policy (2.87s)
-    --- PASS: TestTLS/no_STARTTLS,_enforce (17.09s)
+--- PASS: TestTLS (38.32s)
+    --- PASS: TestTLS/self-signed,_no_policy (0.93s)
+    --- PASS: TestTLS/self-signed,_enforce (17.21s)
+    --- PASS: TestTLS/no_STARTTLS,_no_policy (2.72s)
+    --- PASS: TestTLS/no_STARTTLS,_enforce (17.46s)
 === RUN   TestBounces
 === RUN   TestBounces/late
 === RUN   TestBounces/late/postfix
@@ -324,22 +744,19 @@ rqlite    v10.7.1
 === CONT  TestBounces/late/postfix
 === CONT  TestBounces/late/opensmtpd
 === CONT  TestBounces/late/exim
-    more_test.go:96: exim's notification: Content-Type ["multipart/report; report-type=delivery-status; boundary=1794658615-eximdsn-1721144774"]
-=== NAME  TestBounces/late/postfix
-    more_test.go:96: postfix's notification: Content-Type ["multipart/report; report-type=delivery-status; boundary=\"3E9A35A3A7.1794658615/mx.postfix.test\""]
-=== NAME  TestBounces/late/exim
-    more_test.go:102: exim reports: status 5.0.0, diagnostic "", original Message-ID "ab7998abbecb0f4e098aeb7cf62a8795@mx.robin.test"
-=== NAME  TestBounces/late/postfix
-    more_test.go:102: postfix reports: status 5.1.1, diagnostic "unknown user: \"ghost\"", original Message-ID "e2b530719cda1f2eb5b94a02aa1665e7@mx.robin.test"
-    more_test.go:104: deliveryStatus: {delivered:no reply:550 5.1.1 unknown user: "ghost"}
-=== NAME  TestBounces/late/exim
+    more_test.go:96: exim's notification: Content-Type ["multipart/report; report-type=delivery-status; boundary=1794668613-eximdsn-662992854"]
+    more_test.go:102: exim reports: status 5.0.0, diagnostic "", original Message-ID "43fe80909b8ae8982dcc473343955870@mx.robin.test"
     more_test.go:104: deliveryStatus: {delivered:no reply:550 5.0.0 reported by mx.exim.test without a reason}
+=== NAME  TestBounces/late/postfix
+    more_test.go:96: postfix's notification: Content-Type ["multipart/report; report-type=delivery-status; boundary=\"ADC9C66AFA.1794668613/mx.postfix.test\""]
+    more_test.go:102: postfix reports: status 5.1.1, diagnostic "unknown user: \"ghost\"", original Message-ID "640c248dfebd3effb2c9f65baa54e9cd@mx.robin.test"
+    more_test.go:104: deliveryStatus: {delivered:no reply:550 5.1.1 unknown user: "ghost"}
 === NAME  TestBounces/late/opensmtpd
-    more_test.go:96: opensmtpd's notification: Content-Type ["multipart/mixed;boundary=\"8765636538743635025/mx.opensmtpd.test\""]
-    more_test.go:102: opensmtpd reports: status 5.3.0, diagnostic "", original Message-ID "4b9e3b5300c8cb546f278a21a41a372a@mx.robin.test"
+    more_test.go:96: opensmtpd's notification: Content-Type ["multipart/mixed;boundary=\"7945151954983064668/mx.opensmtpd.test\""]
+    more_test.go:102: opensmtpd reports: status 5.3.0, diagnostic "", original Message-ID "3d53a65520216168e93ef1cefedafa5b@mx.robin.test"
     more_test.go:104: deliveryStatus: {delivered:no reply:550 5.3.0 reported by mx.opensmtpd.test without a reason}
 === RUN   TestBounces/greylisting
-    more_test.go:125: first: 450 4.2.0 <grey+labec2e6072c153@postfix.test>: Recipient address rejected: Greylisted, see http://postgrey.schweikert.ch/help/postfix.test.html
+    more_test.go:125: first: 450 4.2.0 <grey+lab17f20cd0b622@postfix.test>: Recipient address rejected: Greylisted, see http://postgrey.schweikert.ch/help/postfix.test.html
     more_test.go:136: delivered on try 3
 === RUN   TestBounces/down
 === RUN   TestBounces/down/postfix
@@ -348,16 +765,16 @@ rqlite    v10.7.1
     more_test.go:167: while down: 451 4.4.1 connecting to mx.exim.test (10.77.25.12) failed: i/o timeout
 === RUN   TestBounces/down/opensmtpd
     more_test.go:167: while down: 451 4.4.1 connecting to mx.opensmtpd.test (10.77.25.13) failed: connect: no route to host
---- PASS: TestBounces (122.91s)
+--- PASS: TestBounces (122.81s)
     --- PASS: TestBounces/late (0.00s)
-        --- PASS: TestBounces/late/postfix (3.03s)
-        --- PASS: TestBounces/late/exim (3.03s)
-        --- PASS: TestBounces/late/opensmtpd (3.95s)
-    --- PASS: TestBounces/greylisting (14.23s)
-    --- PASS: TestBounces/down (104.72s)
-        --- PASS: TestBounces/down/postfix (39.87s)
-        --- PASS: TestBounces/down/exim (40.21s)
-        --- PASS: TestBounces/down/opensmtpd (24.64s)
+        --- PASS: TestBounces/late/exim (2.72s)
+        --- PASS: TestBounces/late/postfix (3.05s)
+        --- PASS: TestBounces/late/opensmtpd (4.00s)
+    --- PASS: TestBounces/greylisting (13.94s)
+    --- PASS: TestBounces/down (104.87s)
+        --- PASS: TestBounces/down/postfix (40.37s)
+        --- PASS: TestBounces/down/exim (39.70s)
+        --- PASS: TestBounces/down/opensmtpd (24.80s)
 === RUN   TestPeculiarities
 === RUN   TestPeculiarities/underscore
 === RUN   TestPeculiarities/underscore/postfix
@@ -380,13 +797,13 @@ rqlite    v10.7.1
 === RUN   TestPeculiarities/underscore_reply
 === RUN   TestPeculiarities/null_reverse-path
 === RUN   TestPeculiarities/source_route
---- PASS: TestPeculiarities (4.90s)
+--- PASS: TestPeculiarities (5.06s)
     --- PASS: TestPeculiarities/underscore (0.00s)
-        --- PASS: TestPeculiarities/underscore/exim (0.10s)
-        --- PASS: TestPeculiarities/underscore/opensmtpd (0.51s)
-        --- PASS: TestPeculiarities/underscore/postfix (0.51s)
+        --- PASS: TestPeculiarities/underscore/exim (0.13s)
+        --- PASS: TestPeculiarities/underscore/opensmtpd (0.60s)
+        --- PASS: TestPeculiarities/underscore/postfix (0.60s)
     --- PASS: TestPeculiarities/underscore_at_peers (0.23s)
-    --- PASS: TestPeculiarities/underscore_reply (4.14s)
+    --- PASS: TestPeculiarities/underscore_reply (4.19s)
     --- PASS: TestPeculiarities/null_reverse-path (0.01s)
     --- PASS: TestPeculiarities/source_route (0.01s)
 === RUN   TestSubmission
@@ -396,64 +813,114 @@ rqlite    v10.7.1
 === RUN   TestSubmission/sub_04_port_465,_implicit_TLS,_AUTH_LOGIN
 === RUN   TestSubmission/wrong_password
 === RUN   TestSubmission/no_TLS
---- PASS: TestSubmission (20.19s)
-    --- PASS: TestSubmission/sub_01_port_587,_STARTTLS,_AUTH_PLAIN (5.12s)
-    --- PASS: TestSubmission/sub_02_port_587,_STARTTLS,_AUTH_LOGIN (5.07s)
-    --- PASS: TestSubmission/sub_03_port_465,_implicit_TLS,_AUTH_PLAIN (5.07s)
-    --- PASS: TestSubmission/sub_04_port_465,_implicit_TLS,_AUTH_LOGIN (4.65s)
-    --- PASS: TestSubmission/wrong_password (0.19s)
-    --- PASS: TestSubmission/no_TLS (0.10s)
+--- PASS: TestSubmission (20.46s)
+    --- PASS: TestSubmission/sub_01_port_587,_STARTTLS,_AUTH_PLAIN (4.83s)
+    --- PASS: TestSubmission/sub_02_port_587,_STARTTLS,_AUTH_LOGIN (5.24s)
+    --- PASS: TestSubmission/sub_03_port_465,_implicit_TLS,_AUTH_PLAIN (4.80s)
+    --- PASS: TestSubmission/sub_04_port_465,_implicit_TLS,_AUTH_LOGIN (5.21s)
+    --- PASS: TestSubmission/wrong_password (0.24s)
+    --- PASS: TestSubmission/no_TLS (0.14s)
 PASS
-case                                                                               postfix       exim          opensmtpd     other         swaks         
-bounce 01 peer accepts, then bounces: its DSN arrives and sets deliveryStatus      pass          pass          pass          -             -             
-bounce 02 greylisting: 450 first, delivered on a later try                         pass          -             -             -             -             
-bounce 03 peer is down: queued, delivered when it is back                          pass          pass          pass          -             -             
-in 01 plain ASCII                                                                  pass          pass          pass          -             -             
-in 02 STARTTLS, certificate checked against the lab CA                             pass          pass          pass          -             -             
-in 03 8-bit body, UTF-8                                                            pass          pass          pass          -             -             
-in 04 8-bit body, ISO-8859-1                                                       pass          pass          pass          -             -             
-in 05 non-ASCII headers as encoded words                                           pass          pass          pass          -             -             
-in 06 UTF-8 headers as they are (RFC 6532)                                         pass          pass          pass          -             -             
-in 07 SMTPUTF8 sender address                                                      pass          pass          n/a           -             -             
-in 08 a message just under robinmail's size limit                                  pass          pass          pass          -             -             
-in 09 a message over robinmail's size limit: refused, peer bounces                 pass          pass          pass          -             -             
-in 10 three recipients, one unknown: two delivered, RFC 3464 bounce for the third  pass          pass          pass          -             -             
-in 11 a line of 998 characters                                                     pass          pass          pass          -             -             
-in 12 a line of 3000 characters (over RFC 5322's limit)                            peer folds    peer bounces  peer folds    -             -             
-in 13 lines that start with a dot                                                  pass          pass          pass          -             -             
-in 90 peer declares SIZE                                                           yes           yes           no            -             -             
-in 91 peer pipelines MAIL, RCPT, DATA                                              yes           yes           no            -             -             
-in 92 peer declares BODY=8BITMIME                                                  yes           no            no            -             -             
-in 93 peer asks SMTPUTF8 for UTF-8 headers                                         yes           no            no            -             -             
-in 94 peer offers a message over our SIZE limit                                    no            yes           no            -             -             
-in 95 peer's bounce is multipart/report (RFC 3464 2)                               yes           yes           no            -             -             
-odd 01 sender domain with an underscore, sent by the peer: accepted                pass          peer refuses  pass          -             -             
-odd 02 null reverse-path by hand: accepted, Return-Path: <>                        -             -             -             pass          -             
-odd 03 source routes by hand: accepted and ignored                                 -             -             -             pass          -             
-odd 04 mail to a domain with an underscore: delivered                              pass          -             -             -             -             
-odd 90 peer accepts MAIL FROM with an underscore in the domain                     250           501           250           -             -             
-odd 91 peer accepts MAIL FROM with a source route                                  250           250           250           -             -             
-out 01 plain ASCII                                                                 pass          pass          pass          -             -             
-out 02 STARTTLS, certificate checked against the lab CA (MTA-STS)                  pass          pass          pass          -             -             
-out 03 8-bit body, sent as BODY=8BITMIME                                           pass          pass          pass          -             -             
-out 04 UTF-8 body and non-ASCII headers built by Email/set                         pass          pass          pass          -             -             
-out 05 UTF-8 headers as they are (needs SMTPUTF8)                                  pass          pass          pass          -             -             
-out 06 SMTPUTF8 recipient address                                                  pass          pass          pass          -             -             
-out 07 a message just under the peer's size limit                                  pass          pass          pass          -             -             
-out 08 a message over the peer's SIZE: not offered, bounced with 5.3.4             pass          pass          n/a           -             -             
-out 09 three recipients, one unknown: 5xx at RCPT, bounce, deliveryStatus          pass          pass          pass          -             -             
-out 10 a line of 998 characters                                                    pass          pass          pass          -             -             
-out 11 a line of 3000 characters (over RFC 5322's limit)                           kept          kept          kept          -             -             
-out 12 lines that start with a dot                                                 pass          pass          pass          -             -             
-out 13 attachments built by Email/set, unpacked on the peer by ripmime             pass          pass          pass          -             -             
-sub 01 port 587, STARTTLS, AUTH PLAIN                                              -             -             -             -             pass          
-sub 02 port 587, STARTTLS, AUTH LOGIN                                              -             -             -             -             pass          
-sub 03 port 465, implicit TLS, AUTH PLAIN                                          -             -             -             -             pass          
-sub 04 port 465, implicit TLS, AUTH LOGIN                                          -             -             -             -             pass          
-sub 05 wrong password: 535, nothing sent                                           -             -             -             -             pass          
-sub 06 port 587 without STARTTLS: no AUTH offered, MAIL refused                    -             -             -             -             pass          
-tls 01 self-signed certificate, no MTA-STS policy: delivered over TLS              -             -             -             pass          -             
-tls 02 self-signed certificate, MTA-STS enforce: not delivered                     -             -             -             pass          -             
-tls 03 no STARTTLS offered, no policy: delivered in the clear                      -             -             -             pass          -             
-tls 04 no STARTTLS offered, MTA-STS enforce: not delivered                         -             -             -             pass          -             
-ok  	github.com/mikepage/robinmail/internal/labtest	267.472s
+
+case                                                                               postfix       exim          opensmtpd     mbsync        offlineimap   other         robinmail     swaks         
+ImapTest scripts: groups passed / failed (known) / skipped                         -             -             -             -             -             -             36 / 6 / 30   -             
+ImapTest stress: commands / errors / text searches of expunged messages            -             -             -             -             -             -             12297 / 0 / 17-             
+bounce 01 peer accepts, then bounces: its DSN arrives and sets deliveryStatus      pass          pass          pass          -             -             -             -             -             
+bounce 02 greylisting: 450 first, delivered on a later try                         pass          -             -             -             -             -             -             -             
+bounce 03 peer is down: queued, delivered when it is back                          pass          pass          pass          -             -             -             -             -             
+in 01 plain ASCII                                                                  pass          pass          pass          -             -             -             -             -             
+in 02 STARTTLS, certificate checked against the lab CA                             pass          pass          pass          -             -             -             -             -             
+in 03 8-bit body, UTF-8                                                            pass          pass          pass          -             -             -             -             -             
+in 04 8-bit body, ISO-8859-1                                                       pass          pass          pass          -             -             -             -             -             
+in 05 non-ASCII headers as encoded words                                           pass          pass          pass          -             -             -             -             -             
+in 06 UTF-8 headers as they are (RFC 6532)                                         pass          pass          pass          -             -             -             -             -             
+in 07 SMTPUTF8 sender address                                                      pass          pass          n/a           -             -             -             -             -             
+in 08 a message just under robinmail's size limit                                  pass          pass          pass          -             -             -             -             -             
+in 09 a message over robinmail's size limit: refused, peer bounces                 pass          pass          pass          -             -             -             -             -             
+in 10 three recipients, one unknown: two delivered, RFC 3464 bounce for the third  pass          pass          pass          -             -             -             -             -             
+in 11 a line of 998 characters                                                     pass          pass          pass          -             -             -             -             -             
+in 12 a line of 3000 characters (over RFC 5322's limit)                            peer folds    peer bounces  peer folds    -             -             -             -             -             
+in 13 lines that start with a dot                                                  pass          pass          pass          -             -             -             -             -             
+in 90 peer declares SIZE                                                           yes           yes           no            -             -             -             -             -             
+in 91 peer pipelines MAIL, RCPT, DATA                                              yes           yes           no            -             -             -             -             -             
+in 92 peer declares BODY=8BITMIME                                                  yes           no            no            -             -             -             -             -             
+in 93 peer asks SMTPUTF8 for UTF-8 headers                                         yes           no            no            -             -             -             -             -             
+in 94 peer offers a message over our SIZE limit                                    no            yes           no            -             -             -             -             -             
+in 95 peer's bounce is multipart/report (RFC 3464 2)                               yes           yes           no            -             -             -             -             -             
+odd 01 sender domain with an underscore, sent by the peer: accepted                pass          peer refuses  pass          -             -             -             -             -             
+odd 02 null reverse-path by hand: accepted, Return-Path: <>                        -             -             -             -             -             pass          -             -             
+odd 03 source routes by hand: accepted and ignored                                 -             -             -             -             -             pass          -             -             
+odd 04 mail to a domain with an underscore: delivered                              pass          -             -             -             -             -             -             -             
+odd 90 peer accepts MAIL FROM with an underscore in the domain                     250           501           250           -             -             -             -             -             
+odd 91 peer accepts MAIL FROM with a source route                                  250           250           250           -             -             -             -             -             
+out 01 plain ASCII                                                                 pass          pass          pass          -             -             -             -             -             
+out 02 STARTTLS, certificate checked against the lab CA (MTA-STS)                  pass          pass          pass          -             -             -             -             -             
+out 03 8-bit body, sent as BODY=8BITMIME                                           pass          pass          pass          -             -             -             -             -             
+out 04 UTF-8 body and non-ASCII headers built by Email/set                         pass          pass          pass          -             -             -             -             -             
+out 05 UTF-8 headers as they are (needs SMTPUTF8)                                  pass          pass          pass          -             -             -             -             -             
+out 06 SMTPUTF8 recipient address                                                  pass          pass          pass          -             -             -             -             -             
+out 07 a message just under the peer's size limit                                  pass          pass          pass          -             -             -             -             -             
+out 08 a message over the peer's SIZE: not offered, bounced with 5.3.4             pass          pass          n/a           -             -             -             -             -             
+out 09 three recipients, one unknown: 5xx at RCPT, bounce, deliveryStatus          pass          pass          pass          -             -             -             -             -             
+out 10 a line of 998 characters                                                    pass          pass          pass          -             -             -             -             -             
+out 11 a line of 3000 characters (over RFC 5322's limit)                           kept          kept          kept          -             -             -             -             -             
+out 12 lines that start with a dot                                                 pass          pass          pass          -             -             -             -             -             
+out 13 attachments built by Email/set, unpacked on the peer by ripmime             pass          pass          pass          -             -             -             -             -             
+sub 01 port 587, STARTTLS, AUTH PLAIN                                              -             -             -             -             -             -             -             pass          
+sub 02 port 587, STARTTLS, AUTH LOGIN                                              -             -             -             -             -             -             -             pass          
+sub 03 port 465, implicit TLS, AUTH PLAIN                                          -             -             -             -             -             -             -             pass          
+sub 04 port 465, implicit TLS, AUTH LOGIN                                          -             -             -             -             -             -             -             pass          
+sub 05 wrong password: 535, nothing sent                                           -             -             -             -             -             -             -             pass          
+sub 06 port 587 without STARTTLS: no AUTH offered, MAIL refused                    -             -             -             -             -             -             -             pass          
+sync: full, a change on each side, again; compared over JMAP                       -             -             -             pass          pass          -             -             -             
+tls 01 self-signed certificate, no MTA-STS policy: delivered over TLS              -             -             -             -             -             pass          -             -             
+tls 02 self-signed certificate, MTA-STS enforce: not delivered                     -             -             -             -             -             pass          -             -             
+tls 03 no STARTTLS offered, no policy: delivered in the clear                      -             -             -             -             -             pass          -             -             
+tls 04 no STARTTLS offered, MTA-STS enforce: not delivered                         -             -             -             -             -             pass          -             -             
+ok  	github.com/mikepage/robinmail/internal/labtest	312.082s
+ Container robinmail-lab-badtls-1 Stopping 
+ Container robinmail-lab-exim-1 Stopping 
+ Container robinmail-lab-postfix-1 Stopping 
+ Container robinmail-lab-robinmail-1 Stopping 
+ Container robinmail-lab-opensmtpd-1 Stopping 
+ Container robinmail-lab-web-1 Stopping 
+ Container robinmail-lab-imapclients-1 Stopping 
+ Container robinmail-lab-notls-1 Stopping 
+ Container robinmail-lab-badtls-1 Stopped 
+ Container robinmail-lab-badtls-1 Removing 
+ Container robinmail-lab-badtls-1 Removed 
+ Container robinmail-lab-notls-1 Stopped 
+ Container robinmail-lab-notls-1 Removing 
+ Container robinmail-lab-postfix-1 Stopped 
+ Container robinmail-lab-postfix-1 Removing 
+ Container robinmail-lab-notls-1 Removed 
+ Container robinmail-lab-exim-1 Stopped 
+ Container robinmail-lab-exim-1 Removing 
+ Container robinmail-lab-postfix-1 Removed 
+ Container robinmail-lab-robinmail-1 Stopped 
+ Container robinmail-lab-robinmail-1 Removing 
+ Container robinmail-lab-exim-1 Removed 
+ Container robinmail-lab-robinmail-1 Removed 
+ Container robinmail-lab-rqlite-1 Stopping 
+ Container robinmail-lab-opensmtpd-1 Stopped 
+ Container robinmail-lab-opensmtpd-1 Removing 
+ Container robinmail-lab-opensmtpd-1 Removed 
+ Container robinmail-lab-web-1 Stopped 
+ Container robinmail-lab-web-1 Removing 
+ Container robinmail-lab-web-1 Removed 
+ Container robinmail-lab-rqlite-1 Stopped 
+ Container robinmail-lab-rqlite-1 Removing 
+ Container robinmail-lab-rqlite-1 Removed 
+ Container robinmail-lab-imapclients-1 Stopped 
+ Container robinmail-lab-imapclients-1 Removing 
+ Container robinmail-lab-imapclients-1 Removed 
+ Container robinmail-lab-dns-1 Stopping 
+ Container robinmail-lab-dns-1 Stopped 
+ Container robinmail-lab-dns-1 Removing 
+ Container robinmail-lab-dns-1 Removed 
+ Network robinmail-lab_gate Removing 
+ Network robinmail-lab_lab Removing 
+ Volume robinmail-lab_robinmail Removing 
+ Volume robinmail-lab_robinmail Removed 
+ Network robinmail-lab_gate Removed 
+ Network robinmail-lab_lab Removed 

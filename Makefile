@@ -6,7 +6,8 @@
 #   make e2e        the browser test against ./robinmail and the dev instance
 #   make dev        a development instance with live reload on :5173
 #   make cluster-test   the cluster tests on three rqlite and three robinmail nodes in Docker
-#   make lab-test       the interoperability tests against Postfix, Exim and OpenSMTPD in Docker
+#   make lab-test       the interoperability tests in Docker: Postfix, Exim and OpenSMTPD over SMTP,
+#                       Dovecot's ImapTest, mbsync and OfflineIMAP over IMAP
 #   make clean
 #
 # A plain "go build ./cmd/robinmail" needs no Node and no make: that binary
@@ -95,10 +96,10 @@ cluster-test:
 		[ -n "$(KEEP)" ] || contrib/compose/cluster.sh down; exit $$s
 
 # Builds the images, starts the lab of contrib/lab/compose.yaml (robinmail
-# next to Postfix, Exim and OpenSMTPD, with a DNS and a certificate
-# authority of its own), runs the tests in internal/labtest and removes
-# the lab again, also when a test failed. About five minutes after the
-# first build. KEEP=1 leaves the lab running. Nothing leaves the lab's
+# next to Postfix, Exim and OpenSMTPD and a container of IMAP clients, with
+# a DNS and a certificate authority of its own), runs the tests in
+# internal/labtest and removes the lab again, also when a test failed.
+# About six minutes after the first build. KEEP=1 leaves the lab running. Nothing leaves the lab's
 # network: its name server knows no name outside it.
 lab-test:
 	contrib/lab/lab.sh up
