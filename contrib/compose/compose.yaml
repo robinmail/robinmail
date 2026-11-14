@@ -37,6 +37,10 @@ services:
       - "127.0.0.1:11333:11333"
     volumes:
       - ../rspamd/local.d/milter_headers.conf:/etc/rspamd/local.d/milter_headers.conf:ro
+      # DKIM signing of outgoing mail, with keys from rspamd/dkim (ignored
+      # by git; "robinmail dns <domain> <key file>" makes one).
+      - ../rspamd/local.d/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro
+      - ./rspamd/dkim:/var/lib/rspamd/dkim:ro
       # Development only: score headers also on mail from 127.0.0.1, and
       # test patterns for "add header" and "rewrite subject".
       - ./rspamd/override.d/milter_headers.conf:/etc/rspamd/override.d/milter_headers.conf:ro

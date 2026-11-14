@@ -78,8 +78,8 @@ func TestRFC2047EncodedWords(t *testing.T) {
 		"Größe", "Keld Jørn Simonsen", "André Pirard",
 		"日本語のメールの件名はとても長くなることがあります。本当に長いです。",
 		"Re: [lijst] “Vergadering” over het €-budget van volgend jaar, met bijlagen en nog wat woorden",
-		"a=?b?c",              // looks like the start of an encoded word
-		"tab\there",           // a control character
+		"a=?b?c",               // looks like the start of an encoded word
+		"tab\there",            // a control character
 		"😀 emoji at the start", // four-byte characters
 		strings.Repeat("é", 200),
 	} {
@@ -235,7 +235,7 @@ func TestRFC5322DateAndIDs(t *testing.T) {
 }
 
 // RFC 2231 3 and 4: a parameter value that is not ASCII, or long, is
-// written as name*=utf-8''... and in numbered sections; RFC 2045 5.1: a
+// written as name*=utf-8”... and in numbered sections; RFC 2045 5.1: a
 // token as it is, other ASCII quoted.
 func TestRFC2231Parameters(t *testing.T) {
 	for _, name := range []string{

@@ -81,6 +81,8 @@ services:
     image: rspamd/rspamd:4.3.0
     volumes:
       - ../rspamd/local.d/milter_headers.conf:/etc/rspamd/local.d/milter_headers.conf:ro
+      - ../rspamd/local.d/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro
+      - ./rspamd/dkim:/var/lib/rspamd/dkim:ro
       - ./rspamd/override.d/milter_headers.conf:/etc/rspamd/override.d/milter_headers.conf:ro
       - ./rspamd/local.d/options.inc:/etc/rspamd/local.d/options.inc:ro
 

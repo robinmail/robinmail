@@ -290,6 +290,17 @@ func (s *Submitter) Submit(ctx context.Context, o Outgoing) (store.Submission, e
 					signed = signed || strings.EqualFold(h.Name, "DKIM-Signature")
 				}
 			}
+			// The signature goes in as Rspamd folded it. A value that is
+			// not a well-formed field is left out: a broken signature is
+			// worse than none.
+			for _, sig := range res.DKIMSignatures {
+				if message.ValidRaw(" " + sig) {
+					added = append(added, field{name: "DKIM-Signature", raw: []byte("DKIM-Signature: " + sig + "\r\n")})
+					signed = true
+				} else {
+					log.Warn("rspamd returned a DKIM signature that cannot be a header field; sending unsigned")
+				}
+			}
 			log = log.With("score", res.Score, "dkim", signed)
 		}
 	}

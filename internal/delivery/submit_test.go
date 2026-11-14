@@ -232,9 +232,11 @@ func TestSubmitThroughRspamd(t *testing.T) {
 	s.Rspamd = sc.start(t)
 	s.Hold, s.MaxPerHour = 10*time.Second, 300
 	const sig = "v=1; a=rsa-sha256; c=relaxed/relaxed; d=example.test; s=robinmail;\r\n\th=from:to:subject:date:message-id; bh=abc=; b=def="
+	// The shape of a real reply of Rspamd 4.3 over HTTP: the signature in
+	// "dkim-signature", folded with CRLF and a tab.
 	sc.reply = `{"action":"no action","score":-0.1,"required_score":15,
-		"milter":{"add_headers":{"DKIM-Signature":{"value":"` + strings.NewReplacer("\r", `\r`, "\n", `\n`, "\t", `\t`).Replace(sig) + `","order":0}},
-		          "remove_headers":{"X-Mailer":0}}}`
+		"dkim-signature":"` + strings.NewReplacer("\r", `\r`, "\n", `\n`, "\t", `\t`).Replace(sig) + `",
+		"milter":{"remove_headers":{"X-Mailer":0,"X-Spam":0}}}`
 	o := Outgoing{Account: mike, From: "mike@example.test", Rcpts: []string{"anna@elsewhere.test"}, EmailID: 7, IdentityID: 1,
 		Raw: draft("X-Mailer: secret client 1.0\r\nBcc: boss@example.test\r\n"), Protocol: "JMAP", IP: net.ParseIP("203.0.113.77"), Helo: "laptop"}
 	if _, err := s.Submit(context.Background(), o); err != nil {

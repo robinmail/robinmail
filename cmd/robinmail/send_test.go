@@ -139,13 +139,20 @@ type instance struct {
 // starts it. setup configures its outbound worker.
 func startInstance(t *testing.T, base, name string, setup func(*queue.Worker, *instance)) *instance {
 	t.Helper()
+	return startInstanceWith(t, base, name, "", setup)
+}
+
+// startInstanceWith is startInstance with more members for the config,
+// each followed by a comma.
+func startInstanceWith(t *testing.T, base, name, extra string, setup func(*queue.Worker, *instance)) *instance {
+	t.Helper()
 	in := &instance{t: t, domain: name + "-" + randomHex() + ".test"}
 	in.host = "mail." + in.domain
 	dir := t.TempDir()
 	cert, key, pool := selfSigned(t, dir, in.host)
 	in.pool = pool
 	cfg := filepath.Join(dir, "robinmail.json")
-	body := fmt.Sprintf(`{"hostname":%q,"data_dir":"data","master_key_file":"master.key","rqlite":{"url":%q},
+	body := fmt.Sprintf(`{"hostname":%q,"data_dir":"data","master_key_file":"master.key","rqlite":{"url":%q},`+extra+`
 		"tls":{"cert_file":%q,"key_file":%q},
 		"smtp":{"listen":"127.0.0.1:0"},
 		"submission":{"listen":"127.0.0.1:0","listen_tls":"127.0.0.1:0","undo_seconds":0},

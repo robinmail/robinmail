@@ -83,3 +83,36 @@ func FuzzParseReply(f *testing.F) {
 		parseReply(b)
 	})
 }
+
+// The DKIM signature of an outgoing message comes in the field
+// "dkim-signature" of the reply (seen with Rspamd 4.3 over HTTP; in milter
+// mode it is a header to add): one string, or a list when the module signs
+// with several keys.
+func TestDKIMSignatureInReply(t *testing.T) {
+	const sig = "v=1; a=rsa-sha256; c=relaxed/relaxed; d=probe.test; s=robinmail;\r\n\tt=1794649507;\r\n\th=from:from:reply-to:subject:subject; bh=zS7K=;\r\n\tb=Cvwr=="
+	for name, tc := range map[string]struct {
+		reply string
+		want  []string
+	}{
+		"one":  {`{"action":"no action","dkim-signature":"v=1; a=rsa-sha256; c=relaxed/relaxed; d=probe.test; s=robinmail;\r\n\tt=1794649507;\r\n\th=from:from:reply-to:subject:subject; bh=zS7K=;\r\n\tb=Cvwr=="}`, []string{sig}},
+		"two":  {`{"action":"no action","dkim-signature":["a=1","a=2"]}`, []string{"a=1", "a=2"}},
+		"none": {`{"action":"no action"}`, nil},
+		"null": {`{"action":"no action","dkim-signature":null}`, nil},
+	} {
+		res, err := parseReply([]byte(tc.reply))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(res.DKIMSignatures) != len(tc.want) {
+			t.Fatalf("%s: %q", name, res.DKIMSignatures)
+		}
+		for i := range tc.want {
+			if res.DKIMSignatures[i] != tc.want[i] {
+				t.Errorf("%s: %q, want %q", name, res.DKIMSignatures[i], tc.want[i])
+			}
+		}
+	}
+	if _, err := parseReply([]byte(`{"action":"no action","dkim-signature":{"x":1}}`)); err == nil {
+		t.Error("an object as dkim-signature is accepted")
+	}
+}

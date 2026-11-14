@@ -64,6 +64,11 @@ type Result struct {
 	// Rspamd only names it when it differs from the default X-Spam.
 	SpamHeader string
 	Symbols    []string // names of the symbols that fired, sorted
+	// DKIMSignatures are the values of the DKIM-Signature fields Rspamd
+	// made for a message of an authenticated user (its dkim_signing
+	// module), folded as they are to be written. Over the HTTP protocol
+	// they come in a field of their own, not among the headers to add.
+	DKIMSignatures []string
 }
 
 // Has reports whether a symbol fired.
@@ -133,6 +138,7 @@ type reply struct {
 	Subject       string                     `json:"subject"`
 	Symbols       map[string]json.RawMessage `json:"symbols"`
 	Messages      map[string]json.RawMessage `json:"messages"`
+	DKIMSignature json.RawMessage            `json:"dkim-signature"`
 	Milter        struct {
 		AddHeaders    map[string]json.RawMessage `json:"add_headers"`
 		RemoveHeaders map[string]int             `json:"remove_headers"`
@@ -163,6 +169,23 @@ func parseReply(body []byte) (*Result, error) {
 	}
 	if raw, ok := r.Messages["smtp_message"]; ok {
 		json.Unmarshal(raw, &res.SMTPMessage)
+	}
+	// One signature is a string, several are a list of strings.
+	if len(r.DKIMSignature) > 0 && string(r.DKIMSignature) != "null" {
+		var one string
+		var many []string
+		switch {
+		case json.Unmarshal(r.DKIMSignature, &one) == nil:
+			many = []string{one}
+		case json.Unmarshal(r.DKIMSignature, &many) == nil:
+		default:
+			return nil, fmt.Errorf("rspamd: bad dkim-signature in the reply")
+		}
+		for _, sig := range many {
+			if sig != "" {
+				res.DKIMSignatures = append(res.DKIMSignatures, sig)
+			}
+		}
 	}
 	for name := range r.Symbols {
 		res.Symbols = append(res.Symbols, name)

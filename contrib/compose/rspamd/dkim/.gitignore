@@ -1,0 +1,2 @@
+# DKIM keys of the development Rspamd. "robinmail dns <domain> <this dir>/<domain>.robinmail.key" makes one.
+*.key
