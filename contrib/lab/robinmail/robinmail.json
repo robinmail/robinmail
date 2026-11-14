@@ -33,6 +33,7 @@
   },
   "dev": {
     "retry_seconds": 5,
-    "smtp_trace": true
+    "smtp_trace": true,
+    "imap_trace": true
   }
 }

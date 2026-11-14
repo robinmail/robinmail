@@ -1,0 +1,10 @@
+{
+  "policies": {
+    "Certificates": {
+      "Install": ["/lab/secrets/ca.crt"]
+    },
+    "DisableAppUpdate": true,
+    "DisableTelemetry": true,
+    "ExtensionUpdate": false
+  }
+}

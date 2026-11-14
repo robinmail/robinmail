@@ -8,7 +8,8 @@
 #   make dev        a development instance with live reload on :5173
 #   make cluster-test   the cluster tests on three rqlite and three robinmail nodes in Docker
 #   make lab-test       the interoperability tests in Docker: Postfix, Exim and OpenSMTPD over SMTP,
-#                       Dovecot's ImapTest, mbsync and OfflineIMAP over IMAP
+#                       Dovecot's ImapTest, mbsync, OfflineIMAP and Thunderbird over IMAP
+#   make thunderbird-test   only the Thunderbird tests of the lab
 #   make clean
 #
 # A plain "go build ./cmd/robinmail" needs no Node and no make: that binary
@@ -51,7 +52,7 @@ GO ?= go
 NPM ?= npm
 WEB_SRC := $(shell find web/src web/public web/index.html web/package.json web/package-lock.json web/vite.config.ts web/tsconfig.json -type f 2>/dev/null)
 
-.PHONY: all build web test test-go test-web e2e dev clean cluster-test lab-test keycloak-test
+.PHONY: all build web test test-go test-web e2e dev clean cluster-test lab-test thunderbird-test keycloak-test
 
 all: build
 
@@ -113,14 +114,21 @@ cluster-test:
 		[ -n "$(KEEP)" ] || contrib/compose/cluster.sh down; exit $$s
 
 # Builds the images, starts the lab of contrib/lab/compose.yaml (robinmail
-# next to Postfix, Exim and OpenSMTPD and a container of IMAP clients, with
-# a DNS and a certificate authority of its own), runs the tests in
-# internal/labtest and removes the lab again, also when a test failed.
-# About six minutes after the first build. KEEP=1 leaves the lab running. Nothing leaves the lab's
+# next to Postfix, Exim and OpenSMTPD, a container of IMAP clients and one
+# with Thunderbird, with a DNS and a certificate authority of its own),
+# runs the tests in internal/labtest and removes the lab again, also when
+# a test failed. About seven minutes after the first build. KEEP=1 leaves the lab running. Nothing leaves the lab's
 # network: its name server knows no name outside it.
 lab-test:
 	contrib/lab/lab.sh up
 	@ROBINMAIL_TEST_LAB=1 $(GO) test -count=1 -v -timeout 30m ./internal/labtest; s=$$?; \
+		[ -n "$(KEEP)" ] || contrib/lab/lab.sh down; exit $$s
+
+# The same lab, and of its tests only those that drive Thunderbird: about
+# a minute and a half once the images are built.
+thunderbird-test:
+	contrib/lab/lab.sh up
+	@ROBINMAIL_TEST_LAB=1 $(GO) test -count=1 -v -timeout 30m -run 'TestThunderbird' ./internal/labtest; s=$$?; \
 		[ -n "$(KEEP)" ] || contrib/lab/lab.sh down; exit $$s
 
 clean:

@@ -1,7 +1,9 @@
 // Package labtest holds the tests that run against the interoperability lab
 // of contrib/lab: one robinmail next to Postfix, Exim and OpenSMTPD in
 // Docker, each with a domain of its own, a private DNS and a private
-// certificate authority. The tests send mail both ways through the real
+// certificate authority, and mail clients that are not ours: Dovecot's
+// ImapTest, mbsync, OfflineIMAP and a real Thunderbird, driven over
+// Marionette (thunderbird_test.go). The tests send mail both ways through the real
 // servers and read it back: from the peers' Maildirs and from robinmail
 // over JMAP. They stop and start containers, so they only run when asked:
 //

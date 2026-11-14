@@ -120,6 +120,18 @@ func waitFor(t testing.TB, what string, limit time.Duration, ok func() bool) tim
 	return 0
 }
 
+// labSQL runs a statement in robinmail's database in the lab and returns
+// what rqlite's command line prints. The statement goes to its standard
+// input: one given as an argument is ignored.
+func labSQL(t testing.TB, sql string) string {
+	t.Helper()
+	out, err := composeErr([]byte(sql+"\n"), "exec", "-T", "rqlite", "rqlite", "-H", "localhost")
+	if err != nil {
+		t.Fatalf("rqlite: %s: %v\n%s", sql, err, out)
+	}
+	return out
+}
+
 // dropQueued takes the messages for a recipient out of robinmail's queue,
 // in its database: robinmail has no command for that, and a message that
 // can never be delivered would otherwise be tried for five days.
@@ -128,8 +140,7 @@ func dropQueued(t testing.TB, rcpt string) {
 	if strings.ContainsAny(rcpt, `'%_\`) {
 		t.Fatalf("dropQueued: %q", rcpt)
 	}
-	compose(t, "exec", "-T", "rqlite", "rqlite", "-H", "localhost",
-		"DELETE FROM submission WHERE recipients LIKE '%"+rcpt+"%'")
+	labSQL(t, "DELETE FROM submission WHERE recipients LIKE '%"+rcpt+"%'")
 }
 
 // ---- the peers ----
@@ -282,6 +293,9 @@ type jmap struct {
 	account string
 	hc      *http.Client
 	box     map[string]string // role -> mailbox id
+	// secret is what the client logs in with when the account password no
+	// longer does: an app password, once the account has one.
+	secret string
 
 	mu    sync.Mutex
 	blobs map[string][]byte // email id -> raw message
@@ -322,23 +336,37 @@ func newJMAP(t testing.TB, user string) *jmap {
 
 func (j *jmap) do(t testing.TB, method, path, ctype string, body []byte) (int, []byte) {
 	t.Helper()
+	status, data := j.doErr(method, path, ctype, body)
+	if status == 0 {
+		t.Fatalf("%s %s: %s", method, path, data)
+	}
+	return status, data
+}
+
+// doErr is do for a server that may be down: the status is 0 then and the
+// error is what comes back.
+func (j *jmap) doErr(method, path, ctype string, body []byte) (int, []byte) {
 	req, err := http.NewRequest(method, "https://"+gateHTTPS+path, bytes.NewReader(body))
 	if err != nil {
-		t.Fatal(err)
+		return 0, []byte(err.Error())
 	}
 	req.Host = robinHost
-	req.SetBasicAuth(j.user, password())
+	secret := j.secret
+	if secret == "" {
+		secret = password()
+	}
+	req.SetBasicAuth(j.user, secret)
 	if ctype != "" {
 		req.Header.Set("Content-Type", ctype)
 	}
 	resp, err := j.hc.Do(req)
 	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
+		return 0, []byte(err.Error())
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatal(err)
+		return 0, []byte(err.Error())
 	}
 	return resp.StatusCode, data
 }
