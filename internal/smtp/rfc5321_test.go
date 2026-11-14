@@ -209,8 +209,9 @@ func TestRFC5321_4_1_2_PathGrammar(t *testing.T) {
 		{"<Sm\x7fith@bar.com>", "", ""},
 		{"<Smith@bar\x01.com>", "", ""},
 		// Not a Domain. "In particular, the underscore character is not
-		// permitted."
-		{"<Smith@bar_baz.com>", "", ""},
+		// permitted." Refused in a recipient; accepted in a sender, see
+		// TestRFC5321_4_1_2_Deviation_UnderscoreInSenderDomain.
+		{"<Smith@bar_baz.com>", "reverse", "Smith@bar_baz.com"},
 		{"<Smith@-bar.com>", "", ""},
 		{"<Smith@bar-.com>", "", ""},
 		{"<Smith@bar..com>", "", ""},
@@ -796,7 +797,7 @@ func tour(t *testing.T, c *client, greeting string) [][2]string {
 	for _, cmd := range []string{
 		"NOOP", "MAIL FROM:<Smith@bar.com>", "FROB", "EHLO", "EHLO bar.com", "HELO bar.com", "EHLO bar.com",
 		"RCPT TO:<Jones@foo.com>", "DATA", "VRFY Crispin", "VRFY", "EXPN Example-People", "HELP", "STARTTLS",
-		"AUTH PLAIN", "MAIL FROM:Smith@bar.com", "MAIL FROM:<Smith@bar_baz.com>", "MAIL FROM:<Smith@bar.com> FROB=1",
+		"AUTH PLAIN", "MAIL FROM:Smith@bar.com", "MAIL FROM:<Smith@bar..com>", "MAIL FROM:<Smith@bar.com> FROB=1",
 		"MAIL FROM:<Smith@bar.com> SIZE=x", "MAIL FROM:<Smith@bar.com> SIZE=99999999999",
 		"MAIL FROM:<Smït@bar.com>", "MAIL FROM:<Smith@bar.com> BODY=8BITMIME SIZE=100",
 		"MAIL FROM:<Smith@bar.com>", "DATA", "RCPT TO:<Green@foo.com>", "RCPT TO:<Jonés@foo.com>",

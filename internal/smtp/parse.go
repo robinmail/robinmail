@@ -35,6 +35,14 @@ type param struct {
 // "<Postmaster>" without a domain is accepted (4.1.1.3). Non-ASCII
 // characters are accepted where RFC 6531 3.3 extends the grammar; whether
 // the client was allowed to use them is for the caller to decide.
+//
+// One deviation, for the Reverse-path only: an underscore is accepted in
+// the domain of the sender. The grammar has none ("the underscore
+// character is not permitted"), but DNS has such names, hosts are called
+// "mail_1.example.com", and Postfix and OpenSMTPD both send from and
+// accept such senders (Exim refuses them, as the RFC says). Refusing costs
+// wanted mail and protects nothing: the name is looked up, never trusted.
+// A recipient is one of our own domains, which have no underscore.
 func parsePath(s string, forward bool) (addr string, params []param, err error) {
 	if len(s) < 2 || s[0] != '<' {
 		return "", nil, errBadPath
@@ -50,7 +58,7 @@ func parsePath(s string, forward bool) (addr string, params []param, err error) 
 			if i >= len(s) || s[i] != '@' {
 				return "", nil, errBadPath
 			}
-			end := domainEnd(s, i+1)
+			end := domainEnd(s, i+1, false)
 			if end < 0 || end >= len(s) {
 				return "", nil, errBadPath
 			}
@@ -76,7 +84,7 @@ func parsePath(s string, forward bool) (addr string, params []param, err error) 
 	case forward && len(s) >= i+11 && strings.EqualFold(s[i:i+10], "postmaster") && s[i+10] == '>':
 		i += 10
 	default:
-		if i = mailboxEnd(s, i); i < 0 || i >= len(s) || s[i] != '>' {
+		if i = mailboxEnd(s, i, !forward); i < 0 || i >= len(s) || s[i] != '>' {
 			return "", nil, errBadPath
 		}
 	}
@@ -130,7 +138,9 @@ func parseParam(s string) (param, bool) {
 //
 //	Mailbox    = Local-part "@" ( Domain / address-literal )
 //	Local-part = Dot-string / Quoted-string
-func mailboxEnd(s string, i int) int {
+//
+// underscore also takes a domain with underscores in its labels.
+func mailboxEnd(s string, i int, underscore bool) int {
 	start := i
 	if i < len(s) && s[i] == '"' {
 		for i++; ; i++ {
@@ -181,7 +191,7 @@ func mailboxEnd(s string, i int) int {
 		}
 		return i + end + 1
 	}
-	return domainEnd(s, i)
+	return domainEnd(s, i, underscore)
 }
 
 // atext is RFC 5322 3.2.3's atext, plus UTF8-non-ascii (RFC 6531 3.3).
@@ -202,11 +212,14 @@ func alnum(c byte) bool {
 // So a label starts and ends with a letter or digit and has only letters,
 // digits and hyphens in between; no underscore, no trailing dot. RFC 6531
 // adds U-labels, taken here as non-ASCII characters in a label.
-func domainEnd(s string, i int) int {
+//
+// underscore is the deviation described at parsePath: it lets "_" stand
+// anywhere in a label, as in "mail_1.example.com" and "_x.example.com".
+func domainEnd(s string, i int, underscore bool) int {
 	start := i
 	for {
 		n := i
-		for i < len(s) && (alnum(s[i]) || s[i] == '-' || s[i] >= 0x80) {
+		for i < len(s) && (alnum(s[i]) || s[i] == '-' || s[i] >= 0x80 || underscore && s[i] == '_') {
 			i++
 		}
 		if i == n || s[n] == '-' || s[i-1] == '-' {
@@ -225,7 +238,7 @@ func domainEnd(s string, i int) int {
 
 // ValidDomain reports whether s is a Domain as RFC 5321 4.1.2 defines it.
 func ValidDomain(s string) bool {
-	return s != "" && ascii(s) && domainEnd(s, 0) == len(s)
+	return s != "" && ascii(s) && domainEnd(s, 0, false) == len(s)
 }
 
 // ValidHelo reports whether s is what RFC 5321 4.1.1.1 allows as the
@@ -337,7 +350,10 @@ func readData(r *bufio.Reader, max int64) ([]byte, error) {
 
 // ValidMailbox reports whether s is a Mailbox of RFC 5321 4.1.2 (with the
 // non-ASCII characters RFC 6531 adds): what may stand between the angle
-// brackets of RCPT TO.
+// brackets of a RCPT TO we send. A domain with an underscore is taken, as
+// it is in a sender (see parsePath): mail that came from such a domain
+// can then be answered. What the other server makes of it is its call;
+// Postfix and OpenSMTPD take it, Exim answers 501.
 func ValidMailbox(s string) bool {
-	return s != "" && len(s) <= maxPath-2 && utf8.ValidString(s) && mailboxEnd(s, 0) == len(s)
+	return s != "" && len(s) <= maxPath-2 && utf8.ValidString(s) && mailboxEnd(s, 0, true) == len(s)
 }
