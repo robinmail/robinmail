@@ -18,6 +18,7 @@ import (
 	"github.com/mikepage/robinmail/internal/address"
 	"github.com/mikepage/robinmail/internal/rspamd"
 	"github.com/mikepage/robinmail/internal/smtp"
+	"github.com/mikepage/robinmail/internal/srs"
 	"github.com/mikepage/robinmail/internal/store"
 )
 
@@ -42,8 +43,14 @@ type Deliverer struct {
 	// Submissions, when set, is told about delivery status notifications
 	// that arrive for mail an account sent (see noteDSN).
 	Submissions DSNStore
-	Resolver    Resolver         // nil uses net.DefaultResolver
-	Now         func() time.Time // for tests
+	// Aliases finds aliases; nil has none. Forwards queues what an alias
+	// sends to addresses elsewhere, and SRS rewrites the envelope sender
+	// of such mail; without them an alias can only name accounts here.
+	Aliases  AliasStore
+	Forwards Forwarder
+	SRS      *srs.Rewriter
+	Resolver Resolver         // nil uses net.DefaultResolver
+	Now      func() time.Time // for tests
 }
 
 func (d *Deliverer) now() time.Time {
@@ -128,56 +135,11 @@ func has(list []string, s string) bool {
 	return false
 }
 
-// resolve maps a recipient to an account. "user+tag@domain" reaches "user"
-// when no account with the full name exists. <Postmaster> without a domain
-// (RFC 5321 4.1.1.3) reaches the postmaster of the first accepted domain, by
-// name, that has one.
-func (d *Deliverer) resolve(ctx context.Context, to string) (store.Account, error) {
-	var none store.Account
-	domains, err := d.acceptedDomains(ctx)
-	if err != nil {
-		d.log().Error("domain lookup failed", "err", err)
-		return none, errTempFail
-	}
-	var candidates []address.Address
-	if strings.EqualFold(to, "postmaster") {
-		for _, dom := range domains {
-			candidates = append(candidates, address.Address{Local: "postmaster", Domain: dom})
-		}
-	} else {
-		a, err := address.Parse(to)
-		if err != nil {
-			if at := strings.LastIndexByte(to, '@'); at >= 0 && !has(domains, strings.ToLower(to[at+1:])) {
-				return none, errNoRelay
-			}
-			return none, errNoUser
-		}
-		if !has(domains, a.Domain) {
-			return none, errNoRelay
-		}
-		candidates = []address.Address{a}
-		if base, _, ok := strings.Cut(a.Local, "+"); ok && base != "" {
-			candidates = append(candidates, address.Address{Local: base, Domain: a.Domain})
-		}
-	}
-	for _, c := range candidates {
-		acct, err := d.Store.Account(ctx, c.String())
-		if err == nil {
-			return acct, nil
-		}
-		if !errors.Is(err, store.ErrNoAccount) {
-			d.log().Error("account lookup failed", "err", err)
-			return none, errTempFail
-		}
-	}
-	return none, errNoUser
-}
-
-// Rcpt accepts only existing users in the accepted domains, so robinmail
-// never relays for unauthenticated senders.
-func (d *Deliverer) Rcpt(ctx context.Context, _ *smtp.Envelope, to string) error {
-	_, err := d.resolve(ctx, to)
-	return err
+// Rcpt accepts only addresses of the accepted domains that lead somewhere:
+// to an account, or through an alias to accounts or to addresses
+// elsewhere. For anything else robinmail does not relay.
+func (d *Deliverer) Rcpt(ctx context.Context, env *smtp.Envelope, to string) error {
+	return d.route(ctx, env.From, to, &routes{})
 }
 
 // deliveryKey identifies a message for idempotent delivery: the envelope
@@ -199,21 +161,20 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 	qid := queueID()
 	log := d.log().With("qid", qid, "ip", env.RemoteIP.String(), "from", clean(env.From))
 
-	var accounts []store.Account
-	seen := map[string]bool{}
+	var to routes
 	for _, r := range env.Rcpts {
-		a, err := d.resolve(ctx, r)
-		if err != nil {
-			return err // the user was removed after RCPT
-		}
-		if !seen[a.ID] {
-			seen[a.ID] = true
-			accounts = append(accounts, a)
+		if err := d.route(ctx, env.From, r, &to); err != nil {
+			return err // the user or alias was removed after RCPT
 		}
 	}
+	accounts := to.accounts
 	key := deliveryKey(env.From, msg)
 
 	fields, rest := splitHeader(msg)
+	if err := checkLoops(fields, to.forwards); err != nil {
+		log.Info("refused", "reason", err.Error())
+		return err
+	}
 	var added []field
 	role := store.RoleInbox
 	rdns := d.reverseDNS(ctx, env.RemoteIP)
@@ -262,11 +223,35 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 	// else, the Received lines of earlier hops first of all, stays as it
 	// is and in its order.
 	fields = removeHeader(fields, "Return-Path", 0)
-	top := []field{
-		{name: "Return-Path", raw: []byte("Return-Path: <" + oneLine(env.From) + ">\r\n")},
-		{name: "Received", raw: received(d.Hostname, qid, env, rdns, accounts, now())},
+	// The trace line names the recipient only when the message goes to one
+	// mailbox and nowhere else: a copy that is sent on must not tell where
+	// else the alias leads.
+	named := accounts
+	if len(to.forwards) > 0 {
+		named = nil
 	}
+	trace := field{name: "Received", raw: received(d.Hostname, qid, env, rdns, named, now())}
+	top := []field{{name: "Return-Path", raw: []byte("Return-Path: <" + oneLine(env.From) + ">\r\n")}, trace}
 	out := joinHeader(append(append(top, added...), fields...), rest)
+
+	// Mail that looks like spam is filed under Junk here and not sent on:
+	// the next server would hold it against this one. When forwarding is
+	// all the message was for, the sender is told.
+	forwards := to.forwards
+	if role == store.RoleJunk && len(forwards) > 0 {
+		var keep []forward
+		for _, f := range forwards {
+			if f.bounce {
+				keep = append(keep, f)
+			}
+		}
+		if len(keep) == 0 && len(accounts) == 0 {
+			log.Info("rejected: spam for an alias that only forwards")
+			return errSpamFwd
+		}
+		log.Info("not forwarding spam", "forwards", len(forwards)-len(keep))
+		forwards = keep
+	}
 
 	for _, a := range accounts {
 		// The store falls back to the inbox when the account has no mailbox
@@ -284,6 +269,11 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 			return errTempFail
 		}
 		log.Info("delivered", "to", a.Address, "email", store.EmailID(e.ID), "role", role, "size", len(out))
+	}
+	// A forward leaves with our trace line and without a Return-Path: that
+	// is for whoever delivers it finally.
+	if err := d.sendOn(ctx, key, env.From, forwards, append(append([]field{trace}, added...), fields...), rest); err != nil {
+		return err
 	}
 	d.noteDSN(ctx, env.From, accounts, out)
 	return nil

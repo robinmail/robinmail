@@ -28,12 +28,13 @@ func (s *Store) Domains(ctx context.Context) ([]string, error) {
 }
 
 // RemoveDomain stops accepting mail for a domain. It refuses with
-// ErrDomainInUse while an account has an address in it: that account could
+// ErrDomainInUse while an account or an alias has an address in it: it could
 // no longer receive mail, and nothing would say why.
 func (s *Store) RemoveDomain(ctx context.Context, name string) error {
 	b := s.newBatch("")
 	b.guard(ErrNoDomain, `EXISTS (SELECT 1 FROM domain WHERE name = :name)`, "name", name)
-	b.guard(ErrDomainInUse, `NOT EXISTS (SELECT 1 FROM account WHERE `+sqlAddressDomain+` = :name)`, "name", name)
+	b.guard(ErrDomainInUse, `NOT EXISTS (SELECT 1 FROM account WHERE `+sqlAddressDomain+` = :name AND `+sqlUserAccount+`)`, "name", name)
+	b.guard(ErrDomainInUse, `NOT EXISTS (SELECT 1 FROM alias WHERE domain = :name)`, "name", name)
 	b.add(`DELETE FROM domain WHERE name = :name`, "name", name)
 	_, err := s.run(ctx, b)
 	return err

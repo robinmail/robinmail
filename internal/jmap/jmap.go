@@ -159,6 +159,9 @@ type Handler struct {
 	// checks the sender, has the message scanned and signed, and queues
 	// it. nil refuses every submission.
 	Send func(ctx context.Context, u User, o Outgoing) (store.Submission, *SendError, error)
+	// SendAs, when set, lists the other addresses a user may have
+	// identities for: the aliases that deliver to the account.
+	SendAs func(ctx context.Context, username string) ([]string, error)
 	// Hostname goes into the Message-ID of emails created here. Empty
 	// uses the domain of the user's address.
 	Hostname string

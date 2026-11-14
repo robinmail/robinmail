@@ -20,6 +20,7 @@ import (
 	"github.com/mikepage/robinmail/internal/queue"
 	"github.com/mikepage/robinmail/internal/rspamd"
 	"github.com/mikepage/robinmail/internal/smtp"
+	"github.com/mikepage/robinmail/internal/srs"
 	"github.com/mikepage/robinmail/internal/store"
 	"github.com/mikepage/robinmail/internal/tlsconf"
 	"github.com/mikepage/robinmail/internal/web"
@@ -74,6 +75,8 @@ func (a *app) serve(stop func()) error {
 		Logger:   log,
 	}
 	d.Submissions = a.store
+	d.Aliases, d.Forwards = a.store, a.store
+	d.SRS = &srs.Rewriter{Key: a.master.Derive("robinmail srs", 32)}
 	sender := &delivery.Submitter{
 		Hostname:        a.cfg.Hostname,
 		Store:           a.store,
@@ -82,6 +85,7 @@ func (a *app) serve(stop func()) error {
 		MaxRecipients:   a.cfg.SMTP.MaxRecipients,
 		MaxPerHour:      a.cfg.Submission.MaxRecipientsPerHour,
 		Hold:            time.Duration(*a.cfg.Submission.UndoSeconds) * time.Second,
+		SendAs:          a.store.SendAddresses,
 		Logger:          log,
 	}
 	if a.cfg.Rspamd.URL != "" {
@@ -136,8 +140,9 @@ func (a *app) serve(stop func()) error {
 		Audit:               a.store,
 		AuthChanges:         authHub,
 		RequireAppPasswords: a.cfg.Auth.RequireAppPasswords,
+		SendAs:              a.store.SendAddresses,
 		JMAP: &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store),
-			Push: hub, Closing: a.ctx.Done()},
+			SendAs: a.store.SendAddresses, Push: hub, Closing: a.ctx.Done()},
 		Static:     webStatic,
 		DevOrigins: a.cfg.Web.DevOrigins,
 		Logger:     log,

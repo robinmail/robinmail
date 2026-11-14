@@ -146,6 +146,9 @@ type NewSubmission struct {
 	// the account would pass that many recipients within an hour.
 	MaxPerHour int
 	IfInState  int64
+	// Key, when set, makes the submission happen once: a second one with
+	// the same key for the account fails with ErrForwarded.
+	Key string
 }
 
 // Submit puts a message in the queue: the blob first, then one batch that
@@ -181,6 +184,10 @@ func (s *Store) Submit(ctx context.Context, account string, n NewSubmission) (Su
 	b.idempotent()
 	b.guardAccount()
 	b.ifState(n.IfInState)
+	if n.Key != "" {
+		b.unique(ErrForwarded)
+		b.add(`INSERT INTO delivered (account_id, key, at) VALUES (:a, :dkey, :now)`, "dkey", "fwd:"+n.Key)
+	}
 	if n.EmailID != 0 {
 		b.guard(ErrNoEmail, `EXISTS (SELECT 1 FROM email WHERE account_id = :a AND id = :email)`, "email", n.EmailID)
 	}
@@ -215,6 +222,9 @@ func (s *Store) Submit(ctx context.Context, account string, n NewSubmission) (Su
 	}
 	if len(res[0].Values) == 1 {
 		return scanSubmission(res[0].Values[0]), nil
+	}
+	if errors.Is(runErr, ErrForwarded) {
+		return Submission{}, ErrForwarded // an earlier call queued it
 	}
 	if runErr == nil || errors.Is(runErr, ErrDuplicate) {
 		runErr = fmt.Errorf("store: the submission was not stored")

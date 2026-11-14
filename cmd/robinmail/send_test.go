@@ -23,6 +23,7 @@ import (
 	"github.com/mikepage/robinmail/internal/config"
 	"github.com/mikepage/robinmail/internal/queue"
 	"github.com/mikepage/robinmail/internal/smtp"
+	"github.com/mikepage/robinmail/internal/store"
 )
 
 // TestMain keeps the outbound worker of every "serve" in these tests away
@@ -203,6 +204,20 @@ func (in *instance) purge(addr string) {
 	}
 	if acct, err := a.store.Account(ctx, addr); err == nil {
 		a.store.PurgeSubmissions(ctx, acct.ID)
+	}
+}
+
+// purgeSystem removes what the system account of the instance's domain
+// (forwards, bounces on their way back) still has queued.
+func (in *instance) purgeSystem() {
+	cfg, err := config.Load(in.cfg)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if a, err := open(ctx, cfg, false); err == nil {
+		a.store.PurgeSubmissions(ctx, store.SystemAccountID(in.domain))
 	}
 }
 

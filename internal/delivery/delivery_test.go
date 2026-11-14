@@ -375,9 +375,9 @@ func TestDomainsFromStore(t *testing.T) {
 func TestPostmasterAcrossDomains(t *testing.T) {
 	d, st := setup(t, "")
 	st.domains = []string{"aaa.test", "example.test"}
-	a, err := d.resolve(context.Background(), "POSTMASTER")
-	if err != nil || a.ID != "acct-pm" {
-		t.Errorf("resolve(POSTMASTER) = %+v, %v", a, err)
+	var r routes
+	if err := d.route(context.Background(), "a@sender.test", "POSTMASTER", &r); err != nil || len(r.accounts) != 1 || r.accounts[0].ID != "acct-pm" {
+		t.Errorf("route(POSTMASTER) = %+v, %v", r.accounts, err)
 	}
 	delete(st.accounts, "postmaster@example.test")
 	d2, st2 := setup(t, "")

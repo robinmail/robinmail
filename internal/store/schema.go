@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 8
+const schemaVersion = 9
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -157,6 +157,7 @@ var schema = []string{
 	sqlNodeTable,
 	sqlLoginFailureTable,
 	sqlEmailFTS, sqlEmailFTSDelete,
+	sqlAliasTable, sqlAliasDomain, sqlAliasTarget,
 
 	`INSERT INTO schema_version (version) SELECT ` + fmt.Sprint(schemaVersion) + ` WHERE NOT EXISTS (SELECT 1 FROM schema_version)`,
 }
@@ -220,6 +221,8 @@ var migrations = map[int64][]string{
 		sqlAccountSeq,
 		sqlEmailFTS, sqlEmailFTSDelete,
 	},
+	// 9: aliases.
+	8: {sqlAliasTable, sqlAliasDomain, sqlAliasTarget},
 }
 
 const (
@@ -242,6 +245,20 @@ const (
 	sqlEmailFTSDelete = `CREATE TRIGGER IF NOT EXISTS email_fts_delete AFTER DELETE ON email BEGIN
 		DELETE FROM email_fts WHERE rowid = (SELECT seq FROM account WHERE id = old.account_id) * 4294967296 + old.id;
 	END`
+
+	// Aliases: one row per target. address is an address of ours or a
+	// pattern with one "*" ("*@domain" is the catch-all); domain is its
+	// domain; wildcard says it is a pattern. target is an address anywhere.
+	sqlAliasTable = `CREATE TABLE IF NOT EXISTS alias (
+		address    TEXT NOT NULL,
+		target     TEXT NOT NULL,
+		domain     TEXT NOT NULL,
+		wildcard   INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (address, target)
+	) WITHOUT ROWID`
+	sqlAliasDomain = `CREATE INDEX IF NOT EXISTS alias_domain ON alias (domain, wildcard)`
+	sqlAliasTarget = `CREATE INDEX IF NOT EXISTS alias_target ON alias (target)`
 
 	// A web login. token_hash is the SHA-256 of the token in the cookie, so
 	// a copy of this table logs nobody in. id is what the user's list of

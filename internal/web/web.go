@@ -100,6 +100,9 @@ type Server struct {
 	// submission and Basic auth for every account, also those without an
 	// app password.
 	RequireAppPasswords bool
+	// SendAs, when set, lists the alias addresses an account may send as
+	// (store.SendAddresses), for the identities page.
+	SendAs func(ctx context.Context, address string) ([]string, error)
 	// OIDC lists the providers the login page offers.
 	OIDC []*OIDCProvider
 	// JMAP serves /jmap/ and /.well-known/jmap. It gets only requests of
@@ -247,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 	auth("POST /auth/totp/confirm", s.authed(s.totpConfirm))
 	auth("POST /auth/totp/disable", s.authed(s.totpDisable))
 	auth("POST /auth/totp/recovery-codes", s.authed(s.totpRecoveryCodes))
+	auth("GET /auth/addresses", s.authed(s.addresses))
 	auth("GET /auth/sessions", s.authed(s.sessions))
 	auth("DELETE /auth/sessions/{id}", s.authed(s.revokeSession))
 	auth("POST /auth/sessions/revoke-others", s.authed(s.revokeOtherSessions))

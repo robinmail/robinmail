@@ -818,8 +818,8 @@ func clip(s string) string {
 // bounce stores a delivery status notification (RFC 3464) for the
 // recipients that failed in the sender's Inbox.
 //
-// Every sender is a user of this server, so the notification never
-// leaves: it is delivered like local mail, with the null reverse-path in
+// A sender who is a user of this server gets it without it ever leaving:
+// it is delivered like local mail, with the null reverse-path in
 // Return-Path as RFC 3464 2 and RFC 5321 4.5.5 want it. A message that
 // itself has the null reverse-path is a notification already; nothing is
 // sent in reply to it (RFC 5321 6.1), or two servers could bounce each
@@ -848,6 +848,19 @@ func (w *Worker) bounce(ctx context.Context, sub store.Submission, msg []byte, f
 		Date:      now,
 		Original:  msg,
 	}, d)
+	if store.IsSystemAccount(sub.Account) {
+		// Forwarded mail: the sender is somebody elsewhere, and the
+		// address the message left with is one this server made from
+		// theirs. Local delivery reads the sender back out of it and
+		// queues the notification for them, with the null reverse-path.
+		err := w.Local.Local(context.WithoutCancel(ctx), "", sub.MailFrom, dsn)
+		var se *smtp.Error
+		if errors.As(err, &se) && se.Code >= 500 {
+			w.log().Warn("queue: a bounce of forwarded mail has nowhere to go", "to", sub.MailFrom, "reply", se.Msg)
+			return nil
+		}
+		return err
+	}
 	dsn = append([]byte("Return-Path: <>\r\n"), dsn...)
 	// The key makes a second run of the same attempt store nothing.
 	key := "dsn:" + store.SubmissionID(sub.ID) + ":" + hex.EncodeToString(h.Sum(nil)[:12])

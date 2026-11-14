@@ -43,6 +43,10 @@ commands:
   domain add <domain>                          accept mail for a domain
   domain list                                  list the accepted domains
   domain remove <domain>                       stop accepting mail for a domain without users
+  alias add <alias> <target>...                deliver mail for an alias to accounts here or forward it elsewhere;
+                                               an alias is an address, a pattern (sales-*@example.org) or @example.org
+  alias list [domain]                          list the aliases
+  alias remove <alias> [target]                remove one target of an alias, or the alias
   user add <address>                           create a user (password from the prompt or stdin)
   user list                                    list users
   user password <address>                      set a new password (prompt or stdin); ends the user's sessions
@@ -147,6 +151,12 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return a.userAdd(args[1])
 	case cmd == "user" && n == 1 && args[0] == "list":
 		return a.userList()
+	case cmd == "alias" && n >= 3 && args[0] == "add":
+		return a.aliasAdd(args[1], args[2:])
+	case cmd == "alias" && (n == 1 || n == 2) && args[0] == "list":
+		return a.aliasList(optional(args, 1, ""))
+	case cmd == "alias" && (n == 2 || n == 3) && args[0] == "remove":
+		return a.aliasRemove(args[1], optional(args, 2, ""))
 	case cmd == "user" && n == 2 && args[0] == "password":
 		return a.userPassword(args[1])
 	case cmd == "user" && n == 2 && args[0] == "totp-disable":
@@ -230,7 +240,7 @@ func open(ctx context.Context, cfg *config.Config, serving bool) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w (make one with \"robinmail key generate\")", err)
 	}
-	a := &app{cfg: cfg, local: blob.NewLocal(cfg.BlobDir())}
+	a := &app{cfg: cfg, local: blob.NewLocal(cfg.BlobDir()), master: master}
 	if cfg.Node.ID == "" {
 		a.store = store.New(db, a.local, master)
 		return a, a.store.Init(ctx)
@@ -257,6 +267,7 @@ type app struct {
 	ctx    context.Context
 	cfg    *config.Config
 	store  *store.Store
+	master *blob.MasterKey
 	stdin  io.Reader
 	stdout io.Writer
 	// local is this node's blob directory. node and replicated are nil

@@ -1,6 +1,7 @@
 package jmap
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -39,6 +40,21 @@ func TestRFC8621_6_Identity(t *testing.T) {
 	same(t, "notCreated", []any{at(t, got, "/notCreated/boss/type"), at(t, got, "/notCreated/other/type"), at(t, got, "/notCreated/noemail/type"),
 		at(t, got, "/notCreated/extra/properties"), at(t, got, "/notCreated/badreply/properties")},
 		`["forbiddenFrom", "forbiddenFrom", "invalidProperties", ["mayDelete"], ["replyTo"]]`)
+
+	// An alias that delivers to the account is an address to send from
+	// too, with or without a tag; another alias is not.
+	e.h.SendAs = func(_ context.Context, username string) ([]string, error) {
+		if username != e.acct.Address {
+			t.Errorf("SendAs asked for %q", username)
+		}
+		return []string{"office@" + domain}, nil
+	}
+	alias := e.one("Identity/set", `{"accountId": "$A", "create": {
+		"office": {"email": "Office@`+domain+`"}, "tagged": {"email": "office+shop@`+domain+`"}, "boss": {"email": "boss@`+domain+`"}}}`)
+	same(t, "alias identities", []any{at(t, alias, "/created/office/id"), at(t, alias, "/created/tagged/id"), at(t, alias, "/notCreated/boss/type")},
+		`["i3", "i4", "forbiddenFrom"]`)
+	e.one("Identity/set", `{"accountId": "$A", "destroy": ["i3", "i4"]}`)
+	e.h.SendAs = nil
 
 	// Update: everything but the email ("email: immutable").
 	got = e.one("Identity/set", `{"accountId": "$A", "update": {

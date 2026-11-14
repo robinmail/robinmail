@@ -105,9 +105,10 @@ func (s *Store) Account(ctx context.Context, address string) (Account, error) {
 	return scanAccount(res[0].Values[0]), nil
 }
 
-// Accounts lists all accounts by address.
+// Accounts lists all accounts of users by address. The system accounts
+// (alias.go) are not among them.
 func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
-	res, err := s.query(ctx, "", q(`SELECT `+accountColumns+` FROM account ORDER BY address`))
+	res, err := s.query(ctx, "", q(`SELECT `+accountColumns+` FROM account WHERE `+sqlUserAccount+` ORDER BY address`))
 	if err != nil {
 		return nil, err
 	}

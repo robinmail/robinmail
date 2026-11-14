@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // Identities: the addresses to send as. The account's own address is
-// always there; others are that address with a +tag, each with its own
-// name, reply-to and signature.
+// always there; others are that address with a +tag, or an alias that
+// delivers to the account (phase 8), each with its own name, reply-to and
+// signature.
 import { computed, onMounted, ref } from 'vue'
 import { auth, compose, loadAccount } from '../app'
+import { addresses } from '../auth/api'
 import { formatAddress, isValidEmail, parseAddresses } from '../compose/address'
 import type { Identity } from '../jmap/types'
 
@@ -15,18 +17,32 @@ async function load() {
   } catch (e) {
     if (auth.account) loadError.value = e instanceof Error ? e.message : String(e)
   }
+  // Without the list the page still works for the account's own address.
+  try {
+    sendAs.value = await addresses()
+  } catch {
+    sendAs.value = []
+  }
 }
 onMounted(() => {
   document.title = 'Identities · robinmail'
   void load()
 })
 
-// The account's address, around the tag of a new identity.
+// The addresses a new identity can be for: the account's own, and the
+// aliases that deliver to it. The chosen one stands around the tag.
+const own = computed(() => compose.state.identities.find((i) => !i.mayDelete)?.email ?? auth.account?.username ?? '')
+const sendAs = ref<string[]>([])
+const baseAddress = ref('')
+const bases = computed(() => (sendAs.value.length ? sendAs.value : [own.value]))
 const base = computed(() => {
-  const own = compose.state.identities.find((i) => !i.mayDelete)?.email ?? auth.account?.username ?? ''
-  const at = own.lastIndexOf('@')
-  return { local: own.slice(0, at), domain: own.slice(at + 1) }
+  const chosen = bases.value.includes(baseAddress.value) ? baseAddress.value : own.value
+  const at = chosen.lastIndexOf('@')
+  return { address: chosen, local: chosen.slice(0, at), domain: chosen.slice(at + 1) }
 })
+// An alias can be used as it is; the account's own address has its
+// identity already, so a new one for it needs a tag.
+const tagNeeded = computed(() => compose.state.identities.some((i) => i.email === base.value.address))
 
 type Dialog = { kind: 'add' } | { kind: 'edit'; identity: Identity } | { kind: 'remove'; identity: Identity }
 const dialog = ref<Dialog | null>(null)
@@ -37,6 +53,7 @@ const error = ref('')
 
 function show(d: Dialog) {
   dialog.value = d
+  baseAddress.value = own.value
   error.value = ''
   form.value = d.kind === 'edit'
     ? { tag: '', name: d.identity.name, replyTo: (d.identity.replyTo ?? []).map(formatAddress).join(', '), signature: d.identity.textSignature }
@@ -48,7 +65,7 @@ const title = computed(() => {
   if (!d) return ''
   return d.kind === 'add' ? 'New identity' : d.kind === 'edit' ? `Edit ${d.identity.email}` : `Remove ${d.identity.email}?`
 })
-const newAddress = computed(() => `${base.value.local}+${form.value.tag.trim()}@${base.value.domain}`)
+const newAddress = computed(() => (form.value.tag.trim() ? `${base.value.local}+${form.value.tag.trim()}@${base.value.domain}` : base.value.address))
 
 async function submit() {
   const d = dialog.value
@@ -60,7 +77,7 @@ async function submit() {
       error.value = `Reply-to: “${replyTo.invalid[0]}” is not an email address.`
       return
     }
-    if (d.kind === 'add' && (form.value.tag.trim() === '' || !isValidEmail(newAddress.value))) {
+    if (d.kind === 'add' && ((form.value.tag.trim() === '' && tagNeeded.value) || !isValidEmail(newAddress.value))) {
       error.value = 'Give the address a tag of letters, digits, dots or dashes.'
       return
     }
@@ -157,10 +174,13 @@ async function submit() {
             You will no longer be able to send from this address. Messages you sent from it stay.
           </p>
           <template v-else>
-            <UFormField v-if="dialog?.kind === 'add'" label="Address" name="tag" :help="form.tag.trim() ? newAddress : undefined">
+            <UFormField v-if="dialog?.kind === 'add' && bases.length > 1" label="Send as" name="base" help="Your own address, or an alias that delivers to you.">
+              <USelect v-model="baseAddress" :items="bases" name="base" class="w-full" data-testid="identity-base" />
+            </UFormField>
+            <UFormField v-if="dialog?.kind === 'add'" label="Address" name="tag" :help="newAddress">
               <div class="flex items-center gap-1 text-sm">
                 <span class="shrink-0 text-muted">{{ base.local }}+</span>
-                <UInput v-model="form.tag" name="tag" autofocus autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40" placeholder="tag" class="min-w-0 flex-1" />
+                <UInput v-model="form.tag" name="tag" autofocus autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40" :placeholder="tagNeeded ? 'tag' : 'tag (optional)'" class="min-w-0 flex-1" />
                 <span class="min-w-0 truncate text-muted">@{{ base.domain }}</span>
               </div>
             </UFormField>

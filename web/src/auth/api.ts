@@ -220,3 +220,9 @@ export function explain(e: unknown): string {
   }
   return 'The server does not answer. Check the connection and try again.'
 }
+
+// addresses lists what the user may send as: their own address first, then
+// the aliases that deliver to them.
+export async function addresses(f: Fetch = fetch): Promise<string[]> {
+  return (await request<{ addresses: string[] }>(f, 'GET', '/auth/addresses')).addresses
+}

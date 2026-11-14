@@ -115,6 +115,56 @@ func TestOwns(t *testing.T) {
 	}
 }
 
+// An account may send as the aliases that deliver to it, with or without a
+// tag, in the envelope and in From and Sender.
+func TestSendAsAlias(t *testing.T) {
+	s, st := submitter(t)
+	asked := 0
+	s.SendAs = func(_ context.Context, account string) ([]string, error) {
+		asked++
+		if account != "mike@example.test" {
+			t.Errorf("SendAs asked for %q", account)
+		}
+		return []string{"info@example.test"}, nil
+	}
+	msg := func(from string) []byte {
+		return []byte("From: " + from + "\r\nSubject: x\r\n\r\nbody\r\n")
+	}
+	for _, c := range []struct{ envelope, from, want string }{
+		{"info@example.test", "Info <info@example.test>", ""},
+		{"mike@example.test", "info+shop@example.test", ""},
+		{"INFO@example.test", "mike@example.test", ""},
+		{"", "info@example.test", ""},
+		{"other@example.test", "mike@example.test", RefuseMailFrom},
+		{"mike@example.test", "other@example.test", RefuseFrom},
+		{"info@example.test", "info@example.test, other@example.test", RefuseFrom},
+		{"info@other.test", "info@example.test", RefuseMailFrom},
+	} {
+		_, err := s.Submit(context.Background(), Outgoing{Account: mike, From: c.envelope, Rcpts: []string{"bob@elsewhere.example"}, Raw: msg(c.from)})
+		if kind(err) != c.want {
+			t.Errorf("envelope %q, From %q: %v, want %q", c.envelope, c.from, err, c.want)
+		}
+	}
+	if len(st.queued) != 4 || asked == 0 {
+		t.Errorf("%d queued, aliases asked %d times", len(st.queued), asked)
+	}
+	// A lookup that fails gives no address away.
+	s.SendAs = func(context.Context, string) ([]string, error) { return nil, errors.New("rqlite is down") }
+	_, err := s.Submit(context.Background(), Outgoing{Account: mike, From: "info@example.test", Rcpts: []string{"bob@elsewhere.example"}, Raw: msg("info@example.test")})
+	if kind(err) != RefuseMailFrom {
+		t.Errorf("with the alias lookup down: %v", err)
+	}
+	// The SMTP handler checks MAIL FROM the same way.
+	h := &Handler{Submitter: s}
+	if err := h.Mail(context.Background(), &smtp.Envelope{AuthUser: "mike@example.test", From: "info@example.test"}); code(err) != 550 {
+		t.Errorf("Mail with the lookup down: %v", err)
+	}
+	s.SendAs = func(context.Context, string) ([]string, error) { return []string{"info@example.test"}, nil }
+	if err := h.Mail(context.Background(), &smtp.Envelope{AuthUser: "mike@example.test", From: "info@example.test"}); err != nil {
+		t.Errorf("Mail as the alias: %v", err)
+	}
+}
+
 // RFC 6409 6.1 and 8.1: a submission server may check the sender, and may
 // add the fields a message needs. RFC 5322 3.6.3: Bcc is not for the
 // recipients to see.

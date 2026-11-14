@@ -83,6 +83,8 @@ type Store struct {
 	blobs  blob.Store
 	master *blob.MasterKey
 	keys   sync.Map // account id -> []byte, the unwrapped blob key
+	// systems holds the ids of the system accounts known to exist.
+	systems sync.Map
 	// Now is the clock, replaceable in tests.
 	Now func() time.Time
 	// OnChange, when set, is called with the account after every write that
@@ -275,6 +277,10 @@ func (b *batch) change(typ, sel string, kv ...any) {
 //	RegisterNode, Heartbeat, RemoveNode
 //	                       again: set a row to given values
 //	AddLoginFailure        not again: it counts
+//	AddAlias               again: INSERT OR IGNORE of given rows
+//	RemoveAlias            not again: its answer is whether this run removed
+//	Forward, Submit        again: a random key in the row (and the caller's
+//	                       key in delivered) refuses a second run as a whole
 //	ClearLoginFailures     again: a delete
 //	Init                   again: CREATE IF NOT EXISTS; a migration is guarded
 //	                       by the version it starts from

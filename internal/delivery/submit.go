@@ -46,7 +46,10 @@ type Submitter struct {
 	MaxPerHour int
 	// Hold is how long a message submitted over JMAP waits before a node
 	// starts on it, so the user can still cancel it (undoStatus).
-	Hold   time.Duration
+	Hold time.Duration
+	// SendAs, when set, lists the other addresses an account may send as:
+	// the aliases that deliver to it (store.SendAddresses).
+	SendAs func(ctx context.Context, accountAddress string) ([]string, error)
 	Logger *slog.Logger
 	Now    func() time.Time
 }
@@ -112,8 +115,38 @@ func (s *Submitter) log() *slog.Logger {
 	return s.Logger
 }
 
-// Owns reports whether the account may send as the address.
+// Owns reports whether the address is the account's own, with or without
+// a "+tag".
 func Owns(account, addr string) bool { return address.Owns(account, addr) }
+
+// MaySendAs reports whether an account may send as an address: its own, or
+// an alias that delivers to it (aliases as store.SendAddresses lists
+// them), each with or without a "+tag".
+func MaySendAs(account string, aliases []string, addr string) bool {
+	if address.Owns(account, addr) {
+		return true
+	}
+	for _, alias := range aliases {
+		if address.Owns(alias, addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// sendAs is the account's aliases. A lookup that fails counts as none: the
+// user is refused an alias for a moment, never given an address.
+func (s *Submitter) sendAs(ctx context.Context, account string) []string {
+	if s.SendAs == nil {
+		return nil
+	}
+	list, err := s.SendAs(ctx, account)
+	if err != nil {
+		s.log().Warn("alias lookup failed", "account", account, "err", err)
+		return nil
+	}
+	return list
+}
 
 // normalizeLines makes every line of a message end in CRLF. Mail from
 // SMTP has that already; a message imported over JMAP may not.
@@ -195,7 +228,8 @@ func (s *Submitter) Submit(ctx context.Context, o Outgoing) (store.Submission, e
 	if maxRcpts == 0 {
 		maxRcpts = 100
 	}
-	if o.From != "" && !Owns(o.Account.Address, o.From) {
+	aliases := s.sendAs(ctx, o.Account.Address)
+	if o.From != "" && !MaySendAs(o.Account.Address, aliases, o.From) {
 		return none, &Refusal{Kind: RefuseMailFrom, Msg: "the envelope sender is not an address of this account"}
 	}
 	var rcpts, invalid []string
@@ -236,7 +270,7 @@ func (s *Submitter) Submit(ctx context.Context, o Outgoing) (store.Submission, e
 		check = append(check, message.Addresses(sender)...)
 	}
 	for _, a := range check {
-		if !Owns(o.Account.Address, a.Email) {
+		if !MaySendAs(o.Account.Address, aliases, a.Email) {
 			return none, &Refusal{Kind: RefuseFrom, Msg: "the From or Sender field has an address that is not of this account"}
 		}
 	}
@@ -377,8 +411,8 @@ func (h *Handler) AuthenticateSession(ctx context.Context, ip net.IP, username, 
 }
 
 // Mail implements smtp.MailChecker: the envelope sender is the user's.
-func (h *Handler) Mail(_ context.Context, env *smtp.Envelope) error {
-	if env.From != "" && !Owns(env.AuthUser, env.From) {
+func (h *Handler) Mail(ctx context.Context, env *smtp.Envelope) error {
+	if env.From != "" && !Owns(env.AuthUser, env.From) && !MaySendAs(env.AuthUser, h.sendAs(ctx, env.AuthUser), env.From) {
 		return &smtp.Error{Code: 550, Enhanced: "5.7.1", Msg: "Sender address is not yours"}
 	}
 	return nil
@@ -445,23 +479,35 @@ func (d *Deliverer) LocalDomain(ctx context.Context, domain string) (bool, error
 // our own domains, without SMTP. It answers like Rcpt does: an *smtp.Error
 // says why the recipient cannot have it. The message was scanned when it
 // was submitted and is not scanned again. A second delivery of the same
-// message to the same account stores nothing.
+// message to the same account stores nothing. An alias is followed like
+// for mail from outside.
 func (d *Deliverer) Local(ctx context.Context, from, to string, msg []byte) error {
-	acct, err := d.resolve(ctx, to)
-	if err != nil {
+	var routed routes
+	if err := d.route(ctx, from, to, &routed); err != nil {
 		return err
 	}
 	fields, rest := splitHeader(msg)
+	if err := checkLoops(fields, routed.forwards); err != nil {
+		return err
+	}
 	fields = removeHeader(fields, "Return-Path", 0)
 	top := []field{{name: "Return-Path", raw: []byte("Return-Path: <" + oneLine(from) + ">\r\n")}}
 	out := joinHeader(append(top, fields...), rest)
-	_, err = d.Store.Deliver(ctx, acct.ID, store.Message{Raw: out, Key: "local:" + deliveryKey(from, msg), Role: store.RoleInbox, ReceivedAt: d.now()})
-	if err != nil && !errors.Is(err, store.ErrDuplicate) {
-		d.log().Error("local delivery failed", "to", acct.Address, "err", err)
-		return errTempFail
+	key := "local:" + deliveryKey(from, msg)
+	for _, acct := range routed.accounts {
+		_, err := d.Store.Deliver(ctx, acct.ID, store.Message{Raw: out, Key: key, Role: store.RoleInbox, ReceivedAt: d.now()})
+		if err != nil && !errors.Is(err, store.ErrDuplicate) {
+			d.log().Error("local delivery failed", "to", acct.Address, "err", err)
+			return errTempFail
+		}
+		d.log().Info("delivered locally", "from", clean(from), "to", acct.Address)
 	}
-	d.log().Info("delivered locally", "from", clean(from), "to", acct.Address)
-	d.noteDSN(ctx, from, []store.Account{acct}, out)
+	// The recipient was an alias that leads elsewhere, or a rewritten
+	// sender address that a bounce of our own queue is going back to.
+	if err := d.sendOn(ctx, key, from, routed.forwards, fields, rest); err != nil {
+		return err
+	}
+	d.noteDSN(ctx, from, routed.accounts, out)
 	return nil
 }
 

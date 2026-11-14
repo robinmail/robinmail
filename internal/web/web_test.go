@@ -806,3 +806,30 @@ func TestLoginRateLimitCostAndFallback(t *testing.T) {
 		t.Errorf("with rqlite down the node's own limit did not hold: %d", rec.Code)
 	}
 }
+
+// GET /auth/addresses: what the user may send as, their own address first.
+func TestAddresses(t *testing.T) {
+	st := newSite(t)
+	if rec := st.do("GET", tlsBase+"/auth/addresses", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("without a session: %d", rec.Code)
+	}
+	c := setCookie(st.login(tlsBase, "anna@example.test", "correct horse"))
+	rec := st.do("GET", tlsBase+"/auth/addresses", "", cookie(c))
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"addresses":["anna@example.test"]}` {
+		t.Fatalf("without aliases: %d %s", rec.Code, rec.Body)
+	}
+	st.s.SendAs = func(_ context.Context, addr string) ([]string, error) {
+		if addr != "anna@example.test" {
+			t.Errorf("asked for %q", addr)
+		}
+		return []string{"info@example.test", "office@example.test"}, nil
+	}
+	rec = st.do("GET", tlsBase+"/auth/addresses", "", cookie(c))
+	if strings.TrimSpace(rec.Body.String()) != `{"addresses":["anna@example.test","info@example.test","office@example.test"]}` {
+		t.Fatalf("with aliases: %s", rec.Body)
+	}
+	st.s.SendAs = func(context.Context, string) ([]string, error) { return nil, errors.New("rqlite is down") }
+	if rec := st.do("GET", tlsBase+"/auth/addresses", "", cookie(c)); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("store down: %d", rec.Code)
+	}
+}

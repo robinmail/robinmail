@@ -62,6 +62,7 @@ Every mail table starts with `account_id`.
 | Table | Columns | Notes |
 |---|---|---|
 | `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
+| `alias` | address, target, domain, wildcard, created_at | one row per target of an alias; `address` is an address or a pattern with one `*` (`*@domain` is the catch-all); not per account |
 | `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts` |
 | `session` | token_hash, id, account_id, stage, method, created_at, seen_at, expires_at, idle, ip, seen_ip, agent, remember | web login; the hash is SHA-256 of the token in the cookie; `id` is what the user's list shows and revokes by; `stage` is `full`, or `totp` for a login that still owes its code; ends at `expires_at`, or `idle` seconds after `seen_at` |
 | `app_password` | id, name, hash, scope, created_at, used_at, used_ip | a password for one device; `hash` is SHA-256 of the 160 random bits the server made; `scope` lists `imap`, `smtp`, `jmap` (empty: all); revoking deletes the row |
@@ -172,6 +173,7 @@ internal/clustertest tests against the Docker cluster   new; "make cluster-test"
 internal/store       schema and all mail operations     new, replaces owl's store
 internal/message     MIME to JMAP body structure, HTML view   new
 internal/search      words of a text, search terms, snippets  new
+internal/srs         sender rewriting for forwarded mail (SRS0, SRS1)   new
 internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, settings, OIDC login, static app   new
 internal/totp        HOTP and TOTP (RFC 4226, RFC 6238), otpauth URI    new
@@ -1930,7 +1932,7 @@ Built as follows:
 - Exit: each item shown working with a test.
 
 Built in this order, each item committed with its tests: 1 full-text
-search (done), 2 aliases, 3 Sieve, 4 VacationResponse, 5 quotas, 6 MTA-STS
+search (done), 2 aliases (done), 3 Sieve, 4 VacationResponse, 5 quotas, 6 MTA-STS
 serving and TLS-RPT, 7 autoconfig, 8 operations, 9 README, 10 lab and
 cluster cases.
 
@@ -2033,6 +2035,96 @@ Built as follows:
     one rowid range of one table for all accounts; a very common word is
     cheap to look up but the table is shared. `HEADER` in IMAP reads the
     messages. Snippets cost a read and a decrypt per message shown.
+- **Aliases, catch-all and forwarding.** An alias is an address of one
+  of our domains without a mailbox: `info@d`, a pattern with one `*`
+  (`sales-*@d`), or the catch-all `*@d` (written `@d`). Its targets are
+  addresses here (accounts, or other aliases) or anywhere else. `alias
+  add <alias> <target>...`, `alias list [domain]`, `alias remove <alias>
+  [target]`; schema version 9. A domain with aliases cannot be removed;
+  an address that is an account cannot be an alias.
+  - **Where mail for an address goes** (`delivery.route`, for port 25
+    and for mail between users here): the account with that address;
+    the account without the `+tag`; the alias with that address; the
+    alias without the tag; the pattern of the domain with the most
+    characters outside its `*`, so the catch-all comes last. An account
+    always wins. Targets at our domains are looked up the same way, up
+    to five aliases deep and never the same alias twice; a target that
+    leads nowhere is skipped and logged, an alias whose targets all lead
+    nowhere is no address (`550 5.1.1`). Each mailbox and each outside
+    address gets one copy however many aliases lead to it.
+  - **Forwarding keeps the envelope sender honest: SRS.** A message that
+    leaves again does so with the sender rewritten under the alias's
+    domain, `SRS0=hash=day=original.domain=local@our.domain`
+    (`internal/srs`; the format of libsrs2, which Postfix and Exim sites
+    use; there is no RFC). The next server checks SPF against our
+    domain, which really sends the message, and a bounce comes back
+    here. Decided against the two simpler ways: keeping the original
+    sender (classic `.forward`) makes us send in the name of a domain
+    whose SPF does not list us, and the null sender for everything loses
+    every bounce and is scored as suspicious. The null sender is the
+    fallback where rewriting cannot work: a notification stays one, and
+    a sender that does not fit a 64-octet local part rewritten goes out
+    as `<>`. An address that another forwarder already rewrote becomes
+    `SRS1` and does not grow. The hash is HMAC-SHA-256 under a key
+    derived from the master key (HKDF, `blob.MasterKey.Derive`), so every
+    node makes and accepts the same addresses and there is no new secret
+    to hand out; an address works for 21 days.
+  - **The way back.** Mail for an `SRS0=`/`SRS1=` address of ours is
+    accepted only with the null reverse-path (`550 5.7.1` otherwise: it
+    would be a relay for anyone who saw such an address), only when the
+    hash is ours and the day is recent, and is sent on to the original
+    sender with the null sender. Our own queue's bounce of a forward
+    that failed goes the same way, through `Deliverer.Local`.
+  - **Who owns a forward in the queue.** The queue is per account, and a
+    forward has none. A system account per domain owns them: id
+    `system-<hash of the domain>`, address `!system@domain`, a blob key
+    and nothing else, made at the first forward. `store.Forward` takes a
+    key (the delivery key plus the recipient), so a sender that retries
+    after a partial failure causes no second forward.
+  - **Loops.** A forwarded message gets `Delivered-To: <the address it
+    was sent to>` on top; a message that arrives for an alias with that
+    line already in it is refused (`554 5.4.6`), as is any message with
+    100 `Received` fields (RFC 5321 6.3). Bounces cannot loop: they
+    travel with the null sender and nothing answers those.
+  - **Spam is not forwarded.** What Rspamd marks as spam is filed under
+    Junk for the local targets and not sent on; if forwarding was all
+    the message was for, the sender gets `550 5.7.1`.
+  - **What a forwarded message looks like.** Our `Received` line and the
+    `Delivered-To` on top, no `Return-Path` (that is final delivery's),
+    the rest untouched, so a DKIM signature survives. The trace line
+    names no recipient when the message also goes elsewhere: a forwarded
+    copy must not tell where else the alias leads.
+  - **Sending as an alias.** An account may use an alias as envelope
+    sender, in `From` and `Sender`, and as an identity (also with a
+    `+tag`) when the alias is one address and names the account as a
+    target. A pattern or a catch-all gives no such right: the reader of
+    a catch-all could otherwise write as anybody in the domain. The
+    identities page offers these addresses (`GET /auth/addresses`).
+  - **Tests.** `internal/srs` from the SRS paper's formats (SRS0, SRS1
+    across three forwarders, hash, expiry, the wrap of the timestamp, a
+    fuzz test that found a domain with `=` in it), `internal/store`
+    (patterns, lookup order, targets, the system account and its key),
+    `internal/delivery` (order, depth, loops, spam, the forwarded
+    message, the way back, sending as an alias), `internal/jmap`,
+    `internal/web`, and `TestAliasesAndForwarding` (`cmd/robinmail`):
+    two servers with a database each. Mail for an alias on A reaches
+    the account on A and, forwarded with an SRS sender, the account on
+    B; an alias that leads to nobody on B bounces there, A's queue makes
+    the notification and it finds its way back to the sender on B; a
+    rewritten address refuses mail that has a sender; sending as an
+    alias over SMTP and JMAP. Playwright (`e2e/aliases.spec.ts`): the
+    alias as an identity, sent from, and answered.
+  - **Not handled.** No alias a user makes for themselves: aliases are
+    the administrator's, from the command line. Forwarding breaks SPF
+    alignment for DMARC by its nature; the message passes at the next
+    hop only when its DKIM signature does (robinmail adds no ARC seal).
+    A forward that fails after the SRS address expired (21 days in the
+    queue's five) cannot happen; a bounce that arrives later than that
+    is refused. Master key rotation changes the SRS key: bounces for
+    mail forwarded before it are refused. Mail between users here that
+    goes to an alias with outside targets is forwarded without a spam
+    scan of its own (it was scanned when it was submitted). The system
+    accounts stay when their domain is removed.
 
 ## Open questions
 

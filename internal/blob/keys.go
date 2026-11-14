@@ -2,7 +2,9 @@ package blob
 
 import (
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -18,6 +20,8 @@ import (
 // protect against someone who controls a running server.
 type MasterKey struct {
 	aead cipher.AEAD
+	// prk is what other keys are derived from (Derive).
+	prk []byte
 }
 
 // wrapVersion marks how an account key is wrapped: XChaCha20-Poly1305 under
@@ -33,7 +37,23 @@ func NewMasterKey(raw []byte) (*MasterKey, error) {
 	if err != nil {
 		return nil, errors.New("blob: a master key is 32 bytes")
 	}
-	return &MasterKey{aead: aead}, nil
+	prk, err := hkdf.Extract(sha256.New, raw, []byte("robinmail master key"))
+	if err != nil {
+		return nil, err
+	}
+	return &MasterKey{aead: aead, prk: prk}, nil
+}
+
+// Derive returns a key of n bytes for another purpose than wrapping account
+// keys, such as the hash in rewritten sender addresses (internal/srs). The
+// same master key and label give the same key on every node; different
+// labels give unrelated keys (HKDF, RFC 5869).
+func (m *MasterKey) Derive(label string, n int) []byte {
+	key, err := hkdf.Expand(sha256.New, m.prk, label, n)
+	if err != nil {
+		panic("blob: " + err.Error()) // only for an absurd n
+	}
+	return key
 }
 
 // GenerateMasterKeyFile writes a new random master key to path, readable by

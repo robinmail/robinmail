@@ -539,3 +539,19 @@ func (s *Server) revokeOtherSessions(w http.ResponseWriter, r *http.Request, u u
 	s.event(r.Context(), EventSessionRevoked, u.acct, u.acct.Address, clientIP(r), "all other sessions")
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": n})
 }
+
+// addresses is GET /auth/addresses: the addresses the user may send as,
+// their own first, then the aliases that deliver to them. An identity can
+// be made for each, with or without a "+tag".
+func (s *Server) addresses(w http.ResponseWriter, r *http.Request, u user) {
+	list := []string{u.acct.Address}
+	if s.SendAs != nil {
+		aliases, err := s.SendAs(r.Context(), u.acct.Address)
+		if err != nil {
+			s.unavailable(w, "listing aliases", err)
+			return
+		}
+		list = append(list, aliases...)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"addresses": list})
+}

@@ -199,7 +199,7 @@ func identitySet(c *call, raw json.RawMessage) (any, *methodError) {
 			run.notCreated[cid] = invalidProps("an identity needs an email", "email")
 			continue
 		}
-		if !address.Owns(c.user.Username, i.Email) {
+		if !c.maySendAs(i.Email) {
 			run.notCreated[cid] = &setError{Type: "forbiddenFrom", Description: "you may not send from that address"}
 			continue
 		}
@@ -278,4 +278,25 @@ func identitySet(c *call, raw json.RawMessage) (any, *methodError) {
 		}
 	}
 	return run.result(), nil
+}
+
+// maySendAs reports whether the user may have an identity for an address:
+// their own, or an alias that delivers to them, with or without a "+tag".
+func (c *call) maySendAs(email string) bool {
+	if address.Owns(c.user.Username, email) {
+		return true
+	}
+	if c.h.SendAs == nil {
+		return false
+	}
+	aliases, err := c.h.SendAs(c.ctx, c.user.Username)
+	if err != nil {
+		return false
+	}
+	for _, alias := range aliases {
+		if address.Owns(alias, email) {
+			return true
+		}
+	}
+	return false
 }
