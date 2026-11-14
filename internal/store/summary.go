@@ -1,7 +1,10 @@
 package store
 
 import (
+	"strings"
+
 	"github.com/mikepage/robinmail/internal/message"
+	"github.com/mikepage/robinmail/internal/search"
 )
 
 // summary is what a delivery caches from the message: the ids that decide the
@@ -19,7 +22,23 @@ type summary struct {
 	sentAt        int64 // the Date field in Unix seconds, 0 without one
 	preview       string
 	hasAttachment bool
+	index         indexDoc
 }
+
+// indexDoc is what the full-text index gets of a message, one string per
+// column of email_fts.
+type indexDoc struct {
+	subject     string
+	addresses   string // From, To, Cc, Bcc
+	body        string
+	attachments string
+	headers     string // search.HeaderDoc
+}
+
+// maxIndexText is how much text of a message's body, and of its text
+// attachments, is indexed. The text travels through Raft with the
+// delivery, so it is bounded well below the size of a message.
+const maxIndexText = 256 << 10
 
 const (
 	maxMessageIDLen = message.MaxMessageIDLen
@@ -60,16 +79,30 @@ func summarize(raw []byte) summary {
 		add(id)
 	}
 
-	text := func(name string) string { return message.OneLine(message.Text(get(name)), maxHeaderRunes) }
-	s.sender = text("From")
-	s.recipients = text("To")
-	s.cc = text("Cc")
-	s.bcc = text("Bcc")
-	s.subject = text("Subject")
+	short := func(name string) string { return message.OneLine(message.Text(get(name)), maxHeaderRunes) }
+	s.sender = short("From")
+	s.recipients = short("To")
+	s.cc = short("Cc")
+	s.bcc = short("Bcc")
+	s.subject = short("Subject")
 	if t, ok := message.Date(get("Date")); ok && t.Unix() > 0 {
 		s.sentAt = t.Unix()
 	}
 	s.preview = message.OneLine(m.Preview(), maxPreviewRunes)
 	s.hasAttachment = m.HasAttachment()
+
+	full := func(name string) string { return message.OneLine(message.Text(get(name)), 4000) }
+	text := m.IndexText(maxIndexText)
+	var hd search.HeaderDoc
+	for _, f := range h {
+		hd.Add(f.Name, message.OneLine(message.Text(f.Value), 2000))
+	}
+	s.index = indexDoc{
+		subject:     full("Subject"),
+		addresses:   strings.Join([]string{full("From"), full("To"), full("Cc"), full("Bcc")}, "\n"),
+		body:        strings.ToValidUTF8(text.Body, " "),
+		attachments: strings.ToValidUTF8(text.Attachments, " "),
+		headers:     hd.String(),
+	}
 	return s
 }

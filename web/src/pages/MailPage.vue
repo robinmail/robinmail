@@ -8,6 +8,7 @@ import { logout } from '../auth/api'
 import { Push } from '../jmap/push'
 import { actions, selection, useMailView } from '../lib/mailView'
 import ThreadView from '../components/ThreadView.vue'
+import MessageList from '../components/MessageList.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -17,6 +18,7 @@ const { mailboxId, threadId, mailbox, spec } = view
 const loadError = ref('')
 const filterOpen = ref(false)
 const thread = ref<InstanceType<typeof ThreadView> | null>(null)
+const messageList = ref<InstanceType<typeof MessageList> | null>(null)
 
 store.onError = (message) => toast.add({ title: message, color: 'error', icon: 'i-lucide-circle-alert' })
 
@@ -103,7 +105,7 @@ const onFocus = () => refresh()
 const onVisible = () => refresh()
 
 // Keyboard: j/k next and previous, u read/unread, s flag, # or Delete
-// delete, Escape back to the list, / the filter, c a new message, and in
+// delete, Escape back to the list, / the search box, c a new message, and in
 // an open conversation r reply, a reply all, f forward.
 function onKey(e: KeyboardEvent) {
   if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
@@ -139,7 +141,7 @@ function onKey(e: KeyboardEvent) {
       else if (threadId.value) void view.closeThread()
       break
     case '/':
-      filterOpen.value = true
+      messageList.value?.focusSearch()
       break
     case 'c':
       compose.compose()
@@ -204,7 +206,7 @@ const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl
 const shortcuts = [
   ['C', 'New message'], ['R', 'Reply'], ['A', 'Reply all'], ['F', 'Forward'], [sendKey, 'Send'],
   ['J', 'Next conversation'], ['K', 'Previous conversation'], ['U', 'Mark read or unread'], ['S', 'Flag'],
-  ['#', 'Delete'], ['/', 'Filter'], ['Esc', 'Back to the list'],
+  ['#', 'Delete'], ['/', 'Search'], ['Esc', 'Back to the list'],
 ] as const
 </script>
 
@@ -289,7 +291,7 @@ const shortcuts = [
           </UTooltip>
         </template>
       </UDashboardNavbar>
-      <MessageList />
+      <MessageList ref="messageList" />
     </UDashboardPanel>
 
     <UDashboardPanel id="thread" :class="threadId ? '' : 'hidden lg:flex'">

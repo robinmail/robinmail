@@ -16,10 +16,18 @@ import (
 // What it costs. Flags, UIDs, sizes, the internal date and the modseq are
 // in the session. FROM, TO, CC, BCC, SUBJECT and the SENT dates are
 // answered from the header fields the store remembers for every message,
-// one read for all messages. HEADER, BODY and TEXT have no index: each
-// candidate message is read and decoded, so a body search over a large
-// mailbox reads the whole mailbox. Keys are evaluated left to right and a
-// message is only opened when the cheaper keys have not ruled it out.
+// one read for all messages. BODY and TEXT ask the store's full-text index
+// when it has one (TextSearcher): one query per key, and no message is
+// read. HEADER has no index, and neither have BODY and TEXT on a backend
+// without one or for a string without a word in it: each candidate message
+// is then read and decoded. Keys are evaluated left to right and a message
+// is only opened when the cheaper keys have not ruled it out.
+//
+// With the index BODY and TEXT match whole words in sequence, not any
+// substring as RFC 3501 6.4.4 has it ("contain the specified string"):
+// "harbour fee" finds "the harbour fee is due" and "harb" finds nothing.
+// Dovecot with a full-text index and Gmail do the same. Case and
+// diacritics are ignored.
 
 // searchKey is one node of a search program.
 type searchKey struct {
@@ -30,6 +38,9 @@ type searchKey struct {
 	num  int64
 	date time.Time
 	set  seqSet
+	// hits, for BODY and TEXT answered by the index: the ids of the
+	// messages that match. nil when the messages have to be read.
+	hits map[int64]bool
 }
 
 func (k *searchKey) walk(f func(*searchKey)) {
@@ -428,8 +439,14 @@ func (s *searcher) match(k *searchKey, i int) (bool, error) {
 		}
 		return false, nil
 	case "BODY":
+		if k.hits != nil {
+			return k.hits[m.id], nil
+		}
 		return s.bodyHas(i, k.str)
 	case "TEXT":
+		if k.hits != nil {
+			return k.hits[m.id], nil
+		}
 		e, err := s.open(i)
 		if err != nil {
 			return false, err
@@ -535,6 +552,28 @@ func (c *conn) cmdSearch(tag string, p *parser, uid bool) (reply, error) {
 		}
 		if sr.summaries, err = c.user.Summaries(c.ctx, ids); err != nil {
 			return reply{}, err
+		}
+	}
+	if ts, ok := c.user.(TextSearcher); ok && len(s.msgs) > 0 {
+		var terr error
+		prog.walk(func(k *searchKey) {
+			if (k.op != "BODY" && k.op != "TEXT") || terr != nil {
+				return
+			}
+			ids, indexed, err := ts.SearchText(c.ctx, s.mailbox, k.str, k.op == "BODY")
+			if err != nil {
+				terr = err
+				return
+			}
+			if indexed {
+				k.hits = make(map[int64]bool, len(ids))
+				for _, id := range ids {
+					k.hits[id] = true
+				}
+			}
+		})
+		if terr != nil {
+			return reply{}, terr
 		}
 	}
 	var hits []int

@@ -849,23 +849,24 @@ func TestRFC8621EmailQuery(t *testing.T) {
 	same(t, "clamped limit", e.one("Email/query", `{"accountId": "$A", "limit": 9999}`)["limit"], `500`)
 
 	for args, want := range map[string]string{
-		// 4.4.1: what needs the text of messages is not supported yet.
-		`{"accountId": "$A", "filter": {"text": "plan"}}`:                                   "unsupportedFilter",
-		`{"accountId": "$A", "filter": {"body": "plan"}}`:                                   "unsupportedFilter",
-		`{"accountId": "$A", "filter": {"header": ["X-Tag", "one"]}}`:                       "unsupportedFilter",
-		`{"accountId": "$A", "filter": {"operator": "AND", "conditions": [{"text": "x"}]}}`: "unsupportedFilter",
-		`{"accountId": "$A", "filter": {"colour": "red"}}`:                                  "invalidArguments",
-		`{"accountId": "$A", "filter": {"before": "yesterday"}}`:                            "invalidArguments",
-		`{"accountId": "$A", "filter": {"minSize": -1}}`:                                    "invalidArguments",
-		`{"accountId": "$A", "filter": {"hasKeyword": ""}}`:                                 "invalidArguments",
-		`{"accountId": "$A", "filter": {"inMailbox": 1}}`:                                   "invalidArguments",
-		`{"accountId": "$A", "filter": {"operator": "AND", "conditions": [], "x": 1}}`:      "invalidArguments",
-		`{"accountId": "$A", "sort": [{"property": "allInThreadHaveKeyword"}]}`:             "unsupportedSort",
-		`{"accountId": "$A", "sort": [{"property": "preview"}]}`:                            "unsupportedSort",
-		`{"accountId": "$A", "sort": [{"property": "hasKeyword"}]}`:                         "invalidArguments",
-		`{"accountId": "$A", "anchor": "e999"}`:                                             "anchorNotFound",
-		`{"accountId": "$A", "limit": -5}`:                                                  "invalidArguments",
-		`{"accountId": "$A", "collapseThreads": "yes"}`:                                     "invalidArguments",
+		// 4.4.1: header is a list of one or two strings.
+		`{"accountId": "$A", "filter": {"text": 5}}`:                                   "invalidArguments",
+		`{"accountId": "$A", "filter": {"body": null}}`:                                "invalidArguments",
+		`{"accountId": "$A", "filter": {"header": []}}`:                                "invalidArguments",
+		`{"accountId": "$A", "filter": {"header": ["X-Tag", "one", "two"]}}`:           "invalidArguments",
+		`{"accountId": "$A", "filter": {"header": "X-Tag"}}`:                           "invalidArguments",
+		`{"accountId": "$A", "filter": {"colour": "red"}}`:                             "invalidArguments",
+		`{"accountId": "$A", "filter": {"before": "yesterday"}}`:                       "invalidArguments",
+		`{"accountId": "$A", "filter": {"minSize": -1}}`:                               "invalidArguments",
+		`{"accountId": "$A", "filter": {"hasKeyword": ""}}`:                            "invalidArguments",
+		`{"accountId": "$A", "filter": {"inMailbox": 1}}`:                              "invalidArguments",
+		`{"accountId": "$A", "filter": {"operator": "AND", "conditions": [], "x": 1}}`: "invalidArguments",
+		`{"accountId": "$A", "sort": [{"property": "allInThreadHaveKeyword"}]}`:        "unsupportedSort",
+		`{"accountId": "$A", "sort": [{"property": "preview"}]}`:                       "unsupportedSort",
+		`{"accountId": "$A", "sort": [{"property": "hasKeyword"}]}`:                    "invalidArguments",
+		`{"accountId": "$A", "anchor": "e999"}`:                                        "anchorNotFound",
+		`{"accountId": "$A", "limit": -5}`:                                             "invalidArguments",
+		`{"accountId": "$A", "collapseThreads": "yes"}`:                                "invalidArguments",
 	} {
 		if got := e.fail("Email/query", args); got != want {
 			t.Errorf("Email/query %s: %s, want %s", args, got, want)
@@ -1012,7 +1013,7 @@ func TestRFC8621EmailSet(t *testing.T) {
 		`{"accountId": "$A", "sinceQueryState": "` + mid + `", "maxChanges": 1}`:                "tooManyChanges",
 		`{"accountId": "$A", "sinceQueryState": "` + mid + `", "position": 0}`:                  "invalidArguments",
 		`{"accountId": "$A", "sinceQueryState": "x"}`:                                           "cannotCalculateChanges",
-		`{"accountId": "$A", "sinceQueryState": "` + mid + `", "filter": {"text": "x"}}`:        "unsupportedFilter",
+		`{"accountId": "$A", "sinceQueryState": "` + mid + `", "filter": {"text": 1}}`:          "invalidArguments",
 		`{"accountId": "$A", "sinceQueryState": "` + mid + `", "sort": [{"property": "nope"}]}`: "unsupportedSort",
 	} {
 		if got := e.fail("Email/queryChanges", args); got != want {

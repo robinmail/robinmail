@@ -231,3 +231,70 @@ func (p *Part) BodyValue(max int) (value string, encodingProblem, truncated bool
 	}
 	return value, encodingProblem, truncated
 }
+
+// IndexText is what full-text search indexes of a message besides its
+// header fields: the text a reader sees as the body, and the text of
+// attachments that are text.
+type IndexText struct {
+	Body        string
+	Attachments string
+}
+
+// partText is the text of a text part as a reader sees it, up to about max
+// bytes: an HTML part without its markup.
+func partText(p *Part, max int) string {
+	s, _ := p.Text()
+	if p.Type == "text/html" {
+		return htmlText(s, max)
+	}
+	if len(s) > max {
+		for max > 0 && !utf8.RuneStart(s[max]) {
+			max--
+		}
+		s = s[:max]
+	}
+	return s
+}
+
+// BodyText is the text body (RFC 8621 4.1.4, textBody) as plain text, the
+// parts under each other, up to about max bytes. A message that only has
+// HTML gives the text of that.
+func (m *Message) BodyText(max int) string {
+	text, _, _ := m.Bodies()
+	var b strings.Builder
+	for _, p := range text {
+		if !strings.HasPrefix(p.Type, "text/") || b.Len() >= max {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(partText(p, max-b.Len()))
+	}
+	return b.String()
+}
+
+// IndexText returns the text to index, each of the two up to about max
+// bytes. Of the attachments only those of a text type are read (text/plain,
+// text/html, text/csv, ...), and every attachment's file name is included:
+// a PDF or an image is found by its name, not by what is in it.
+func (m *Message) IndexText(max int) IndexText {
+	out := IndexText{Body: m.BodyText(max)}
+	_, _, attachments := m.Bodies()
+	var b strings.Builder
+	for _, p := range attachments {
+		if b.Len() >= max {
+			break
+		}
+		if p.Name != nil {
+			b.WriteString(*p.Name)
+			b.WriteByte('\n')
+		}
+		if strings.HasPrefix(p.Type, "text/") {
+			b.WriteString(partText(p, max-b.Len()))
+			b.WriteByte('\n')
+		}
+	}
+	out.Attachments = b.String()
+	return out
+}

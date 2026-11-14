@@ -7,7 +7,7 @@ import { reactive } from 'vue'
 import type { Batch, Call, JmapClient } from '../jmap/client'
 import { HttpError, isMethodError } from '../jmap/client'
 import { adjustCounts, applyPatch, applyQueryChanges, type EmailPatch } from '../jmap/sync'
-import type { Email, EmailQueryArgs, Filter, Id, Mailbox, ResultReference, SetError, Thread } from '../jmap/types'
+import type { Email, EmailQueryArgs, Filter, Id, Mailbox, ResultReference, SearchSnippet, SetError, Thread } from '../jmap/types'
 
 export const PAGE = 30
 
@@ -22,6 +22,8 @@ export const BODY_PART_PROPS = ['partId', 'blobId', 'size', 'name', 'type', 'cha
 // ListSpec is what the route says about the message list.
 export interface ListSpec {
   mailboxId: Id
+  // text is what the search box holds: full-text search in the mailbox.
+  text: string
   from: string
   subject: string
   unread: boolean
@@ -31,6 +33,7 @@ export interface ListSpec {
 
 export function buildFilter(spec: ListSpec): Filter {
   const c: Filter[] = [{ inMailbox: spec.mailboxId }]
+  if (spec.text) c.push({ text: spec.text })
   if (spec.from) c.push({ from: spec.from })
   if (spec.subject) c.push({ subject: spec.subject })
   if (spec.unread) c.push({ notKeyword: '$seen' })
@@ -52,6 +55,8 @@ interface ListState {
   ids: Id[]
   total: number
   queryState: string
+  // For a search: what matched in each email, by email id.
+  snippets: Record<Id, SearchSnippet>
   loading: boolean
   loadingMore: boolean
   error: string
@@ -64,7 +69,7 @@ export class MailStore {
     mailboxes: {} as Record<Id, Mailbox>,
     emails: {} as Record<Id, Email>,
     threads: {} as Record<Id, Thread>,
-    list: { key: '', spec: null, ids: [], total: 0, queryState: '', loading: false, loadingMore: false, error: '' } as ListState,
+    list: { key: '', spec: null, ids: [], total: 0, queryState: '', snippets: {}, loading: false, loadingMore: false, error: '' } as ListState,
     // The server did not answer the last refresh.
     offline: false,
   })
@@ -101,7 +106,7 @@ export class MailStore {
     s.mailboxes = {}
     s.emails = {}
     s.threads = {}
-    s.list = { key: '', spec: null, ids: [], total: 0, queryState: '', loading: false, loadingMore: false, error: '' }
+    s.list = { key: '', spec: null, ids: [], total: 0, queryState: '', snippets: {}, loading: false, loadingMore: false, error: '' }
     s.offline = false
     this.client.reset()
   }
@@ -167,7 +172,7 @@ export class MailStore {
     const list = this.state.list
     if (key === list.key && !list.error) return
     this.listToken++
-    Object.assign(list, { key, spec, ids: [], total: 0, queryState: '', loading: true, loadingMore: false, error: '' })
+    Object.assign(list, { key, spec, ids: [], total: 0, queryState: '', snippets: {}, loading: true, loadingMore: false, error: '' })
     await this.fetchList(0, PAGE, true)
   }
 
@@ -201,9 +206,15 @@ export class MailStore {
         const b = this.client.batch()
         const q = b.call('Email/query', { ...queryArgs(spec), position, limit, calculateTotal: true })
         const chain = this.threadChain(b, q.ref('/ids'))
+        // For a search, what matched in each result comes along.
+        const snip = spec.text ? b.call('SearchSnippet/get', { filter: { text: spec.text }, '#emailIds': q.ref('/ids') }) : null
         const r = await b.send()
         if (token !== this.listToken) return
         const qr = r.get(q)
+        if (snip) {
+          const found = Object.fromEntries(r.get(snip).list.map((x) => [x.emailId, x]))
+          list.snippets = replace ? found : { ...list.snippets, ...found }
+        }
         this.mergeThreads(r.get(chain.threads).list)
         // Emails changed here since the request left are newer than the answer.
         if (epoch === this.epoch) this.mergeEmails(r.get(chain.emails).list)

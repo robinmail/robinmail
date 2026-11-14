@@ -502,15 +502,14 @@ func (v messageView) prop(p, blob string, fields []message.Header, msg *message.
 	return headerProperty(fields, p)
 }
 
-// Filter conditions of Email/query (RFC 8621 4.4.1) the server has, and
-// those of the RFC it does not: they need the text of messages, which is
-// not indexed before phase 8.
-var (
-	EmailFilters = []string{"inMailbox", "inMailboxOtherThan", "before", "after", "minSize", "maxSize",
-		"allInThreadHaveKeyword", "someInThreadHaveKeyword", "noneInThreadHaveKeyword", "hasKeyword", "notKeyword",
-		"hasAttachment", "from", "to", "cc", "bcc", "subject"}
-	unsupportedEmailFilters = []string{"text", "body", "header"}
-)
+// Filter conditions of Email/query (RFC 8621 4.4.1): all of the RFC's.
+// text, body and header are answered by the full-text index.
+var EmailFilters = []string{"inMailbox", "inMailboxOtherThan", "before", "after", "minSize", "maxSize",
+	"allInThreadHaveKeyword", "someInThreadHaveKeyword", "noneInThreadHaveKeyword", "hasKeyword", "notKeyword",
+	"hasAttachment", "from", "to", "cc", "bcc", "subject", "text", "body", "header"}
+
+// maxSearchText bounds the text of one text condition.
+const maxSearchText = 1000
 
 func parseEmailFilter(raw json.RawMessage, depth int, nodes *int) (*store.Filter, *methodError) {
 	if *nodes++; *nodes > maxFilterNodes || depth > maxFilterDepth {
@@ -629,10 +628,22 @@ func parseEmailFilter(raw json.RawMessage, depth int, nodes *int) (*store.Filter
 			e = str(&f.Bcc)
 		case "subject":
 			e = str(&f.Subject)
-		default:
-			if contains(unsupportedEmailFilters, key) {
-				return nil, mErr("unsupportedFilter", "the server cannot search the text of messages yet; %q is not supported", key)
+		case "text":
+			if e = str(&f.Text); e == nil && len(*f.Text) > maxSearchText {
+				e = bad
 			}
+		case "body":
+			if e = str(&f.Body); e == nil && len(*f.Body) > maxSearchText {
+				e = bad
+			}
+		case "header":
+			// One or two elements: a field name, and optionally text its
+			// value must contain.
+			if json.Unmarshal(v, &f.Header) != nil || len(f.Header) < 1 || len(f.Header) > 2 ||
+				f.Header[0] == "" || len(f.Header[0]) > 255 || len(f.Header[len(f.Header)-1]) > maxSearchText {
+				return nil, bad
+			}
+		default:
 			return nil, invalidArgs("unknown filter property %q", key)
 		}
 		if e != nil {

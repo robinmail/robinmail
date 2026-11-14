@@ -282,6 +282,28 @@ func TestIMAPAndJMAPOnTwoNodes(t *testing.T) {
 		t.Fatalf("FETCH on node B: %q", got)
 	}
 
+	// SEARCH BODY and TEXT are answered by the full-text index: one query,
+	// no message read. A deviation from RFC 3501 6.4.4, which has "contain
+	// the specified string": the index knows words, so a string matches as
+	// whole words in sequence and a part of a word finds nothing. A string
+	// without a word in it cannot be asked of the index and is looked for
+	// in the messages, as a substring.
+	for _, c := range []struct{ cmd, want string }{
+		{`SEARCH BODY "three protocols"`, "* SEARCH 1"},
+		{`SEARCH BODY "THREE Protocols"`, "* SEARCH 1"},
+		{`SEARCH BODY "protocols three"`, "* SEARCH"},
+		{`SEARCH BODY "proto"`, "* SEARCH"},
+		{`SEARCH BODY "push"`, "* SEARCH"},
+		{`SEARCH TEXT "push me"`, "* SEARCH 1"},
+		{`SEARCH NOT BODY "hello"`, "* SEARCH"},
+		{`SEARCH OR BODY "nothing" TEXT "hello"`, "* SEARCH 1"},
+		{`SEARCH BODY "."`, "* SEARCH 1"},
+	} {
+		if got := two.ok(c.cmd); !hasLine(got, c.want) {
+			t.Errorf("%s: %v, want %s", c.cmd, got, c.want)
+		}
+	}
+
 	// 2. A flag over JMAP on node B.
 	r := jb.call(fmt.Sprintf(`["Email/query",{"accountId":%q},"q"]`, account))
 	emailID := dig(t, r, 0, 1, "ids", 0).(string)

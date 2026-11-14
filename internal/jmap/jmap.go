@@ -9,8 +9,8 @@
 // /query, /queryChanges, /set, /import, /copy and /parse, Identity/get,
 // /changes and /set, EmailSubmission/get, /changes, /query, /queryChanges
 // and /set, blob upload and download, and a sanitised HTML view of an email
-// that is not part of JMAP, and push over an event source (push.go).
-// SearchSnippet and PushSubscription are not here.
+// that is not part of JMAP, SearchSnippet/get, and push over an event
+// source (push.go). PushSubscription is not here.
 package jmap
 
 import (

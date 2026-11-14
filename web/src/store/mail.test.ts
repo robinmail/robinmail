@@ -3,7 +3,7 @@ import { JmapClient } from '../jmap/client'
 import { FakeServer } from '../test/fake'
 import { MailStore, PAGE, buildFilter, type ListSpec } from './mail'
 
-const spec = (over: Partial<ListSpec> = {}): ListSpec => ({ mailboxId: 'm1', from: '', subject: '', unread: false, flagged: false, attachment: false, ...over })
+const spec = (over: Partial<ListSpec> = {}): ListSpec => ({ mailboxId: 'm1', text: '', from: '', subject: '', unread: false, flagged: false, attachment: false, ...over })
 
 let server: FakeServer
 let store: MailStore
@@ -34,9 +34,9 @@ const box = (id: string) => store.state.mailboxes[id]!
 describe('buildFilter', () => {
   it('is the mailbox alone, or an AND with the other conditions', () => {
     expect(buildFilter(spec())).toEqual({ inMailbox: 'm1' })
-    expect(buildFilter(spec({ from: 'bert', subject: 'lunch', unread: true, flagged: true, attachment: true }))).toEqual({
+    expect(buildFilter(spec({ text: 'harbour fee', from: 'bert', subject: 'lunch', unread: true, flagged: true, attachment: true }))).toEqual({
       operator: 'AND',
-      conditions: [{ inMailbox: 'm1' }, { from: 'bert' }, { subject: 'lunch' }, { notKeyword: '$seen' }, { hasKeyword: '$flagged' }, { hasAttachment: true }],
+      conditions: [{ inMailbox: 'm1' }, { text: 'harbour fee' }, { from: 'bert' }, { subject: 'lunch' }, { notKeyword: '$seen' }, { hasKeyword: '$flagged' }, { hasAttachment: true }],
     })
   })
 })
@@ -111,6 +111,36 @@ describe('load and list', () => {
     const second = store.openList(spec({ mailboxId: 'm4' }))
     await Promise.all([first, second])
     expect(subjects()).toEqual(['in junk'])
+  })
+})
+
+describe('search', () => {
+  it('asks for the text in the mailbox and keeps what matched', async () => {
+    server.deliver({ subject: 'Harbour tour', preview: 'We meet at the quay' })
+    server.deliver({ subject: 'Invoice', preview: 'The harbour fee is <due>' })
+    server.deliver({ subject: 'Lunch', preview: 'Soup' })
+    server.deliver({ subject: 'Harbour elsewhere', mailbox: 'm4' })
+    await start(spec({ text: 'harbour' }))
+    expect(subjects()).toEqual(['Invoice', 'Harbour tour'])
+    const [invoice, tour] = store.state.list.ids as [string, string]
+    expect(store.state.list.snippets[invoice]).toMatchObject({ subject: null, preview: 'The <mark>harbour</mark> fee is &lt;due&gt;' })
+    expect(store.state.list.snippets[tour]).toMatchObject({ subject: '<mark>Harbour</mark> tour', preview: null })
+    expect(server.requests.at(-1)!.map((c) => c[0])).toContain('SearchSnippet/get')
+  })
+
+  it('asks for no snippets without a search, and forgets them with the search', async () => {
+    server.deliver({ subject: 'Harbour tour' })
+    await start(spec({ text: 'harbour' }))
+    expect(Object.keys(store.state.list.snippets)).toHaveLength(1)
+    await store.openList(spec())
+    expect(store.state.list.snippets).toEqual({})
+    expect(server.requests.at(-1)!.map((c) => c[0])).not.toContain('SearchSnippet/get')
+  })
+
+  it('all words are needed', async () => {
+    server.deliver({ subject: 'Harbour tour' })
+    await start(spec({ text: 'harbour fee' }))
+    expect(subjects()).toEqual([])
   })
 })
 

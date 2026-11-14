@@ -11,8 +11,8 @@ import (
 
 // Filter is the filter of an Email/query (RFC 8621 4.4.1): either an
 // operator over other filters or a condition, of which every field that is
-// set must hold. Only what the email table and its indexes can answer is
-// here; text search waits for phase 8.
+// set must hold. The email table answers most of it; the text conditions
+// go to the full-text index.
 type Filter struct {
 	// Operator is "AND", "OR" or "NOT" (none of Conditions holds), or
 	// empty for a condition.
@@ -36,6 +36,16 @@ type Filter struct {
 	HasAttachment           *bool
 	// Substring matches on the cached header text, ASCII case-insensitive.
 	From, To, Cc, Bcc, Subject *string
+	// Text and Body are answered by the full-text index (search.go): words
+	// that must all be in the message, "quoted text" as a phrase. Text
+	// looks in the subject, the addresses, the body and the text
+	// attachments; Body in the body.
+	Text, Body *string
+	// Header is a field name, or a name and words its value must have.
+	Header []string
+	// BodyPhrase and TextPhrase are IMAP's SEARCH BODY and TEXT: the whole
+	// string as one phrase. TextPhrase also looks in the header fields.
+	BodyPhrase, TextPhrase *string
 }
 
 // Sort is one comparator of an Email/query.
@@ -187,6 +197,7 @@ func (b *sqlBuilder) where(f *Filter) (string, error) {
 			c = append(c, `instr(lower(e.`+t.col+`), lower(`+b.param(*t.val)+`)) > 0`)
 		}
 	}
+	c = append(c, b.textConditions(f)...)
 	if len(c) == 0 {
 		return "1", nil
 	}

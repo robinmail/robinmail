@@ -114,6 +114,7 @@ export class FakeServer {
       to: [{ name: null, email: 'dev@robinmail.test' }],
       subject: e.subject ?? `Subject ${id}`,
       messageId: [`${id}@fake`],
+      ...(e.preview ? { preview: e.preview } : {}),
       ...(e.to ? { to: e.to } : {}),
       ...(e.cc ? { cc: e.cc } : {}),
       ...(e.keywords ? { keywords: e.keywords } : {}),
@@ -278,6 +279,8 @@ export class FakeServer {
       if (c.subject !== undefined && !(e.subject ?? '').toLowerCase().includes(c.subject.toLowerCase())) return false
       if (c.from !== undefined && !(e.from ?? []).some((a) => a.email.includes(c.from!))) return false
       if (c.hasAttachment !== undefined && e.hasAttachment !== c.hasAttachment) return false
+      // Whole words, all required, in the subject or the preview.
+      if (c.text !== undefined && !words(c.text).every((w) => words(`${e.subject ?? ''} ${e.preview}`).includes(w))) return false
       return true
     }
     const sorted = [...this.emails.values()]
@@ -360,6 +363,31 @@ export class FakeServer {
           accountId, queryState: state, canCalculateChanges: true, position,
           ids: all.slice(position, position + (args.limit ?? 500)),
           ...(args.calculateTotal ? { total: all.length } : {}),
+        }]
+      }
+      case 'SearchSnippet/get': {
+        const want = words((args.filter as FilterCondition | null)?.text ?? '')
+        const mark = (s: string) => {
+          let hit = false
+          const out = s.replace(/[<>&]|[\p{L}\p{N}]+/gu, (m) => {
+            if (m === '<') return '&lt;'
+            if (m === '>') return '&gt;'
+            if (m === '&') return '&amp;'
+            if (!want.includes(m.toLowerCase())) return m
+            hit = true
+            return `<mark>${m}</mark>`
+          })
+          return hit ? out : null
+        }
+        const ids: Id[] = args.emailIds ?? []
+        const notFound = ids.filter((id) => !this.emails.has(id))
+        return [name, {
+          accountId,
+          list: ids.filter((id) => this.emails.has(id)).map((id) => {
+            const e = this.emails.get(id)!
+            return { emailId: id, subject: mark(e.subject ?? ''), preview: mark(e.preview) }
+          }),
+          notFound: notFound.length ? notFound : null,
         }]
       }
       case 'Email/queryChanges': {
@@ -642,4 +670,9 @@ function pointer(value: any, path: string[]): any {
   }
   if (value === null || typeof value !== 'object' || !(head in value)) throw new Fail('invalidResultReference')
   return pointer(value[head], rest)
+}
+
+// words are the lower-case words of a text, as a search sees them.
+function words(s: string): string[] {
+  return s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
 }

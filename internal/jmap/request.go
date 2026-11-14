@@ -107,6 +107,7 @@ func init() {
 		"Email/import":         {CapMail, emailImport},
 		"Email/copy":           {CapMail, emailCopy},
 		"Email/parse":          {CapMail, emailParse},
+		"SearchSnippet/get":    {CapMail, searchSnippetGet},
 
 		"Identity/get":                 {CapSubmission, identityGet},
 		"Identity/changes":             {CapSubmission, identityChanges},

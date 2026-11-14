@@ -108,6 +108,15 @@ type Revocable interface {
 	Revoked() (<-chan struct{}, func())
 }
 
+// TextSearcher is a User whose store has a full-text index. SEARCH BODY and
+// SEARCH TEXT then ask the index instead of reading every message.
+type TextSearcher interface {
+	// SearchText returns the ids of the messages of a mailbox that have
+	// text: in the body (bodyOnly) or anywhere. indexed is false when the
+	// index cannot answer for this text; the messages are read then.
+	SearchText(ctx context.Context, mailbox int64, text string, bodyOnly bool) (ids []int64, indexed bool, err error)
+}
+
 // UIDPair is a message's UID before and after a copy.
 type UIDPair struct{ From, To uint32 }
 

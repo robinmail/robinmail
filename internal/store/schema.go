@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 7
+const schemaVersion = 8
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -45,8 +45,10 @@ var schema = []string{
 		next_identity   INTEGER NOT NULL DEFAULT 2,
 		uidvalidity     INTEGER NOT NULL DEFAULT 0,
 		auth_seq        INTEGER NOT NULL DEFAULT 0,
-		password_changed_at INTEGER NOT NULL DEFAULT 0
+		password_changed_at INTEGER NOT NULL DEFAULT 0,
+		seq            INTEGER NOT NULL DEFAULT 0
 	) WITHOUT ROWID`,
+	sqlAccountSeq,
 
 	sqlSessionTable, sqlSessionExpires, sqlSessionAccount,
 	sqlAppPasswordTable, sqlTOTPTable, sqlRecoveryCodeTable, sqlOIDCLinkTable,
@@ -154,6 +156,7 @@ var schema = []string{
 
 	sqlNodeTable,
 	sqlLoginFailureTable,
+	sqlEmailFTS, sqlEmailFTSDelete,
 
 	`INSERT INTO schema_version (version) SELECT ` + fmt.Sprint(schemaVersion) + ` WHERE NOT EXISTS (SELECT 1 FROM schema_version)`,
 }
@@ -208,9 +211,38 @@ var migrations = map[int64][]string{
 		sqlAppPasswordTable, sqlTOTPTable, sqlRecoveryCodeTable, sqlOIDCLinkTable,
 		sqlAuthEventTable, sqlAuthEventAt, sqlAuthEventAccount,
 	},
+	// 8: full-text search. Accounts get a number, which with the email id
+	// makes the rowid of an email in the index. Mail stored before this is
+	// not in the index until "robinmail reindex".
+	7: {
+		`ALTER TABLE account ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE account SET seq = (SELECT count(*) FROM account b WHERE b.id <= account.id)`,
+		sqlAccountSeq,
+		sqlEmailFTS, sqlEmailFTSDelete,
+	},
 }
 
 const (
+	// seq numbers the accounts: 1, 2, ... It only exists to make integer
+	// row ids for the full-text index (sqlFTSRow).
+	sqlAccountSeq = `CREATE UNIQUE INDEX IF NOT EXISTS account_seq ON account (seq)`
+
+	// The full-text index (FTS5). It is contentless: it holds the words of
+	// each message and where they stand, not the text, and what a column
+	// holds cannot be read back. That is still enough to learn what a
+	// message says, so unlike the blobs this is not encrypted at rest (see
+	// PLAN.md, phase 8). The rowid of an email is its account's seq times
+	// 2^32 plus its id, so one account's rows are one range of rowids.
+	// hdr holds the header fields in the form of search.HeaderDoc.
+	sqlEmailFTS = `CREATE VIRTUAL TABLE IF NOT EXISTS email_fts USING fts5(
+		subject, addr, body, attach, hdr,
+		content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 2')`
+	// Every way an email row goes (destroy, expunge, a mailbox destroyed
+	// with its mail) takes its index entry along.
+	sqlEmailFTSDelete = `CREATE TRIGGER IF NOT EXISTS email_fts_delete AFTER DELETE ON email BEGIN
+		DELETE FROM email_fts WHERE rowid = (SELECT seq FROM account WHERE id = old.account_id) * 4294967296 + old.id;
+	END`
+
 	// A web login. token_hash is the SHA-256 of the token in the cookie, so
 	// a copy of this table logs nobody in. id is what the user's list of
 	// sessions shows and revokes by. stage is 'full', or 'totp' for a login

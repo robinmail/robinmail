@@ -61,8 +61,8 @@ func (s *Store) CreateAccount(ctx context.Context, address, passwordHash string)
 		"domain", address[strings.LastIndexByte(address, '@')+1:])
 	b.unique(ErrAccountExists)
 	b.add(`INSERT INTO account (id, address, password_hash, blob_key, created_at, modseq, next_email,
-			next_mailbox, next_thread, uidvalidity)
-		VALUES (:a, :address, :hash, :blob_key, :now, 1, 1, :next, 1, :now)`,
+			next_mailbox, next_thread, uidvalidity, seq)
+		VALUES (:a, :address, :hash, :blob_key, :now, 1, 1, :next, 1, :now, (SELECT COALESCE(max(seq), 0) + 1 FROM account))`,
 		"address", address, "hash", passwordHash, "blob_key", wrapped, "next", len(defaultMailboxes)+1)
 	for i, m := range defaultMailboxes {
 		b.add(`INSERT INTO mailbox (account_id, id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq)

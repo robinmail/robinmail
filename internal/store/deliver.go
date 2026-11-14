@@ -125,6 +125,7 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 			"sender", info.sender, "subject", info.subject, "preview", info.preview, "attachment", attachment,
 			"recipients", info.recipients, "cc", info.cc, "bcc", info.bcc, "sent_at", info.sentAt},
 			refKV...)...)
+	b.indexEmail(sqlNewEmail, info.index)
 	if len(info.refs) > 0 {
 		b.add(`INSERT OR IGNORE INTO thread_ref (account_id, message_id, thread_id)
 			SELECT e.account_id, v.column1, e.thread_id FROM email e, (VALUES `+refVals+`) v

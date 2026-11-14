@@ -187,6 +187,13 @@ func (u *imapUser) Summaries(ctx context.Context, ids []int64) (map[int64]imap.S
 	return out, nil
 }
 
+// SearchText makes imapUser an imap.TextSearcher: SEARCH BODY and TEXT are
+// answered by the full-text index.
+func (u *imapUser) SearchText(ctx context.Context, mailbox int64, text string, bodyOnly bool) ([]int64, bool, error) {
+	ids, indexed, err := u.b.st.SearchMailbox(ctx, u.acct.ID, mailbox, text, bodyOnly)
+	return ids, indexed, imapErr(err)
+}
+
 func (u *imapUser) Append(ctx context.Context, mailbox int64, raw []byte, flags []string, date time.Time) (uint32, uint32, error) {
 	if u.b.maxMessage > 0 && int64(len(raw)) > u.b.maxMessage {
 		return 0, 0, imap.ErrTooLarge

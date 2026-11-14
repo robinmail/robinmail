@@ -4,6 +4,8 @@ import { compose, store } from '../app'
 import { shortDate, fullDate } from '../lib/format'
 import { actions, selection, useMailView, type Row } from '../lib/mailView'
 import type { ListSpec } from '../store/mail'
+import { snippetParts } from '../lib/snippet'
+import SearchBox from './SearchBox.vue'
 
 const view = useMailView()
 const { rows, threadId, mailboxId, mailbox, spec, filterCount, selectedRows } = view
@@ -61,9 +63,20 @@ function openRow(e: MouseEvent, row: Row) {
   compose.openDraft(row.id).catch((err: unknown) => store.onError(err instanceof Error ? err.message : String(err)))
 }
 
+// What a search found in a row: the subject and a piece of the body with
+// the matches marked. null where nothing matched, or without a search.
+function snippet(id: string, field: 'subject' | 'preview') {
+  const html = list.value.snippets[id]?.[field]
+  return html ? snippetParts(html) : null
+}
+
+const search = ref<InstanceType<typeof SearchBox> | null>(null)
+defineExpose({ focusSearch: () => search.value?.focus() })
+
 const chips = computed(() => {
   const s = spec.value
   const out: { label: string; clear: Partial<ListSpec> }[] = []
+  if (s.text) out.push({ label: `Search: ${s.text}`, clear: { text: '' } })
   if (s.from) out.push({ label: `From: ${s.from}`, clear: { from: '' } })
   if (s.subject) out.push({ label: `Subject: ${s.subject}`, clear: { subject: '' } })
   if (s.unread) out.push({ label: 'Unread', clear: { unread: false } })
@@ -75,6 +88,7 @@ const chips = computed(() => {
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
+    <SearchBox ref="search" />
     <!-- Selection bar, or the active filters -->
     <div v-if="rows.length > 0 || filterCount > 0" class="flex min-h-11 items-center gap-1 border-b border-default px-3 py-1.5">
       <UCheckbox
@@ -133,11 +147,11 @@ const chips = computed(() => {
       <div v-else-if="rows.length === 0" class="flex flex-col items-center gap-3 p-8 pt-16 text-center">
         <UIcon :name="filterCount ? 'i-lucide-search-x' : 'i-lucide-inbox'" class="size-10 text-dimmed" />
         <p class="text-sm text-muted">
-          {{ filterCount ? 'No messages match the filter.' : 'No messages here.' }}
+          {{ spec.text ? 'No messages match the search.' : filterCount ? 'No messages match the filter.' : 'No messages here.' }}
         </p>
         <UButton
-          v-if="filterCount" label="Clear the filter" color="neutral" variant="subtle" size="sm"
-          @click="view.setFilter({ from: '', subject: '', unread: false, flagged: false, attachment: false })"
+          v-if="filterCount" :label="spec.text ? 'Clear the search' : 'Clear the filter'" color="neutral" variant="subtle" size="sm"
+          @click="view.setFilter({ text: '', from: '', subject: '', unread: false, flagged: false, attachment: false })"
         />
       </div>
 
@@ -176,11 +190,23 @@ const chips = computed(() => {
             </div>
             <div class="flex items-center gap-1.5">
               <span v-if="row.unread" class="size-2 shrink-0 rounded-full bg-primary" role="img" aria-label="Unread" />
-              <span class="truncate text-sm" :class="row.unread ? 'font-semibold text-highlighted' : 'text-default'">{{ row.email.subject || '(no subject)' }}</span>
+              <span class="truncate text-sm" :class="row.unread ? 'font-semibold text-highlighted' : 'text-default'">
+                <template v-if="snippet(row.id, 'subject')">
+                  <template v-for="(part, n) in snippet(row.id, 'subject')" :key="n">
+                    <mark v-if="part.mark" class="rounded-sm bg-warning/30 text-inherit">{{ part.text }}</mark><template v-else>{{ part.text }}</template>
+                  </template>
+                </template>
+                <template v-else>{{ row.email.subject || '(no subject)' }}</template>
+              </span>
               <UIcon v-if="row.email.keywords.$answered" name="i-lucide-reply" class="size-3.5 shrink-0 text-dimmed" role="img" aria-label="Answered" />
               <UIcon v-if="row.attachment" name="i-lucide-paperclip" class="ml-auto size-3.5 shrink-0 text-dimmed" role="img" aria-label="Has attachment" />
             </div>
-            <p class="truncate text-sm text-dimmed">
+            <p v-if="snippet(row.id, 'preview')" class="truncate text-sm text-dimmed" data-testid="snippet">
+              <template v-for="(part, n) in snippet(row.id, 'preview')" :key="n">
+                <mark v-if="part.mark" class="rounded-sm bg-warning/30 text-default">{{ part.text }}</mark><template v-else>{{ part.text }}</template>
+              </template>
+            </p>
+            <p v-else class="truncate text-sm text-dimmed">
               {{ row.email.preview || ' ' }}
             </p>
           </RouterLink>

@@ -22,6 +22,7 @@ declare module 'vue' {
     RichEditor: typeof import('./src/components/RichEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SearchBox: typeof import('./src/components/SearchBox.vue')['default']
     SettingsTabs: typeof import('./src/components/SettingsTabs.vue')['default']
     ThreadView: typeof import('./src/components/ThreadView.vue')['default']
     UAlert: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Alert.vue')['default']

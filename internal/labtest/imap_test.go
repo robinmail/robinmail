@@ -38,6 +38,9 @@ var imapTestKnown = map[string]struct {
 	"select":       {3, `expects \Recent and a RECENT count: robinmail keeps no \Recent flag (IMAP4rev2 dropped it), RECENT is always 0`},
 	"copy":         {4, `the same: expects \Recent on copied messages`},
 	"search-flags": {3, `the same: SEARCH NEW, OLD and RECENT`},
+	"search-body": {6, `searches for parts of words ("sdfghjk" in "asdfghjkl"): since phase 8 SEARCH BODY and TEXT ask the ` +
+		`full-text index, which knows whole words, not substrings (RFC 3501 6.4.4 has substrings; Dovecot with an index ` +
+		`answers these the same way)`},
 	"listext": {1, `expects a deleted mailbox that was subscribed to stay in the list as \NonExistent: ` +
 		`a subscription here is a property of the mailbox and goes with it`},
 	"fetch-envelope": {1, `expects the source route of "<@route:user@domain>" in the ENVELOPE: ` +

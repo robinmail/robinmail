@@ -153,6 +153,14 @@ export interface EmailSubmission {
   deliveryStatus: Record<string, DeliveryStatus> | null
 }
 
+// SearchSnippet (RFC 8621 5): the subject and a part of the body as HTML
+// in which only <mark> and </mark> are markup; null where nothing matched.
+export interface SearchSnippet {
+  emailId: Id
+  subject: string | null
+  preview: string | null
+}
+
 export interface Thread {
   id: Id
   emailIds: Id[]
@@ -167,6 +175,10 @@ export type FilterCondition = {
   from?: string
   to?: string
   subject?: string
+  // Full-text search (RFC 8621 4.4.1): words that must all be in the
+  // message, "quoted text" as a phrase.
+  text?: string
+  body?: string
 }
 export type Filter = FilterCondition | { operator: 'AND' | 'OR' | 'NOT'; conditions: Filter[] }
 
@@ -275,6 +287,10 @@ export interface Methods {
   'Email/queryChanges': {
     args: { filter?: Filter | null; sort?: Comparator[] | null; sinceQueryState: string; maxChanges?: number; collapseThreads?: boolean; calculateTotal?: boolean }
     response: QueryChangesResponse
+  }
+  'SearchSnippet/get': {
+    args: { filter?: Filter | null; emailIds?: Id[] }
+    response: { accountId: Id; list: SearchSnippet[]; notFound: Id[] | null }
   }
   'Email/set': {
     args: Omit<SetArgs<Email>, 'create'> & { create?: Record<string, EmailCreate> }

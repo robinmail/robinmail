@@ -95,6 +95,7 @@ export function useMailView() {
   const mailbox = computed<Mailbox | undefined>(() => store.state.mailboxes[mailboxId.value])
   const spec = computed<ListSpec>(() => ({
     mailboxId: mailboxId.value,
+    text: query('q'),
     from: query('from'),
     subject: query('subject'),
     unread: query('unread') === '1',
@@ -103,7 +104,7 @@ export function useMailView() {
   }))
   const filterCount = computed(() => {
     const s = spec.value
-    return [s.from, s.subject, s.unread, s.flagged, s.attachment].filter(Boolean).length
+    return [s.text, s.from, s.subject, s.unread, s.flagged, s.attachment].filter(Boolean).length
   })
 
   // All mailboxes in display order, with their depth.
@@ -120,6 +121,7 @@ export function useMailView() {
 
   function specQuery(s: ListSpec): LocationQueryRaw {
     return {
+      ...(s.text ? { q: s.text } : {}),
       ...(s.from ? { from: s.from } : {}),
       ...(s.subject ? { subject: s.subject } : {}),
       ...(s.unread ? { unread: '1' } : {}),

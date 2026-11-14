@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // The filter of the list. It holds only what Email/query supports on this
 // server: from, subject, unread, flagged, has attachment (PLAN.md, phase 3).
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useMailView } from '../lib/mailView'
 
-const { spec, filterCount, setFilter } = useMailView()
+const { spec, setFilter } = useMailView()
+// The search text has its own box over the list and is not counted here.
+const filterCount = computed(() => [spec.value.from, spec.value.subject, spec.value.unread, spec.value.flagged, spec.value.attachment].filter(Boolean).length)
 const open = defineModel<boolean>('open', { default: false })
 const from = ref(spec.value.from)
 const subject = ref(spec.value.subject)

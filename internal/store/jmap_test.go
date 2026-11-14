@@ -23,6 +23,11 @@ func mail(fields map[string]string, body string) []byte {
 			fmt.Fprintf(&b, "%s: %s\r\n", name, v)
 		}
 	}
+	for _, name := range []string{"X-Bar", "X-Foo", "List-Id", "Precedence", "Auto-Submitted"} {
+		if v, ok := fields[name]; ok {
+			fmt.Fprintf(&b, "%s: %s\r\n", name, v)
+		}
+	}
 	b.WriteString("\r\n" + body)
 	return []byte(b.String())
 }

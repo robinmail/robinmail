@@ -585,7 +585,7 @@ func TestHandlerRouting(t *testing.T) {
 	want := []string{"Core/echo", "Email/changes", "Email/copy", "Email/get", "Email/import", "Email/parse", "Email/query",
 		"Email/queryChanges", "Email/set", "EmailSubmission/changes", "EmailSubmission/get", "EmailSubmission/query",
 		"EmailSubmission/queryChanges", "EmailSubmission/set", "Identity/changes", "Identity/get", "Identity/set",
-		"Mailbox/changes", "Mailbox/get", "Mailbox/query", "Mailbox/queryChanges", "Mailbox/set", "Thread/changes", "Thread/get"}
+		"Mailbox/changes", "Mailbox/get", "Mailbox/query", "Mailbox/queryChanges", "Mailbox/set", "SearchSnippet/get", "Thread/changes", "Thread/get"}
 	if got := Methods(); !reflect.DeepEqual(got, want) {
 		t.Errorf("methods: %v", got)
 	}

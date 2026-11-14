@@ -483,7 +483,8 @@ func (s *Store) OpenBlob(ctx context.Context, account, blobID string) (io.ReadCl
 }
 
 // Reindex reads an email's message again and rewrites the columns cached
-// from it: the fields for lists and filters, the preview, hasAttachment.
+// from it: the fields for lists and filters, the preview, hasAttachment,
+// and its entry in the full-text index.
 // For emails stored by an older version. The thread and the state do not
 // change: what JMAP shows of an email is derived from the same message as
 // before.
@@ -504,6 +505,9 @@ func (s *Store) Reindex(ctx context.Context, account string, id int64) error {
 		WHERE account_id = :a AND id = :e`,
 		"e", id, "message_id", info.messageID, "sender", info.sender, "recipients", info.recipients, "cc", info.cc,
 		"bcc", info.bcc, "subject", info.subject, "sent_at", info.sentAt, "preview", info.preview, "attachment", attachment)
+	b.base["e"] = id
+	b.add(`DELETE FROM email_fts WHERE rowid = ` + sqlFTSRow(":e"))
+	b.indexEmail(":e", info.index)
 	_, err = s.run(ctx, b)
 	return err
 }

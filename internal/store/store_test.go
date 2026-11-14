@@ -916,23 +916,32 @@ func TestSummarize(t *testing.T) {
 		"Message-ID: <own@x>\r\nReferences: <a@x> <b@x>\r\n\t<c@x> <b@x>\r\nIn-Reply-To: <c@x>\r\n" +
 		"Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" +
 		"Hall=C3=B6,\r\n\r\n  see   you =\r\nthere.\r\n"
+	// noIndex is a summary without what goes to the full-text index, which
+	// has its own checks below and in search_test.go.
+	noIndex := func(s summary) summary { s.index = indexDoc{}; return s }
 	got := summarize([]byte(raw))
-	want(t, "summary", got, summary{messageID: "own@x", refs: []string{"own@x", "a@x", "b@x", "c@x"},
+	want(t, "index", got.index, indexDoc{subject: "Re: plan for tomorrow", addresses: "Jürgen <j@x.test>\n\n\n",
+		body: "Hallö,\n\n  see   you there.\n", headers: got.index.headers})
+	if !strings.Contains(got.index.headers, " tomorrow ") || !strings.Contains(got.index.headers, " jurgen ") {
+		t.Errorf("header index: %q", got.index.headers)
+	}
+	want(t, "summary", noIndex(got), summary{messageID: "own@x", refs: []string{"own@x", "a@x", "b@x", "c@x"},
 		sender: "Jürgen <j@x.test>", subject: "Re: plan for tomorrow", preview: "Hallö, see you there."})
 
 	// One unnamed text part is the body, not an attachment (RFC 8621 4.1.4).
 	multi := summarize([]byte("Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n\r\nhi\r\n--x--\r\n"))
-	want(t, "multipart", multi, summary{preview: "hi"})
+	want(t, "multipart", noIndex(multi), summary{preview: "hi"})
 	file := summarize([]byte("To: Bob <bob@x.test>\r\nCc: c@x.test\r\nDate: Fri, 13 Nov 2026 10:00:00 +0100\r\n" +
 		"Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n\r\nhi\r\n" +
 		"--x\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=a.pdf\r\n\r\n%PDF\r\n--x--\r\n"))
-	want(t, "attachment", file, summary{recipients: "Bob <bob@x.test>", cc: "c@x.test", sentAt: 1794560400, preview: "hi", hasAttachment: true})
+	want(t, "attachment", noIndex(file), summary{recipients: "Bob <bob@x.test>", cc: "c@x.test", sentAt: 1794560400, preview: "hi", hasAttachment: true})
 	htmlOnly := summarize([]byte("Content-Type: text/html\r\n\r\n<p>Hello <b>there</b></p>"))
 	want(t, "html preview", htmlOnly.preview, "Hello there")
 	b64 := summarize([]byte("Content-Transfer-Encoding: base64\r\n\r\naGVsbG8gd29y\r\nbGQ=\r\n"))
 	want(t, "base64 preview", b64.preview, "hello world")
-	want(t, "not mail", summarize([]byte("\x00\x01")), summary{})
-	want(t, "empty", summarize(nil), summary{})
+	want(t, "not mail", noIndex(summarize([]byte("\x00\x01"))).preview, "")
+	want(t, "attachment names are indexed", file.index.attachments, "a.pdf\n")
+	want(t, "empty", noIndex(summarize(nil)), summary{})
 
 	want(t, "messageIDs", messageIDs("<a@x>,<b c@x> junk <<d@x> <> <e@x"), []string{"a@x", "d@x"})
 	want(t, "long id skipped", len(messageIDs("<"+strings.Repeat("a", 251)+">")), 0)

@@ -20,7 +20,7 @@ This is a learning project. There is no production target yet.
 | Mail API | JMAP core and mail | One standard API for the webmail, a later app and existing clients. |
 | Metadata | One rqlite cluster (SQLite replicated with Raft), one database for all accounts | Self-hosted, replicated, automatic leader failover. No replication, lease or consensus code of our own. |
 | Message files | Immutable blobs on the local disk of every node, named by account and SHA-256 of the plaintext | No storage service to run. robinmail replicates blobs itself (phase 4): every node holds every blob, a write is acknowledged once 2 nodes have it, and a background check fetches missing ones. |
-| Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has | Protects against stolen disks and backups. Does not protect against a compromised running server, which holds the master key. |
+| Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has. What rqlite holds is not encrypted by robinmail: the cached header fields and previews, and since phase 8 the full-text index, from which the words of every message can be read | Protects the blobs against stolen disks and backups. Does not protect against a compromised running server, which holds the master key, nor does it cover rqlite's files: those need an encrypted disk. |
 | Nodes | Not stateless: metadata is in rqlite, blobs are on each node's disk. Any node serves any account | No owner per account and no forwarding. rqlite's leader orders the writes. |
 | Between nodes | Nodes find each other through the `node` table in rqlite and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates whose fingerprint is in that table | No CA and no shared secret to distribute. Who may join is decided by who can write to rqlite, which holds everything anyway. |
 | Mailboxes | An Email can be in several mailboxes (labels) | Full JMAP `mailboxIds`. |
@@ -34,9 +34,7 @@ This is a learning project. There is no production target yet.
 | Accounts and login | Built in. App passwords for IMAP, SMTP and JMAP with Basic auth, TOTP for web login, optional OIDC login for the webmail (phase 7). No Keycloak or other identity service required | Mail clients log in with a password and do not speak OIDC, so robinmail needs its own accounts anyway. OIDC stays generic, so Keycloak, Authentik or Zitadel can be plugged in. |
 | Auth code | JWT, JWK, PKCE, OIDC, TOTP and the QR code are our own, on the standard library (`internal/jose`, `internal/oidc`, `internal/totp`, `internal/qr`) | The dependency rule above. Each is small when it only does what robinmail needs: verify two signature algorithms, one flow, one kind of code. |
 
-Not in scope: POP3, CalDAV/CardDAV, migration tooling. Sieve, quotas and
-full-text search wait for phase 8; until then queries filter on indexed
-columns only.
+Not in scope: POP3, CalDAV/CardDAV, migration tooling.
 
 Accepted trade-off: every write goes through the one rqlite leader, also from
 another zone. Fine at this scale. If it ever is not, accounts can be spread
@@ -64,7 +62,7 @@ Every mail table starts with `account_id`.
 | Table | Columns | Notes |
 |---|---|---|
 | `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
-| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made |
+| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts` |
 | `session` | token_hash, id, account_id, stage, method, created_at, seen_at, expires_at, idle, ip, seen_ip, agent, remember | web login; the hash is SHA-256 of the token in the cookie; `id` is what the user's list shows and revokes by; `stage` is `full`, or `totp` for a login that still owes its code; ends at `expires_at`, or `idle` seconds after `seen_at` |
 | `app_password` | id, name, hash, scope, created_at, used_at, used_ip | a password for one device; `hash` is SHA-256 of the 160 random bits the server made; `scope` lists `imap`, `smtp`, `jmap` (empty: all); revoking deletes the row |
 | `totp` | secret, created_at, confirmed_at, last_step | one row per account; the secret is sealed with the account's blob key; not asked for until confirmed; `last_step` is the newest time step a code was accepted for |
@@ -74,6 +72,7 @@ Every mail table starts with `account_id`.
 | `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq, subscribed | a rename changes `name` only |
 | `email` | id, blob, size, received_at, thread_id, message_id, sender, recipients, cc, bcc, subject, sent_at, preview, has_attachment, modseq | header fields cached for lists, filters and sorting |
 | `email_mailbox` | email_id, mailbox_id, uid | one row per label; the IMAP UID belongs to the row |
+| `email_fts` | rowid, subject, addr, body, attach, hdr | the full-text index: an FTS5 table, contentless (the words and their places, not the text); the rowid is the account's `seq` times 2^32 plus the email id; a trigger on `email` removes a row with its email; not per account and not encrypted |
 | `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom; `$deleted` is IMAP's `\Deleted` |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
 | `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission or Identity; op created, updated or destroyed; `at` is for trimming |
@@ -86,7 +85,7 @@ Every mail table starts with `account_id`.
 | `node` | id, address, cert, started_at, seen_at | the robinmail nodes: where the others reach each, the SHA-256 of its certificate, its heartbeat |
 | `login_failure` | key, started, count | failures in a 15 minute window, for all nodes together: `a:` wrong passwords at the web login per address, `m:` wrong secrets from mail clients per address, `t:` wrong TOTP and recovery codes per address, `i:` all of them per IP |
 | `guard` | ok | always empty; how a batch checks a precondition (below) |
-| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3, 3 to 4, 4 to 5, 5 to 6 and 6 to 7) |
+| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3 up to 7 to 8) |
 
 Rules:
 
@@ -172,6 +171,7 @@ internal/cluster     node table, mutual TLS, blob transfer between nodes      ne
 internal/clustertest tests against the Docker cluster   new; "make cluster-test"
 internal/store       schema and all mail operations     new, replaces owl's store
 internal/message     MIME to JMAP body structure, HTML view   new
+internal/search      words of a text, search terms, snippets  new
 internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, settings, OIDC login, static app   new
 internal/totp        HOTP and TOTP (RFC 4226, RFC 6238), otpauth URI    new
@@ -1918,7 +1918,7 @@ Built as follows:
   adds; its subscribe dialog, its search, the "just mark it as deleted"
   setting, and a connection left open for a day (the list in phase 6).
   OAuth2 in Thunderbird: robinmail offers none.
-### Phase 8: completeness
+### Phase 8: completeness — in progress
 
 - Aliases and catch-all addresses.
 - JMAP `VacationResponse`.
@@ -1928,6 +1928,111 @@ Built as follows:
 - MTA-STS policy serving, TLS-RPT, client autoconfig.
 - Admin commands, backup and restore of rqlite plus blobs.
 - Exit: each item shown working with a test.
+
+Built in this order, each item committed with its tests: 1 full-text
+search (done), 2 aliases, 3 Sieve, 4 VacationResponse, 5 quotas, 6 MTA-STS
+serving and TLS-RPT, 7 autoconfig, 8 operations, 9 README, 10 lab and
+cluster cases.
+
+Built as follows:
+
+- **Full-text search: an FTS5 index inside rqlite.** Checked for real on
+  rqlite 10.7.1 (SQLite 3.54.1): FTS5 is compiled in, virtual tables and
+  triggers replicate like any statement. The table `email_fts` has the
+  columns `subject`, `addr` (From, To, Cc, Bcc), `body`, `attach` and
+  `hdr`, tokenizer `unicode61 remove_diacritics 2`: words are runs of
+  letters and digits, compared without case and diacritics. No stemming
+  and no prefixes: a search finds whole words.
+  - **What it means for encryption at rest.** The blobs stay encrypted;
+    the index is not. It is contentless (`content=''`): SQLite keeps each
+    word and the positions it stands at, not the text, and a column
+    cannot be read back with a query. That is a smaller file, not a
+    secret: from words and positions a message can be put together
+    again, without its punctuation and capitals. The email table already
+    held the subject, the addresses and a preview in the clear; now
+    everything a message says is in rqlite's files, its Raft log and its
+    snapshots. Whoever gets those reads the mail without the master key.
+    The alternatives were an index of our own in the same database
+    (the same exposure, more code) and no index, decrypting every
+    message per search (phase 6 did that for IMAP: every search reads
+    the mailbox). A searchable index that is itself encrypted with the
+    account key cannot live in a database that has to run the search.
+    So: rqlite's data directory belongs on an encrypted disk, and a
+    backup of it is as sensitive as the mail.
+  - **Writing.** The row is inserted by the batch that stores the email
+    (delivery, `Email/set` create, `/import`, `/copy`, `APPEND`: all are
+    `store.Deliver`), so email and index entry exist together or not at
+    all. A trigger on `email` deletes the row with the email, whichever
+    way it goes (destroy, expunge, a mailbox destroyed with its mail).
+    `robinmail reindex [address]` rebuilds the entries of stored mail and
+    is what indexes mail from before schema version 8: the migration
+    cannot read blobs.
+  - **What is indexed.** The subject and the four address fields as
+    decoded text; the text body (RFC 8621's `textBody`; for mail that
+    only has HTML the text of the HTML, without markup, scripts and
+    styles); of attachments the file name of each, and the content only
+    of those with a `text/*` type; at most 256 KiB of body text and as
+    much of attachments per message, because the text travels through
+    Raft with the delivery. Every header field for the `header`
+    condition: each word of a field's value is written behind a marker
+    token for the field's name (`X-Foo: bar baz` is `M bar M baz`), so
+    "field X has these words" is a phrase that no other field can
+    satisfy; 200 fields and 40 words per field at most.
+  - **`Email/query`** (RFC 8621 4.4.1): `text` (subject, addresses,
+    body, attachments), `body` and `header` (a name, or a name and
+    words). Words must all be there, in any place; "quoted words" must
+    be there as written. A condition is `e.id IN (SELECT rowid ... MATCH
+    ?)` within the rowid range of the account, so it combines with every
+    other condition and with `AND`, `OR`, `NOT`, and
+    `Email/queryChanges` has it for free. The query text given to FTS5 is
+    built from the tokens (`internal/search`), never from the user's
+    string: nothing a client sends can write FTS5 syntax (a fuzz test
+    holds that). `from`, `to`, `cc`, `bcc` and `subject` stay substring
+    matches on the cached columns.
+  - **`SearchSnippet/get`** (RFC 8621 5). A contentless index has no
+    text to cut a snippet from, so the handler reads and decrypts the
+    messages whose ids are asked for (the page a client shows), finds
+    the words itself and answers with the subject and about 200
+    characters of the body around the first match, matches in `<mark>`,
+    everything else escaped. The RFC's example marks "Foo" in
+    "Foosball" for the search "foo"; here that needs the whole word
+    (deviation, in the test).
+  - **IMAP `SEARCH BODY` and `TEXT`** ask the index when the backend has
+    one (`imap.TextSearcher`): one query per key instead of reading every
+    message. The string is a phrase of whole words, not a substring as
+    RFC 3501 6.4.4 has it: `BODY "harb"` no longer finds "harbour"
+    (deviation, with a test; Dovecot with an index and Gmail do the
+    same). `TEXT` looks in subject, addresses, body and attachments, and
+    for a single word in every header field. A string without a letter
+    or digit in it, and `HEADER`, still read the messages.
+    Dovecot's ImapTest checks substrings ("sdfghjk" in "asdfghjkl"):
+    its group `search-body` now fails 6 commands and is listed as known
+    in the lab test, so the scripted run is 35 groups passing, 7 failing
+    (all known), 30 skipped.
+  - **Webmail.** A search box over the list (`/` puts the cursor in it)
+    searches the open mailbox; the text is in the address (`?q=`). Rows
+    show what matched: the subject with marks and the snippet in place
+    of the preview. The snippet's HTML is not put into the page: it is
+    cut at the `<mark>` tags into pieces of text.
+  - **Tests.** `internal/search` (tokens, query parsing, snippets, the
+    header scheme, a fuzz test), `internal/store` (`TestTextSearch`: 35
+    queries against rqlite, the index following destroy, mailbox destroy
+    and reindex, a refused delivery leaving nothing, the size limit),
+    `internal/jmap` (RFC 8621 4.4.1 and 5 from the text of the RFC),
+    `cmd/robinmail` (IMAP `SEARCH` through the index on two nodes),
+    Vitest and Playwright (`e2e/search.spec.ts`).
+  - **JMAP-TestSuite** after this item: 113 files pass, 7 fail (was 110
+    and 10): `Email/query/filtering`, `Email/queryChanges/simple` and
+    `SearchSnippet/get/basic` pass now. The 7 left are the ones phase 5c
+    explains.
+  - **Not handled.** No stemming, no prefix or substring search in
+    bodies, no ranking (results keep the sort of the query). The search
+    box searches one mailbox, not all mail: the list is a mailbox's and
+    move and delete act within it. Attachments that are not text (PDF,
+    office files) are found by name only. An account's index rows are
+    one rowid range of one table for all accounts; a very common word is
+    cheap to look up but the table is shared. `HEADER` in IMAP reads the
+    messages. Snippets cost a read and a decrypt per message shown.
 
 ## Open questions
 
