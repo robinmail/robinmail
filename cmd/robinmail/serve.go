@@ -28,9 +28,10 @@ var (
 	onWebListen func(net.Addr)
 )
 
-// webStatic is the webmail served outside the API paths. nil is the
-// placeholder page; the build that embeds web/dist sets it.
-var webStatic fs.FS
+// webStatic is the webmail served outside the API paths: the one built
+// into the binary with the "webmail" tag ("make"), or nil, which is the
+// placeholder page.
+var webStatic fs.FS = web.Embedded()
 
 // How long open SMTP sessions get to finish after a stop signal.
 const shutdownGrace = 30 * time.Second

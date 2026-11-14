@@ -8,7 +8,9 @@
 #   dev/robinmail -config dev/robinmail.json serve
 #
 # Then JMAP is on http://127.0.0.1:8080 and SMTP on 127.0.0.1:2525, without
-# TLS and without Rspamd. Run it again any time: it rebuilds the binary and
+# TLS and without Rspamd. The binary built here has no webmail in it: for
+# that use "make dev" (Vite on http://localhost:5173, live reload) or
+# "make" and run ./robinmail with the same config (see the Makefile). Run it again any time: it rebuilds the binary and
 # leaves an existing user and their mail alone.
 #
 # The user is dev@robinmail.test. The password below is for this local
