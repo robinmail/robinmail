@@ -256,6 +256,7 @@ func (s *Server) passwordLogin(ctx context.Context, ip, username, password strin
 	if !found || !match {
 		s.failed(ctx, byIP, byAddr)
 		s.event(ctx, EventLoginFailed, acct, key, ip, "web: wrong address or password")
+		s.Logger.Warn("login failed", "door", "web", "address", key, "ip", ip)
 		return store.Account{}, http.StatusUnauthorized, 0
 	}
 	s.cleared(ctx, shared, byAddr)
@@ -303,6 +304,7 @@ func (s *Server) MailLogin(ctx context.Context, ip, scope, username, secret stri
 	refuse := func(why string) (Credential, int, time.Duration) {
 		s.failed(ctx, byIP, byAddr)
 		s.event(ctx, EventLoginFailed, acct, key, ip, scope+": "+why)
+		s.Logger.Warn("login failed", "door", scope, "address", key, "ip", ip, "why", why)
 		return Credential{}, http.StatusUnauthorized, 0
 	}
 

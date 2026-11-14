@@ -27,11 +27,12 @@ This is a learning project. There is no production target yet.
 | IMAP | Built in phase 6 on UIDs that exist from day one. A label is a folder; a message with three labels is in three folders | No store migration later. Mail clients only speak IMAP. |
 | Webmail | Vue single-page app in `web/`: plain Vite, Vue Router, Nuxt UI (without Nuxt). Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. Nuxt UI is MIT and has the dashboard and inbox components a mail client needs. |
 | Origin | One hostname. robinmail serves the API under `/jmap`, `/.well-known/jmap` and `/auth`, and the embedded webmail everywhere else | Same origin: no CORS, `SameSite=Strict` works. |
-| Web auth | Session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`) plus an `Origin` check on every JMAP request. Sessions are rows in rqlite | The client never holds a token. Any node accepts the cookie. |
+| Web auth | Session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, `__Host-`) plus an `Origin` check on every request to `/auth` and JMAP, and JSON with its content type for everything that changes state. No CSRF token. Sessions are rows in rqlite | The client never holds a token. Any node accepts the cookie. The three checks leave no cross-site request for a token to stop (phase 7). |
 | Spam and mail auth | Rspamd over HTTP | As in owl, including its lessons (below). |
 | Config | JSON | As in owl. |
 | Passwords | Argon2id, PHC string | As in owl. |
-| Accounts and login | Built in. App passwords for IMAP and SMTP, TOTP for web login, optional OIDC login for the webmail (phase 7). No Keycloak or other identity service required | Mail clients log in with a password and do not speak OIDC, so robinmail needs its own accounts anyway. OIDC stays generic, so Keycloak, Authentik or Zitadel can be plugged in. |
+| Accounts and login | Built in. App passwords for IMAP, SMTP and JMAP with Basic auth, TOTP for web login, optional OIDC login for the webmail (phase 7). No Keycloak or other identity service required | Mail clients log in with a password and do not speak OIDC, so robinmail needs its own accounts anyway. OIDC stays generic, so Keycloak, Authentik or Zitadel can be plugged in. |
+| Auth code | JWT, JWK, PKCE, OIDC, TOTP and the QR code are our own, on the standard library (`internal/jose`, `internal/oidc`, `internal/totp`, `internal/qr`) | The dependency rule above. Each is small when it only does what robinmail needs: verify two signature algorithms, one flow, one kind of code. |
 
 Not in scope: POP3, CalDAV/CardDAV, migration tooling. Sieve, quotas and
 full-text search wait for phase 8; until then queries filter on indexed
@@ -63,8 +64,13 @@ Every mail table starts with `account_id`.
 | Table | Columns | Notes |
 |---|---|---|
 | `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
-| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers |
-| `session` | token_hash, account_id, expires_at | web login; the hash is SHA-256 of the token in the cookie |
+| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made |
+| `session` | token_hash, id, account_id, stage, method, created_at, seen_at, expires_at, idle, ip, seen_ip, agent, remember | web login; the hash is SHA-256 of the token in the cookie; `id` is what the user's list shows and revokes by; `stage` is `full`, or `totp` for a login that still owes its code; ends at `expires_at`, or `idle` seconds after `seen_at` |
+| `app_password` | id, name, hash, scope, created_at, used_at, used_ip | a password for one device; `hash` is SHA-256 of the 160 random bits the server made; `scope` lists `imap`, `smtp`, `jmap` (empty: all); revoking deletes the row |
+| `totp` | secret, created_at, confirmed_at, last_step | one row per account; the secret is sealed with the account's blob key; not asked for until confirmed; `last_step` is the newest time step a code was accepted for |
+| `recovery_code` | hash | SHA-256 of 80 random bits; using a code deletes its row |
+| `oidc_link` | provider, subject, linked_at | the `sub` under which a provider knew the account at its first login through it |
+| `auth_event` | id, at, account_id, address, event, ip, detail | the log of auth events; not per account (a failed login may name nobody); trimmed after `auth.audit_retention_days` |
 | `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq, subscribed | a rename changes `name` only |
 | `email` | id, blob, size, received_at, thread_id, message_id, sender, recipients, cc, bcc, subject, sent_at, preview, has_attachment, modseq | header fields cached for lists, filters and sorting |
 | `email_mailbox` | email_id, mailbox_id, uid | one row per label; the IMAP UID belongs to the row |
@@ -78,9 +84,9 @@ Every mail table starts with `account_id`.
 | `mta_sts` | domain, policy_id, mode, mx, fetched_at, expires_at | MTA-STS policies of other domains, cached for all nodes; not per account |
 | `acme` | key, value | ACME account and certificates, shared by nodes (not built yet) |
 | `node` | id, address, cert, started_at, seen_at | the robinmail nodes: where the others reach each, the SHA-256 of its certificate, its heartbeat |
-| `login_failure` | key, started, count | failed logins per address and per IP in a 15 minute window, for all nodes together |
+| `login_failure` | key, started, count | failures in a 15 minute window, for all nodes together: `a:` wrong passwords at the web login per address, `m:` wrong secrets from mail clients per address, `t:` wrong TOTP and recovery codes per address, `i:` all of them per IP |
 | `guard` | ok | always empty; how a batch checks a precondition (below) |
-| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3, 3 to 4, 4 to 5 and 5 to 6) |
+| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3, 3 to 4, 4 to 5, 5 to 6 and 6 to 7) |
 
 Rules:
 
@@ -139,7 +145,7 @@ Rules:
   deletion and uses `strong`. The login failure counters use `none` with a
   freshness bound of 5 seconds, so a login never waits for the leader.
   The poll that finds changes made on other nodes (`internal/notify`)
-  uses `none` too.
+  uses `none` too, for `modseq` and for `auth_seq`.
 - **Writes and retries.** When a leader dies mid-write rqlite cannot say
   whether the batch was applied. A batch is sent again only if a second run
   is harmless: a delivery (its `delivered` row refuses the second run as a
@@ -158,7 +164,7 @@ internal/tlsconf     TLS config, cert reload            port as is
 internal/config      JSON config                        port, new fields
 internal/smtp        ESMTP server and client, AUTH      port as is; client and AUTH new
 internal/rspamd      Rspamd client                      port as is
-internal/users       Argon2id hash and verify           port the hashing; storage moves to rqlite
+internal/users       Argon2id hash and verify; app passwords and recovery codes   port the hashing; storage moves to rqlite
 internal/delivery    recipient to mailbox; submission   port; talks to a store interface, mailbox by role
 internal/rqlite      rqlite HTTP client for a cluster   new
 internal/blob        encrypted blob files on disk, replicated between nodes   new
@@ -167,7 +173,11 @@ internal/clustertest tests against the Docker cluster   new; "make cluster-test"
 internal/store       schema and all mail operations     new, replaces owl's store
 internal/message     MIME to JMAP body structure, HTML view   new
 internal/jmap        JMAP core and mail, protocol only  new
-internal/web         HTTPS, login, sessions, static app new
+internal/web         HTTPS, login, sessions, settings, OIDC login, static app   new
+internal/totp        HOTP and TOTP (RFC 4226, RFC 6238), otpauth URI    new
+internal/qr          QR codes, as far as an otpauth URI needs them      new
+internal/jose        JWS compact, JWK, RS256 and ES256: verification    new
+internal/oidc        OpenID Connect relying party; oidctest is a provider for tests   new
 internal/queue       outbound delivery: MX, MTA-STS, retries, bounces   new
 internal/notify      who hears of a change: a hub per node, a poll for other nodes   new
 internal/imap        IMAP server, protocol only         new
@@ -177,7 +187,9 @@ Dockerfile           the binary with the webmail in an image
 contrib/rspamd       Rspamd config, DKIM signing        port as is; dkim_signing.conf new
 contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
                      cluster.yaml, cluster.sh: three rqlite and three robinmail nodes
-contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev
+                     keycloak.yaml: a Keycloak with a realm, for "make keycloak-test"
+contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev;
+                     e2e.sh and oidc-provider for the browser tests
 contrib/lab          the interoperability lab: Postfix, Exim, OpenSMTPD, IMAP clients, DNS, CA   new; "make lab-test"
 internal/labtest     tests against that lab             new
 ```
@@ -1444,7 +1456,7 @@ Built as follows:
     closes the web login for that time.
   - The limits on connections are per node.
 
-### Phase 7: auth
+### Phase 7: auth — done
 
 - App passwords: one per device, for IMAP and SMTP submission, revocable.
   The account password then only opens the webmail.
@@ -1454,6 +1466,298 @@ Built as follows:
 - Exit: Thunderbird logs in with an app password and not with the account
   password; web login asks for TOTP; a Keycloak container logs a user in
   through OIDC.
+
+Built as follows:
+
+- **The flaky shared login limit was a test, not the server.**
+  `TestIMAPAndJMAPOnTwoNodes` now and then timed out "waiting for node B
+  to refuse the login too". `TestLoginFailures` in `internal/store` runs
+  with a clock in 2027 and ended with `TrimLoginFailures` at that clock,
+  which deletes every counter that started before 2027: all live ones of
+  the database the test packages share. When that fell between the ten
+  wrong passwords on node A and the login on node B, node B found no
+  counter and let the login in, while node A still refused from its
+  memory. Reproduced by looping the store test next to the two-node
+  test. The server never trims a live window (`serve` trims at now minus
+  the window) and nothing else deletes a counter but a success. The
+  store test now trims at a time long past. The wrong trim had also
+  hidden that the two-node test leaves ten failures for 127.0.0.1 per
+  run, so the sixth run within fifteen minutes met the limit per IP; the
+  test harness now forgets the loopback counter when it starts a server.
+  The two-node test no longer waits for node B: the count is written
+  before node A answers the tenth failure.
+- **Which secret opens which door.**
+
+  | | web login | IMAP, SMTP submission, JMAP with Basic auth |
+  |---|---|---|
+  | account password | yes | only while the account has no app password and no TOTP, and `auth.require_app_passwords` is off |
+  | app password | no | yes, within its scope |
+  | TOTP or recovery code | second step | no |
+  | OIDC provider | yes | no |
+
+  The account password stops working for mail clients with the first app
+  password, so that it is typed into one place only, and with TOTP,
+  because a second factor that IMAP walks around is none. When the last
+  app password is revoked (and there is no TOTP) it works there again.
+- **App passwords** (`internal/users/secrets.go`, `app_password`). The
+  server makes them: 160 random bits, shown once as `abcd-efgh-...` (32
+  base32 characters in groups of four; dashes, spaces and capitals do not
+  matter). Stored as SHA-256, not Argon2id. Argon2id makes each guess at
+  a password a person chose expensive, because such a password is one of
+  perhaps a billion likely ones; against 2^160 equally likely values no
+  price per guess matters. And the cost would be ours: a mail client
+  logs in on several connections every few minutes, and Argon2id as
+  configured (64 MiB, about 0.1 s of four cores) on each of them would
+  be the largest cost of serving mail and an easy way to exhaust a node.
+  A SHA-256 and one indexed read cost microseconds. Each has a name, a
+  creation time, an optional scope (`imap`, `smtp`, `jmap`) and the time
+  and address of its last use, which is written at most once in ten
+  minutes per address (and logged as an auth event with it). At most 50
+  per account. Making one asks for the account password again.
+- **One door for mail clients** (`web.Server.MailLogin`), for IMAP, SMTP
+  AUTH and Basic auth. A secret that has the form of an app password is
+  only ever looked up as one, without Argon2id; any other is only ever
+  checked as the account password, with Argon2id, also when the account
+  does not exist or may not use its password there. So how long a
+  refusal takes depends on what was sent, not on whether the account
+  exists, has app passwords or has TOTP, and the answer is the same
+  "wrong name or password" in each case. (A password that happens to
+  have the form of an app password cannot be set.)
+- **Counters** (`login_failure`, shared by the nodes, with the node's
+  own in memory as fallback): wrong passwords at the web login per
+  address (`a:`, 10 in 15 minutes), wrong secrets from mail clients per
+  address (`m:`, 10), wrong codes per address (`t:`, 5), and all of them
+  per IP (`i:`, 50). A phone with a stale password closes IMAP for the
+  address, not the webmail. A success forgets the address's failures of
+  its own kind.
+- **TOTP** (`internal/totp`: HOTP of RFC 4226, TOTP of RFC 6238, SHA-1,
+  six digits, 30 seconds, which is what authenticator apps assume). The
+  secret is 160 random bits, sealed in the `totp` row with the account's
+  blob key, so a copy of the database without the master key does not
+  give it up. Enrolment answers with the secret as text, as `otpauth://`
+  URI and as a QR code, and counts only once a code was shown. A code is
+  accepted for the current step and one to either side (RFC 6238 5.2),
+  compared in constant time. Replay: accepting a code claims its time
+  step with `UPDATE totp SET last_step = step WHERE last_step < step`,
+  one statement that only one node can win, so a code, and every older
+  one, works once in the cluster. Ten recovery codes (80 random bits,
+  SHA-256, shown once); using one deletes its row, which also only one
+  request can do. Turning TOTP off and making new recovery codes take
+  the password and a code.
+- **The QR code is drawn by our own code** (`internal/qr`: byte mode,
+  level L, versions 1 to 10, Reed-Solomon, masks by penalty, format and
+  version information; about 300 lines). The alternative was to show the
+  secret as text only. An encoder for the one case we need is small, and
+  the secret then never passes through somebody else's library or a web
+  service. The server sends the modules as rows of 0 and 1 and the
+  webmail draws an SVG path, dark on white in either theme. It is
+  checked against jsQR, a decoder that shares no code with it: every
+  version in a Go test (through node, skipped without
+  `web/node_modules`) and the real enrolment page in the browser test.
+- **The login in two steps.** `POST /auth/login` with a right password
+  answers `{"step": "totp"}` for an account with TOTP and sets a second
+  cookie for a login that waits (a `session` row of stage `totp`, five
+  minutes); `POST /auth/login/totp` trades it, with a code or a recovery
+  code, for the session. The waiting login opens nothing, under either
+  cookie name. A wrong password gets the same answer with or without
+  TOTP, so nothing is learned about the account before the password was
+  right.
+- **Sessions.** Every login gets a new token and deletes the session the
+  browser came with, in the same batch (rotation): a token planted before
+  the login is worth nothing after it. Two lifetimes: 12 hours idle and
+  7 days at most, with a cookie that goes when the browser closes; with
+  "remember this device" 14 days idle, 30 days at most and a cookie that
+  stays. "Last seen" is written every five minutes and when the address
+  changes. The user's list shows device (from the User-Agent), addresses,
+  times and how the login was made; one session, or all others, can be
+  ended, and changing the password (which takes the current one) ends
+  all others.
+- **Cookies and cross-site requests, looked at again.** All three
+  cookies are `HttpOnly`, and on HTTPS `Secure` and `__Host-`. The
+  session cookie and the waiting login's are `SameSite=Strict`. Every
+  endpoint under `/auth` passes one guard (`web.Server.guard`): the
+  `Origin` and `Sec-Fetch-Site` check, and for everything that is not a
+  GET the content type `application/json`, body or not, which a page on
+  another site cannot send without a preflight this server never
+  answers. No endpoint changes state on GET. With that there is no
+  request left for a CSRF token to stop, so there is none; a test walks
+  every state-changing endpoint from another origin, with a form's
+  content types, and without a session. The exceptions are the two
+  endpoints of an OIDC login, below. Changes that would let a visitor
+  with a stolen session stay (a new app password, TOTP on or off, new
+  recovery codes, a new password) ask for the account password, with the
+  login limit on wrong ones; an account without a password needs a login
+  no older than 15 minutes instead.
+- **Revocation reaches open connections.** `account.auth_seq` moves when
+  a session or app password is revoked, a password changes or the first
+  app password is made. A second `notify.Hub` follows it the way the
+  first follows `modseq`: at once on the node that wrote, by a poll once
+  a second on the others, and only for accounts with listeners. An IMAP
+  session (`imap.Revocable`) then checks what it logged in with and, if
+  that is gone, says `* BYE this login was revoked` and closes, in IDLE,
+  between commands or after the command it is in. An event stream ends
+  when its session or app password is gone. Measured on two nodes on one
+  rqlite: BYE in IDLE on the other node 0.55 to 0.8 s after the revoke;
+  on the Docker cluster (three rqlite nodes) the event stream of another
+  node ended 0.35 and 0.6 s after. The memory of verified Basic
+  credentials is checked against the account on every use, so a changed
+  password ends it on every node at once (an open question since phase
+  3).
+- **OIDC** (`internal/oidc`, `internal/jose`, `internal/web/oidc.go`;
+  config `auth.oidc`, a list). Authorization code flow with PKCE (S256),
+  `state` and `nonce`, each 256 random bits. Discovery: the document's
+  `issuer` must be the configured one, endpoints must be https (http only
+  when the issuer is on loopback, for development), redirects are not
+  followed. The discovery document and the key set are kept for an hour;
+  a token that names an unknown key makes the set be fetched again, at
+  most once a minute, which is how a provider's key rotation is followed
+  without letting a stream of bad tokens become a stream of requests.
+  The ID token is validated by OpenID Connect Core 3.1.3.7 with our own
+  code: signature (RS256 or ES256) by a key of the provider, also though
+  the token came over TLS; `iss`; `aud` holds the client; `azp` required
+  with several audiences and equal to the client whenever present; `exp`
+  and `iat` with a minute of leeway, at most ten minutes old; `nbf`;
+  `nonce`; `sub`. `internal/jose` refuses `none`, every HMAC algorithm
+  (there is no HMAC in it, so no public key can be used as a secret),
+  every other algorithm, keys that do not fit the algorithm or say they
+  are for something else, a `crit` header, RSA keys under 2048 bits,
+  points off the curve.
+  - The flow's state lives in a ten-minute cookie, not on the server, so
+    any node takes the callback. It is the one `SameSite=Lax` cookie: it
+    has to come back with a navigation the provider started. The
+    callback is bound to the browser by it (`state` must be the
+    cookie's; the code is useless without the verifier), and answers
+    with a page that goes on by itself instead of a redirect, because a
+    browser does not send a Strict cookie along a redirect that another
+    site started.
+  - The configured claim (default `email`, and for that claim only with
+    `email_verified` true, unless `allow_unverified_email`) names an
+    existing account. No account is made unless the address's domain is
+    in the provider's `auto_provision_domains` and robinmail accepts
+    mail for it; such an account has no password. The provider's `sub`
+    is recorded at the first login and a later login for the account
+    under another `sub` is refused (`user oidc-unlink` forgets it): an
+    address that the provider gave to somebody else does not come with
+    the mailbox.
+  - After a provider's login robinmail's TOTP is not asked for: the
+    second factor is the provider's business. `require_totp` on the
+    provider turns that around. Mail clients cannot use a provider and
+    need an app password; the settings page says so.
+  - Failed callbacks count against the IP like failed logins.
+- **Webmail.** The login page has "remember this device", the second
+  step (code or recovery code, kept across a reload) and a button per
+  provider. `/settings/security`: password, app passwords (the secret
+  once, with the server settings beside it; last use; revoke), two-step
+  login (QR code, key as text, recovery codes once, new codes, off),
+  and the browsers that are logged in.
+- **Administration** (`cmd/robinmail/auth.go`): `user password` (reset;
+  ends the sessions), `user totp-disable` for somebody locked out, `user
+  app-passwords`, `user app-password-revoke`, `user sessions`, `user
+  session-revoke <id|all>`, `user oidc-unlink`, `audit [address|all]
+  [count]`. They write to the database, so they hold for every node, and
+  a running server acts on them through `auth_seq`.
+- **The log of auth events** (`auth_event`): logins at the web, failed
+  logins at every door with the reason, wrong codes, a recovery code
+  used, changes to passwords, app passwords, TOTP and sessions, refused
+  provider logins, accounts made by a first provider login, and what an
+  administrator did. No secret is in it. Successful logins of mail
+  clients are written with the app password's "last used", every ten
+  minutes at most; failed ones are bounded by the login limits. Kept for
+  `auth.audit_retention_days` (90) and trimmed with the rest.
+- **Tests.**
+  - From the RFCs: RFC 4226 appendix D and the truncated values; RFC
+    6238 appendix B for SHA-1, SHA-256 and SHA-512; RFC 7636 appendix B;
+    RFC 7515 A.2 (RS256) and A.3 (ES256) verify, A.1 (HMAC), A.4 (ES512),
+    A.5 (`none`) and appendix E (`crit`) are refused; RFC 7517 A.1 to
+    A.3; RFC 7520 4.1 verifies, 4.2 to 4.4 are refused. The vectors are
+    cut from the RFC texts (`internal/jose/testdata`). Key confusion
+    with the public key as DER, PEM and modulus; a fuzz test of the
+    token parser. ISO 18004 for the QR code: capacities, generator
+    polynomials, the Reed-Solomon example of annex I.
+  - `internal/oidc/oidctest` is a provider that shares no code with the
+    relying party and can sign with `none`, with HMAC under its public
+    key, with another key, and change any header or claim. 32 wrong ID
+    tokens are each refused; discovery, caching and rotation are checked
+    by counting its requests.
+  - `internal/web` runs against a store in memory, two servers on it as
+    two nodes: app passwords and their timing rule (no Argon2id), the
+    two-step login, replay and recovery codes, limits, sessions and
+    their lifetimes, the guard on every endpoint, the OIDC login and its
+    sixteen mappings, event streams ending with their login.
+  - `TestAuthEndToEnd` (`cmd/robinmail`): two `serve` on one database
+    with real IMAP, SMTP and HTTP, through to the admin commands and the
+    audit log. `TestOIDCLoginEndToEnd`: the server as configured against
+    the fake provider.
+  - `make cluster-test`, part g: three robinmail nodes on three rqlite
+    nodes. An app password made on node 1 works on nodes 2 and 3 at once;
+    revoking it, and a session, ends their event streams on other nodes;
+    a login's first step on node 2 and second on node 3; a code refused
+    the second time on node 1; five wrong codes, and ten wrong
+    passwords, on nodes 1 and 2 close node 3, which read the limit from its own rqlite follower at
+    the first try, 2 ms after the last failure was answered.
+  - `make lab-test`: mbsync and OfflineIMAP log in with the account
+    password until the account has an app password, are refused with it
+    afterwards, sync with the app password, and are refused once it is
+    revoked.
+  - `make e2e` (`web/e2e/auth.spec.ts`): app passwords, password change
+    and sessions with two browsers, two-step login set up by reading the
+    QR code off the page, and the login through a provider. For that
+    `contrib/dev/e2e.sh` starts `contrib/dev/oidc-provider`, the fake
+    provider on a fixed port.
+  - `make keycloak-test`: Keycloak 26.8.2 from
+    `contrib/compose/keycloak.yaml` with a realm that has the client and
+    two users; a browser logs in through it into the webmail, and a user
+    without a mailbox is turned away. Optional: the test skips itself
+    without the container. Both pass (2026-11-14).
+- **Threats this covers.** A password guessed or phished: TOTP. A
+  password stored in a mail client that leaks: it is an app password,
+  for one device, with a scope, revocable without touching the others,
+  and not a way into the webmail or the settings. Guessing: counters for
+  the cluster as a whole, per address and per IP, per kind of secret. A
+  stolen copy of the database: no password, token, app password or
+  recovery code is in it, only hashes, and the TOTP secrets are sealed
+  under the master key. A stolen session cookie: it cannot be read by
+  script, ends by itself, can be ended from the list, and cannot mint an
+  app password or turn TOTP off without the password. Cross-site
+  requests and session fixation: as above. A forged or replayed ID
+  token, an attacker's callback opened in the victim's browser, a code
+  that leaks, an address reassigned at the provider: as above. A
+  withdrawn login that stays open: ended within about a second on every
+  node.
+- **What it does not cover.**
+  - WebAuthn and passkeys. TOTP can be phished by a page that passes the
+    code on at once; a passkey cannot. Passkeys need the WebAuthn
+    ceremonies, attestation formats and CBOR/COSE, all on the standard
+    library: a phase of its own.
+  - OAUTHBEARER and XOAUTH2 (RFC 7628) for mail clients. A client that
+    could log in to IMAP with a token from the provider would need no app
+    password. It needs robinmail to validate access tokens of each
+    provider (introspection or JWT profiles differ) and clients that are
+    configured for the provider; Thunderbird only knows a fixed list.
+  - A lockout policy. Limits are per window and end by themselves:
+    nobody is locked out for good, and nobody is told. There is no rule
+    for password strength beyond eight characters, no check against
+    known leaked passwords, no forced change, no notice to the user
+    about a new login or a run of failures.
+  - A compromised node: it holds the master key and sees passwords and
+    codes as they come in.
+  - Somebody who knows a user's address can close that address's web
+    login, or IMAP, for fifteen minutes at a time with ten wrong
+    passwords. The counters per kind keep one door open when the other
+    is closed; the user's sessions and app password sessions that are
+    open stay open.
+  - Logging out at the provider: robinmail ends its own session, not the
+    provider's, and does not hear when the provider ends its session
+    (no front- or back-channel logout).
+  - The first exit line as written: Thunderbird itself was not driven.
+    Two other IMAP clients were (the lab), and the manual check below is
+    for Thunderbird and iOS Mail.
+- **By hand, with a real client**: add the account in Thunderbird with
+  the account password while it has no app password (works); make an app
+  password in the webmail; Thunderbird asks for a password at the next
+  check (the old one is refused, the open connections were closed with
+  BYE); enter the app password for IMAP and SMTP (works); revoke it in
+  the webmail and see Thunderbird ask again.
 
 ### Phase 8: completeness
 
@@ -1468,6 +1772,54 @@ Built as follows:
 
 ## Open questions
 
+- Passkeys (WebAuthn) are the second factor that cannot be phished, and
+  could replace the password. The work is the ceremonies, CBOR and COSE
+  on the standard library. Worth a phase?
+- OAUTHBEARER for mail clients would let a provider's users do without
+  app passwords, for the few clients that can be pointed at a provider
+  of one's own. Is there a client in use here that can?
+- The login limits end by themselves and tell nobody. Should a run of
+  failures, or a login from a new device, send the user a message? It is
+  a mail server: the message could simply be delivered to the account.
+- Ten wrong passwords close an address's web login for fifteen minutes
+  for everybody, also for its owner, and anybody can send them. A limit
+  per address and IP together, with a far higher one per address alone,
+  would keep the owner in at the price of more guesses for a botnet.
+- A node reads the failure counters from its own rqlite node's copy
+  (level `none`), which on a follower can be a moment behind. A login
+  with the right secret on a node that has not seen the last failures
+  yet is let in and clears the counter. With guesses at one node a time
+  nothing is lost; spread over nodes at once, the limit is the count
+  plus what arrives within that moment.
+- The account password works for mail clients again when the last app
+  password is revoked and there is no TOTP. Simple to explain, but an
+  account that once moved to app passwords could also stay there for
+  good; `auth.require_app_passwords` does that for everybody.
+- A provider login maps by the email claim and pins the provider's
+  subject at first use. An account that should move to another identity
+  at the provider needs `user oidc-unlink` by an administrator. Is that
+  the right owner of that decision, or should the user be able to do it
+  from a password login?
+- An account made by a provider login has no password and cannot get
+  one from the webmail; an administrator can set one (`user password`).
+  Nothing removes such an account when the provider stops knowing the
+  user.
+- The audit log is one table for all accounts and is only read from the
+  command line. Showing a user their own recent events in the settings
+  is a query away; an administrator's view over HTTP needs the notion of
+  an administrator first, which robinmail does not have.
+- robinmail does not log the user out at the provider and does not hear
+  when the provider ends a session (RP-initiated, front-channel and
+  back-channel logout are not built).
+- The second hub polls `auth_seq` once a second per node while accounts
+  have listeners: one more small read next to the one for `modseq`. One
+  query could read both.
+- TOTP uses SHA-1 because authenticator apps silently ignore the
+  `algorithm` parameter more often than they honour it. HMAC-SHA-1 is
+  not weakened by SHA-1's collisions, but SHA-256 would read better.
+- A code is refused once a newer one was used. Two authenticators of one
+  user whose clocks differ by a step can lose a login to that now and
+  then.
 - IMAP's `\Deleted` is the keyword `$deleted`, and the webmail shows mail
   that carries it like any other. Hide it in JMAP, show it struck
   through, or leave it: a client set to "just mark as deleted" leaves
@@ -1501,10 +1853,6 @@ Built as follows:
 - ImapTest is the Dovecot project's binary from a release tag that moves;
   the lab pins its checksum, and the build fails when the project
   replaces it. Its source does not build against a released Dovecot.
-- Failed logins from a mail client with a stale password count against
-  the same ten per address as the web login, and lock the user out of
-  the webmail for the window. App passwords (phase 7) want a counter of
-  their own.
 
 - Where the master key comes from in production: a file is all there is. A
   lost key file loses all mail, so it needs a backup that is not next to the
@@ -1558,8 +1906,6 @@ Built as follows:
 - `Email/query` sorts all matches of an account before it cuts the window,
   and `Mailbox/get` counts emails and threads on every call. Fine for
   thousands of messages; phase 4 should measure it with more.
-- The Basic auth memory is per node. A changed password keeps working
-  over Basic for up to five minutes on a node that remembered the old one.
 - The repair pass reads the blob list of every account and lists every
   blob directory on each node every five minutes. Fine for the 20,000
   emails of the cluster test; with millions it wants to work from the

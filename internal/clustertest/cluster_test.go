@@ -30,6 +30,7 @@ func TestCluster(t *testing.T) {
 	t.Run("d: read through a node that lacks the blob", func(t *testing.T) { readWithoutBlob(t, sessions) })
 	t.Run("e: throughput", func(t *testing.T) { throughput(t, sessions) })
 	t.Run("f: sending while a node that holds queue claims is killed", func(t *testing.T) { senderKilled(t, sessions) })
+	t.Run("g: logins, revocation and limits across the nodes", authAcrossNodes)
 }
 
 func report(t *testing.T, st *stream, d time.Duration) {

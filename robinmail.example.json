@@ -53,5 +53,10 @@
     "concurrency": 8,
     "per_destination": 2,
     "routes": {}
+  },
+  "auth": {
+    "require_app_passwords": false,
+    "audit_retention_days": 90,
+    "oidc": []
   }
 }
