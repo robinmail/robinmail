@@ -11,7 +11,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestStatementJSON(t *testing.T) {
@@ -49,6 +51,7 @@ func fake(t *testing.T, status int, reply string) (*Client, *http.Request, *stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.Wait = 200 * time.Millisecond
 	return c, &got, &body
 }
 
@@ -116,6 +119,7 @@ func TestErrors(t *testing.T) {
 	}
 
 	c, _ = New("http://user:secret@127.0.0.1:1", nil)
+	c.Wait = 200 * time.Millisecond
 	if _, err := c.Execute(ctx, Stmt("a")); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Errorf("unreachable: %v", err)
 	}
@@ -182,5 +186,207 @@ func TestReal(t *testing.T) {
 	}
 	if _, err := c.Query(ctx, Weak, Stmt(`SELECT * FROM `+table+`_nope`)); !errors.As(err, &e) || !strings.Contains(e.Message, "no such table") {
 		t.Errorf("missing table: %#v", err)
+	}
+}
+
+// node is a fake rqlite node whose behaviour a test sets per request.
+type node struct {
+	*httptest.Server
+	hits    atomic.Int64
+	handler atomic.Value // func(w, r)
+}
+
+func newNode(t *testing.T, h http.HandlerFunc) *node {
+	n := &node{}
+	n.handler.Store(h)
+	n.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n.hits.Add(1)
+		n.handler.Load().(http.HandlerFunc)(w, r)
+	}))
+	t.Cleanup(n.Close)
+	return n
+}
+
+func ok(w http.ResponseWriter, r *http.Request) {
+	io.Copy(io.Discard, r.Body)
+	io.WriteString(w, `{"results":[{"rows_affected":1}]}`)
+}
+
+func status(code int, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(code)
+		io.WriteString(w, body)
+	}
+}
+
+// hangUp reads the request and then drops the connection without an answer:
+// what a client sees when a node dies after it took the request.
+func hangUp(w http.ResponseWriter, r *http.Request) {
+	io.Copy(io.Discard, r.Body)
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err == nil {
+		conn.Close()
+	}
+}
+
+func cluster(t *testing.T, urls ...string) *Client {
+	t.Helper()
+	c, err := NewCluster(urls, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Wait = 2 * time.Second
+	return c
+}
+
+// A node that cannot be reached is skipped, and the client stays with the
+// node that answered.
+func TestFailoverToNextNode(t *testing.T) {
+	ctx := context.Background()
+	live := newNode(t, ok)
+	c := cluster(t, "http://127.0.0.1:1", live.URL)
+	for _, call := range []func() error{
+		func() error { _, err := c.Execute(ctx, Stmt("a")); return err },
+		func() error { _, err := c.ExecuteIdempotent(ctx, Stmt("a")); return err },
+		func() error { _, err := c.Query(ctx, Weak, Stmt("a")); return err },
+	} {
+		if err := call(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c.preferred() != 1 || live.hits.Load() != 3 {
+		t.Errorf("preferred node %d, %d requests on the live node", c.preferred(), live.hits.Load())
+	}
+}
+
+// A redirect to the leader is followed with the method and the body kept.
+func TestFollowsRedirect(t *testing.T) {
+	var method, body, auth string
+	leader := newNode(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		method, body = r.Method, string(b)
+		auth, _, _ = r.BasicAuth()
+		io.WriteString(w, `{"results":[{"rows_affected":1}]}`)
+	})
+	for _, code := range []int{301, 307} {
+		follower := newNode(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, leader.URL+r.URL.RequestURI(), code)
+		})
+		c := cluster(t, strings.Replace(follower.URL, "http://", "http://user:secret@", 1))
+		method, body = "", ""
+		if _, err := c.Execute(context.Background(), Stmt("INSERT")); err != nil {
+			t.Fatal(err)
+		}
+		if method != "POST" || body != `[["INSERT"]]` || auth != "user" {
+			t.Errorf("%d: the leader got %s %q, user %q", code, method, body, auth)
+		}
+	}
+	// A node that redirects to itself for ever is given up on.
+	var loop *node
+	loop = newNode(t, func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, loop.URL+"/db/request", 301) })
+	c := cluster(t, loop.URL)
+	c.Wait = 100 * time.Millisecond
+	if _, err := c.Execute(context.Background(), Stmt("a")); err == nil {
+		t.Error("a redirect loop ended without an error")
+	}
+}
+
+// The rule that keeps a write from being applied twice: after an answer
+// that does not say whether the batch was applied, Execute stops with
+// ErrUnknownOutcome and sends nothing more; ExecuteIdempotent and Query go
+// on to the next node.
+func TestUnknownOutcome(t *testing.T) {
+	ctx := context.Background()
+	for name, h := range map[string]http.HandlerFunc{
+		"connection dropped after the request": hangUp,
+		"leadership lost":                      status(200, `{"error":"leadership lost while committing log"}`),
+		"http 500":                             status(500, `boom`),
+		"http 503 without a reason":            status(503, `forwarding failed`),
+		"half an answer":                       status(200, `{"results":[{"rows_`),
+	} {
+		bad, good := newNode(t, h), newNode(t, ok)
+		c := cluster(t, bad.URL, good.URL)
+		_, err := c.Execute(ctx, Stmt("a"))
+		if !errors.Is(err, ErrUnknownOutcome) {
+			t.Errorf("%s: Execute err = %v, want ErrUnknownOutcome", name, err)
+		}
+		if good.hits.Load() != 0 || bad.hits.Load() != 1 {
+			t.Errorf("%s: Execute sent the batch %d more times", name, good.hits.Load()+bad.hits.Load()-1)
+		}
+		if _, err := c.ExecuteIdempotent(ctx, Stmt("a")); err != nil {
+			t.Errorf("%s: ExecuteIdempotent: %v", name, err)
+		}
+		c = cluster(t, bad.URL, good.URL)
+		if _, err := c.Query(ctx, Weak, Stmt("a")); err != nil {
+			t.Errorf("%s: Query: %v", name, err)
+		}
+	}
+}
+
+// "No leader right now" means nothing was applied, so every kind of call
+// waits for the election and goes through.
+func TestWaitsForLeader(t *testing.T) {
+	ctx := context.Background()
+	for name, h := range map[string]http.HandlerFunc{
+		"http 503":        status(503, "leader not found\n"),
+		"top-level error": status(200, `{"error":"not leader"}`),
+	} {
+		n := newNode(t, h)
+		c := cluster(t, n.URL)
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			n.handler.Store(http.HandlerFunc(ok))
+		}()
+		start := time.Now()
+		if _, err := c.Execute(ctx, Stmt("a")); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if n.hits.Load() < 2 || time.Since(start) < 100*time.Millisecond {
+			t.Errorf("%s: %d requests in %s", name, n.hits.Load(), time.Since(start))
+		}
+	}
+}
+
+// Retries back off and end: at Wait, or when the context does.
+func TestGivesUp(t *testing.T) {
+	n := newNode(t, status(503, "leader not found"))
+	c := cluster(t, n.URL, "http://127.0.0.1:1")
+	c.Wait = 400 * time.Millisecond
+	start := time.Now()
+	_, err := c.Query(context.Background(), Weak, Stmt("a"))
+	if err == nil || errors.Is(err, ErrUnknownOutcome) || time.Since(start) > 2*time.Second {
+		t.Errorf("err = %v after %s", err, time.Since(start))
+	}
+	// 50, 100, 200 ms of backoff fit in 400 ms: at most 4 rounds.
+	if h := n.hits.Load(); h < 2 || h > 4 {
+		t.Errorf("%d requests in %s: no backoff?", h, time.Since(start))
+	}
+
+	c.Wait = time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start = time.Now()
+	if _, err := c.Query(ctx, Weak, Stmt("a")); err == nil || time.Since(start) > time.Second {
+		t.Errorf("err = %v after %s", err, time.Since(start))
+	}
+}
+
+// A statement SQLite refused is an answer. It is not sent to another node.
+func TestStatementErrorIsFinal(t *testing.T) {
+	a := newNode(t, status(200, `{"results":[{"error":"UNIQUE constraint failed: t.a"}]}`))
+	b := newNode(t, ok)
+	c := cluster(t, a.URL, b.URL)
+	if _, err := c.ExecuteIdempotent(context.Background(), Stmt("a")); !IsUnique(err) {
+		t.Errorf("err = %v", err)
+	}
+	if b.hits.Load() != 0 {
+		t.Error("the batch went to a second node")
+	}
+	for _, code := range []int{400, 401} {
+		a.handler.Store(status(code, "no"))
+		if _, err := c.Query(context.Background(), Weak, Stmt("a")); err == nil || a.hits.Load() < 2 || b.hits.Load() != 0 {
+			t.Errorf("HTTP %d: err = %v, second node asked %d times", code, err, b.hits.Load())
+		}
 	}
 }
