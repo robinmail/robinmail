@@ -101,6 +101,15 @@ const maxGlobWork = 1 << 20
 // comparator does, and takes the matched parts from the original by their
 // offsets.
 func glob(pattern, value string) (spans [][2]int, ok bool) {
+	spans, ok, _ = globWork(pattern, value, maxGlobWork)
+	return spans, ok
+}
+
+// globWork is glob with a bound on the steps of the matcher, at most
+// maxGlobWork, and returns how many it took. A match that would take more
+// is no match.
+func globWork(pattern, value string, limit int) (spans [][2]int, ok bool, work int) {
+	limit = min(limit, maxGlobWork)
 	// The pattern as elements: literal runs, "?" and "*".
 	type elem struct {
 		kind byte // 'l', '?', '*'
@@ -133,14 +142,13 @@ func glob(pattern, value string) (spans [][2]int, ok bool) {
 	}
 	flush()
 
-	work := 0
 	spans = make([][2]int, 0, 4)
 	// match tries elems[e:] at value[pos:]. Each star first takes nothing
 	// and grows only when the rest does not fit: the shortest match.
 	var match func(e, pos int) bool
 	match = func(e, pos int) bool {
 		for e < len(elems) {
-			if work++; work > maxGlobWork {
+			if work++; work > limit {
 				return false
 			}
 			el := elems[e]
@@ -168,7 +176,7 @@ func glob(pattern, value string) (spans [][2]int, ok bool) {
 					if match(e+1, end) {
 						return true
 					}
-					if work > maxGlobWork || end == len(value) {
+					if work > limit || end == len(value) {
 						break
 					}
 					_, size := utf8.DecodeRuneInString(value[end:])
@@ -182,9 +190,9 @@ func glob(pattern, value string) (spans [][2]int, ok bool) {
 		return pos == len(value)
 	}
 	if !match(0, 0) {
-		return nil, false
+		return nil, false, work
 	}
-	return spans, true
+	return spans, true, work
 }
 
 // matcher is the match type and comparator of one test.
@@ -192,11 +200,28 @@ type matcher struct {
 	match      string
 	relation   string
 	comparator string
+	// spent, when set, is where the cost of every comparison is added, in
+	// the units of maxWork (run.go).
+	spent *int64
 }
+
+// globStepCost is what one step of the :matches matcher costs, in the
+// units of maxWork: about as much as comparing this many octets.
+const globStepCost = 16
+
+func (m matcher) charge(n int) {
+	if m.spent != nil {
+		*m.spent += int64(n)
+	}
+}
+
+// over reports whether the run has spent what it may.
+func (m matcher) over() bool { return m.spent != nil && *m.spent > maxWork }
 
 // one reports whether a value matches a key. For :matches it also returns
 // the match variables: the whole value, then what each wildcard matched.
 func (m matcher) one(value, key string) (bool, []string) {
+	m.charge(len(value) + len(key) + 1)
 	switch m.match {
 	case "is":
 		return compare(m.comparator, value, key) == 0, nil
@@ -210,7 +235,12 @@ func (m matcher) one(value, key string) (bool, []string) {
 		if m.comparator == "i;ascii-casemap" {
 			v, k = foldASCII(value), foldASCII(key)
 		}
-		spans, ok := glob(k, v)
+		limit := maxGlobWork
+		if m.spent != nil {
+			limit = int(max(maxWork-*m.spent, 0)/globStepCost) + 1
+		}
+		spans, ok, work := globWork(k, v, limit)
+		m.charge(work * globStepCost)
 		if !ok {
 			return false, nil
 		}
@@ -240,6 +270,9 @@ func (m matcher) any(values, keys []string) (bool, []string) {
 	}
 	for _, v := range values {
 		for _, k := range keys {
+			if m.over() {
+				return false, nil
+			}
 			if ok, vars := m.one(v, k); ok {
 				return true, vars
 			}

@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -10,10 +11,18 @@ import (
 
 // test evaluates one test.
 func (rt *runtime) test(t *test) (bool, error) {
+	ok, err := rt.eval(t)
+	if err == nil && rt.work > maxWork {
+		return false, fmt.Errorf("line %d: the script compared more text than it may for one message", t.line)
+	}
+	return ok, err
+}
+
+func (rt *runtime) eval(t *test) (bool, error) {
 	if err := rt.step(t.line); err != nil {
 		return false, err
 	}
-	m := matcher{match: t.match, relation: t.relation, comparator: t.comparator}
+	m := matcher{match: t.match, relation: t.relation, comparator: t.comparator, spent: &rt.work}
 	keys := func() []string { return rt.xs(t.keys) }
 	// done sets the match variables after a :matches that held (RFC 5229
 	// 3.2), and passes the answer on.
@@ -145,6 +154,7 @@ func (rt *runtime) test(t *test) (bool, error) {
 // fields returns the raw values of the header fields with a name; with an
 // index only the n-th of them, counted from the end with last (RFC 5260 6).
 func (rt *runtime) fields(name string, index int64, last bool) []string {
+	rt.work += int64(len(rt.hdr)) * 8 // every field's name is compared
 	all := message.All(rt.hdr, strings.TrimSpace(name))
 	if index == 0 {
 		return all
@@ -185,9 +195,16 @@ func addressPart(addr, part string) (string, bool) {
 // bodies are the values a body test looks at (RFC 5173 5): the body as it
 // was sent (:raw), the text of the text parts (:text), or the decoded
 // content of the parts of the named types (:content).
-func (rt *runtime) bodies(t *test) []string {
+func (rt *runtime) bodies(t *test) (out []string) {
+	// Making the text costs as it is long, whatever is compared with it.
+	defer func() {
+		for _, s := range out {
+			rt.work += int64(len(s))
+		}
+	}()
 	if t.transform == "raw" {
 		raw := rt.env.Raw
+		rt.work += int64(len(raw)) // it is gone through and copied
 		// The body starts after the empty line that ends the header.
 		for _, sep := range []string{"\r\n\r\n", "\n\n"} {
 			if i := strings.Index(string(raw[:min(len(raw), message.MaxHeaderBytes)]), sep); i >= 0 {
@@ -199,11 +216,11 @@ func (rt *runtime) bodies(t *test) []string {
 	if rt.msg == nil {
 		rt.msg = message.Parse(rt.env.Raw)
 	}
-	var out []string
 	for _, leaf := range rt.msg.Leaves {
 		isText := strings.HasPrefix(leaf.Type, "text/")
 		if t.transform == "text" {
 			if isText {
+				rt.work += int64(leaf.Size) // decoding it
 				out = append(out, message.PartText(leaf, maxBodyValue))
 			}
 			continue
@@ -216,6 +233,7 @@ func (rt *runtime) bodies(t *test) []string {
 			if want != "" && (wt != typ || (both && ws != sub)) {
 				continue
 			}
+			rt.work += int64(leaf.Size) // decoding it
 			if isText {
 				text, _ := leaf.Text()
 				out = append(out, cut(text, maxBodyValue))

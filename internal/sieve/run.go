@@ -18,6 +18,15 @@ const (
 	MaxRedirects = 4
 	// maxOps is how many commands and tests one run may execute.
 	maxOps = 20000
+	// maxWork is how much comparing one run may do, in octets looked at:
+	// every value and key of every comparison, the header fields gone
+	// through for a name, the body text made for a body test, and the
+	// steps of a :matches (globStepCost each). maxOps bounds how many
+	// commands and tests run; this bounds what they cost, which for a
+	// test with lists of names and keys against a message with many
+	// fields is otherwise the product of all of them. A script within
+	// reason spends a thousandth of it.
+	maxWork = 256 << 20
 	// maxVariables and maxVariableSize bound the variables of a run
 	// (RFC 5229 6 asks for at least 128 and 4000 octets).
 	maxVariables    = 256
@@ -112,6 +121,7 @@ type runtime struct {
 	hdr     []message.Header
 	msg     *message.Message
 	ops     int
+	work    int64 // spent of maxWork
 	vars    map[string]string
 	matches []string
 	flags   []string // the internal flags variable of RFC 5232
