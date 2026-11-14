@@ -14,6 +14,7 @@ import (
 
 	"github.com/mikepage/robinmail/internal/delivery"
 	"github.com/mikepage/robinmail/internal/jmap"
+	"github.com/mikepage/robinmail/internal/notify"
 	"github.com/mikepage/robinmail/internal/queue"
 	"github.com/mikepage/robinmail/internal/rspamd"
 	"github.com/mikepage/robinmail/internal/smtp"
@@ -109,13 +110,20 @@ func (a *app) serve(stop func()) error {
 	}
 	log.Info("smtp listening", "addr", l.Addr().String(), "starttls", tc != nil, "domains", len(domains))
 
+	// Change notifications: writes through this node's store wake its
+	// listeners at once, a poll finds the writes of other nodes.
+	hub := &notify.Hub{States: a.store.ModSeqs, Logger: log}
+	a.store.OnChange = hub.Changed
+	go hub.Run(a.ctx)
+
 	// The web side: HTTPS for real use, plain HTTP on localhost for
 	// development and tests. Both serve the same handler.
 	site := &web.Server{
 		Hostname:   a.cfg.Hostname,
 		Accounts:   a.store,
 		Limits:     a.store,
-		JMAP:       &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store)},
+		JMAP: &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store),
+			Push: hub, Closing: a.ctx.Done()},
 		Static:     webStatic,
 		DevOrigins: a.cfg.Web.DevOrigins,
 		Logger:     log,

@@ -485,7 +485,8 @@ func TestHandlerRouting(t *testing.T) {
 		{"GET", "/jmap/nothing", 404},
 		{"POST", "/jmap/upload/someone-else/", 404},
 		{"GET", "/jmap/upload/a1b2c3/", 405},
-		{"GET", "/jmap/eventsource/?types=*", 501},
+		{"GET", "/jmap/eventsource/?types=*&closeafter=no&ping=0", 501}, // no notifier: push is off
+		{"POST", "/jmap/eventsource/", 405},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, nil)
 		req = req.WithContext(WithUser(req.Context(), testUser))

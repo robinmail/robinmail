@@ -9,7 +9,8 @@
 // /query, /queryChanges, /set, /import, /copy and /parse, Identity/get,
 // /changes and /set, EmailSubmission/get, /changes, /query, /queryChanges
 // and /set, blob upload and download, and a sanitised HTML view of an email
-// that is not part of JMAP. SearchSnippet and push are not here yet.
+// that is not part of JMAP, and push over an event source (push.go).
+// SearchSnippet and PushSubscription are not here.
 package jmap
 
 import (
@@ -38,6 +39,8 @@ const (
 type Store interface {
 	State(ctx context.Context, account string) (int64, error)
 	ChangesOf(ctx context.Context, account, typ string, since int64, max int) (store.ChangeSet, int64, bool, error)
+	// Changes is every type's changes since a state, for push.
+	Changes(ctx context.Context, account string, since int64) (store.Changes, error)
 
 	Mailboxes(ctx context.Context, account string) ([]store.Mailbox, error)
 	NewMailbox(ctx context.Context, account string, n store.NewMailbox) (store.Mailbox, error)
@@ -158,6 +161,15 @@ type Handler struct {
 	Hostname string
 	// Now is the clock (time.Now when nil).
 	Now func() time.Time
+	// Push tells when an account changed; with it the event source of RFC
+	// 8620 7.3 is served. nil answers 501 there.
+	Push Notifier
+	// MinPing is the shortest ping interval an event source gets
+	// (DefaultMinPing when 0).
+	MinPing time.Duration
+	// Closing, when it is closed, ends the open event sources: the server
+	// is stopping.
+	Closing <-chan struct{}
 
 	once     sync.Once
 	mux      *http.ServeMux
@@ -165,6 +177,7 @@ type Handler struct {
 	mu       sync.Mutex
 	inFlight map[string]int // account id -> API requests being processed
 	uploads  map[string]int // account id -> uploads being received
+	streams  map[string]int // account id -> event sources open
 }
 
 func (h *Handler) init() {
@@ -185,6 +198,7 @@ func (h *Handler) init() {
 		}
 		h.inFlight = map[string]int{}
 		h.uploads = map[string]int{}
+		h.streams = map[string]int{}
 		h.mux = http.NewServeMux()
 		h.mux.HandleFunc("GET /.well-known/jmap", h.serveSession)
 		h.mux.HandleFunc("GET /jmap/session", h.serveSession)
@@ -193,7 +207,7 @@ func (h *Handler) init() {
 		h.mux.HandleFunc("GET /jmap/view/{accountId}/{emailId}", h.serveView)
 		h.mux.HandleFunc("POST /jmap/upload/{accountId}/{$}", h.serveUpload)
 		h.mux.HandleFunc("POST /jmap/upload/{accountId}", h.serveUpload)
-		h.mux.HandleFunc("/jmap/eventsource/", h.serveNotYet)
+		h.mux.HandleFunc("GET /jmap/eventsource/{$}", h.serveEventSource)
 	})
 }
 
@@ -296,12 +310,6 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 		"eventSourceUrl":  base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
 		"state":           h.sessionState(u),
 	})
-}
-
-// serveNotYet answers the endpoint the session has to name (RFC 8620 2)
-// but that a later phase builds: push.
-func (h *Handler) serveNotYet(w http.ResponseWriter, r *http.Request) {
-	problem(w, http.StatusNotImplemented, "about:blank", "this server does not have push yet", nil)
 }
 
 // State strings are the account's modseq in decimal.
