@@ -18,6 +18,10 @@
 #   docker compose -f contrib/compose/compose.yaml up -d
 #   ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 make test
 #
+# The test that sends mail between two servers (cmd/robinmail) also wants
+# ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003, the second database of that
+# compose file.
+#
 # Development (make dev): contrib/dev/seed.sh makes an instance in ./dev
 # with the user dev@robinmail.test (password in that script) and some mail.
 # The Go server listens on http://127.0.0.1:8080 and Vite on

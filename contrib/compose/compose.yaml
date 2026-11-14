@@ -11,6 +11,11 @@
 # Without the first variable the tests that need rqlite are skipped; without
 # the second, or when Rspamd does not answer, the end-to-end test of "serve"
 # in cmd/robinmail is.
+#
+# rqlite-b is a second, separate database: two robinmail servers that send
+# each other mail cannot share one. The tests that need it want
+#   ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003
+# and contrib/dev/send-demo.sh uses it for its second instance.
 name: robinmail
 
 services:
@@ -18,6 +23,11 @@ services:
     image: rqlite/rqlite:10.7.1
     ports:
       - "127.0.0.1:4001:4001"
+
+  rqlite-b:
+    image: rqlite/rqlite:10.7.1
+    ports:
+      - "127.0.0.1:4003:4001"
 
   # Rspamd runs without Redis, so greylisting, rate limits and Bayes are off.
   # It does look up DNS blocklists, so a scan can take a few seconds.
