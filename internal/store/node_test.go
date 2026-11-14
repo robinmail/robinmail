@@ -131,11 +131,27 @@ func TestLoginFailures(t *testing.T) {
 	wantErr(t, "AddLoginFailure", s.AddLoginFailure(ctx, window, ip), nil)
 	want(t, "new window", read(), map[string]LoginFailure{ip: {Count: 1, Started: now}})
 
-	n, err := s.TrimLoginFailures(ctx, time.Unix(1_800_000_000-1, 0))
-	want(t, "trim before any", []any{n >= 0, err}, []any{true, nil})
-	_, err = s.TrimLoginFailures(ctx, now)
+	// Trimming removes ended windows only. The table is shared with every
+	// other test that runs against this database, and with their servers,
+	// so the trim here is at a time long past: a trim at this test's clock,
+	// which is ahead of the real one, once removed the live counters of
+	// the two-node login test in cmd/robinmail, and its node B then let
+	// the eleventh login in.
+	old, past := randomID("a:"), time.Unix(1_000_000_000, 0)
+	t.Cleanup(func() { s.ClearLoginFailures(ctx, old) })
+	future := now
+	now = past
+	wantErr(t, "AddLoginFailure", s.AddLoginFailure(ctx, window, old), nil)
+	_, err := s.TrimLoginFailures(ctx, past.Add(-time.Second))
 	wantErr(t, "TrimLoginFailures", err, nil)
-	want(t, "after trimming", len(read()), 0)
+	m, err = s.LoginFailures(ctx, window, old)
+	want(t, "a window that started after the cut stays", []any{m[old].Count, err}, []any{1, nil})
+	_, err = s.TrimLoginFailures(ctx, past)
+	wantErr(t, "TrimLoginFailures", err, nil)
+	m, err = s.LoginFailures(ctx, window, old)
+	want(t, "trimmed", []any{len(m), err}, []any{0, nil})
+	now = future
+	want(t, "a later window is not trimmed", read(), map[string]LoginFailure{ip: {Count: 1, Started: now}})
 }
 
 // VerifyBlob accepts the file a delivery wrote and nothing else.

@@ -23,6 +23,7 @@ type server struct {
 // startServe runs serve on a free port with the given extra config.
 func startServe(t *testing.T, c *cli) *server {
 	t.Helper()
+	forgetLoopbackFailures(t)
 	listening := make(chan net.Addr, 1)
 	onListen = func(a net.Addr) { listening <- a }
 	webAddr := make(chan net.Addr, 1)
@@ -292,5 +293,27 @@ func TestServeRspamdDown(t *testing.T) {
 				t.Errorf("serve returned %v", err)
 			}
 		})
+	}
+}
+
+// forgetLoopbackFailures removes the shared counter of failed logins from
+// 127.0.0.1 in the test databases. Every test logs in from that address
+// and the databases outlive a run: the tests that try wrong passwords
+// would, a few runs within fifteen minutes later, have locked all of them
+// out (50 failures per IP).
+func forgetLoopbackFailures(t *testing.T) {
+	t.Helper()
+	for _, env := range []string{"ROBINMAIL_TEST_RQLITE", "ROBINMAIL_TEST_RQLITE_B"} {
+		base := os.Getenv(env)
+		if base == "" {
+			continue
+		}
+		resp, err := http.Post(base+"/db/execute", "application/json",
+			strings.NewReader(`["DELETE FROM login_failure WHERE key IN ('i:127.0.0.1', 'i:::1')"]`))
+		if err != nil {
+			t.Logf("forgetting loopback login failures: %v", err)
+			continue
+		}
+		resp.Body.Close()
 	}
 }
