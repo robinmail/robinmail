@@ -15,6 +15,7 @@
 #   10.77.25.2   dns         CoreDNS
 #   10.77.25.3   web         nginx: https://mta-sts.<domain>/ and the gate
 #   10.77.25.4   rqlite      robinmail's database
+#   10.77.25.5   jmapsuite   Fastmail's JMAP-TestSuite, only with "lab.sh suite"
 #   10.77.25.10  robinmail   mx.robin.test      robin.test
 #   10.77.25.11  postfix     mx.postfix.test    postfix.test, late.postfix.test
 #   10.77.25.12  exim        mx.exim.test       exim.test, late.exim.test
@@ -136,6 +137,19 @@ services:
       LAB_TLS: "no"
     volumes: *mounts
     networks: {lab: {ipv4_address: 10.77.25.15}}
+
+  # Fastmail's JMAP-TestSuite against the lab's robinmail. Not started by
+  # "up": "lab.sh suite" builds and runs it.
+  jmapsuite:
+    profiles: [suite]
+    image: robinmail-lab-jmapsuite
+    build: ./jmapsuite
+    depends_on: [robinmail]
+    volumes:
+      - ./secrets:/lab/secrets:ro
+      - ./dns/resolv.conf:/etc/resolv.conf:ro
+      - ./robinmail/robinmail.json:/lab/robinmail.json:ro
+    networks: {lab: {ipv4_address: 10.77.25.5}}
 
 networks:
   lab:

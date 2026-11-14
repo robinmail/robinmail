@@ -6,6 +6,8 @@
 #                          robin.test with the users alice and bob
 #   lab.sh down            stop and remove the containers and their volumes
 #   lab.sh versions        what runs: robinmail's peers and their versions
+#   lab.sh suite [files]   Fastmail's JMAP-TestSuite against the lab's
+#                          robinmail (arguments go to prove; default "-r t")
 #   lab.sh ps|logs|exec .. passed on to docker compose
 #
 # The users' password is for this lab only; ROBINMAIL_LAB_PASSWORD sets
@@ -29,9 +31,15 @@ versions() {
 
 case "${1:-}" in
 up) ;;
-down) exec $COMPOSE down --volumes --remove-orphans ;;
+down) exec $COMPOSE --profile suite down --volumes --remove-orphans ;;
+suite)
+	# Fastmail's JMAP-TestSuite, in a container of its own inside the lab.
+	shift
+	$COMPOSE --profile suite build jmapsuite
+	exec $COMPOSE --profile suite run --rm -T jmapsuite "$@"
+	;;
 versions) versions; exit ;;
-"") echo "usage: lab.sh up | down | versions | <docker compose arguments>" >&2; exit 2 ;;
+"") echo "usage: lab.sh up | down | versions | suite [prove arguments] | <docker compose arguments>" >&2; exit 2 ;;
 *) exec $COMPOSE "$@" ;;
 esac
 
@@ -60,8 +68,7 @@ done
 # Every peer answers on port 25.
 for p in postfix exim opensmtpd badtls notls; do
 	i=0
-	until $COMPOSE exec -T "$p" sh -c 'exec 3<>/dev/tcp/127.0.0.1/25' 2>/dev/null \
-		|| $COMPOSE exec -T "$p" sh -c 'command -v bash >/dev/null && bash -c "exec 3<>/dev/tcp/127.0.0.1/25"' 2>/dev/null; do
+	until $COMPOSE exec -T "$p" bash -c 'exec 3<>/dev/tcp/127.0.0.1/25' 2>/dev/null; do
 		i=$((i + 1))
 		if [ $i -gt 60 ]; then
 			echo "$p did not come up:" >&2

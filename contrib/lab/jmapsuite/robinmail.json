@@ -1,0 +1,6 @@
+{
+  "adapter"     : "Robinmail",
+  "base_uri"    : "https://mx.robin.test",
+  "config"      : "/lab/robinmail.json",
+  "test_domain" : "robin.test"
+}

@@ -1,0 +1,189 @@
+# contrib/lab/lab.sh suite -r t   (JMAP-TestSuite 2fa1934, robinmail at the commit of this file)
+# 173 files: 159 ok (49 of them skip inside: capabilities robinmail does not offer), 4 skipped (no account pair), 10 failed
+t/AddressBook/changes/basic.t ................................................ ok
+t/AddressBook/foreign-account.t .............................................. ok
+t/AddressBook/get/basic.t .................................................... ok
+t/AddressBook/set/create.t ................................................... ok
+t/AddressBook/set/destroy.t .................................................. ok
+t/AddressBook/set/on-destroy-remove-contacts.t ............................... ok
+t/AddressBook/set/on-success-set-is-default.t ................................ ok
+t/AddressBook/set/update.t ................................................... ok
+t/Blob/convert/basic.t ....................................................... ok
+t/Blob/copy/basic.t .......................................................... skipped: test requires implementation of pool_account_pair
+t/Blob/foreign-account.t ..................................................... ok
+t/Blob/get/basic.t ........................................................... ok
+t/Blob/get/chunks.t .......................................................... ok
+t/Blob/lookup/basic.t ........................................................ ok
+t/Blob/set/basic.t ........................................................... ok
+t/Blob/upload/basic.t ........................................................ ok
+t/Calendar/changes/basic.t ................................................... ok
+t/Calendar/foreign-account.t ................................................. ok
+t/Calendar/get/an-entity.t ................................................... ok
+t/Calendar/get/no-ids.t ...................................................... ok
+t/Calendar/set/create.t ...................................................... ok
+t/Calendar/set/destroy.t ..................................................... ok
+t/Calendar/set/update.t ...................................................... ok
+t/CalendarEvent/changes/basic.t .............................................. ok
+t/CalendarEvent/copy/basic.t ................................................. skipped: test requires implementation of pool_account_pair
+t/CalendarEvent/foreign-account.t ............................................ ok
+t/CalendarEvent/get/basic.t .................................................. ok
+t/CalendarEvent/query/basic.t ................................................ ok
+t/CalendarEvent/query/expand-recurrences.t ................................... ok
+t/CalendarEvent/queryChanges/basic.t ......................................... ok
+t/CalendarEvent/set/create.t ................................................. ok
+t/CalendarEvent/set/destroy.t ................................................ ok
+t/CalendarEvent/set/update.t ................................................. ok
+t/ContactCard/changes/basic.t ................................................ ok
+t/ContactCard/copy/basic.t ................................................... skipped: test requires implementation of pool_account_pair
+t/ContactCard/foreign-account.t .............................................. ok
+t/ContactCard/get/basic.t .................................................... ok
+t/ContactCard/query/basic.t .................................................. ok
+t/ContactCard/queryChanges/basic.t ........................................... ok
+t/ContactCard/set/create.t ................................................... ok
+t/ContactCard/set/destroy.t .................................................. ok
+t/ContactCard/set/update.t ................................................... ok
+t/Email/changes/cannot-calculate-changes.t ................................... ok
+t/Email/changes/changes.t .................................................... ok
+t/Email/changes/max-changes-has-more-changes.t ............................... ok
+t/Email/changes/no-changes.t ................................................. ok
+t/Email/copy/basic.t ......................................................... skipped: test requires implementation of pool_account_pair
+t/Email/foreign-account.t .................................................... ok
+t/Email/get/attachments.t .................................................... ok
+t/Email/get/body-properties.t ................................................ ok
+t/Email/get/body-structure-and-attachments.t ................................. ok
+t/Email/get/fetch-all-body-values.t .......................................... ok
+t/Email/get/fetch-html-body-values.t ......................................... ok
+t/Email/get/fetch-text-body-values.t ......................................... ok
+t/Email/get/has-attachment.t ................................................. ok
+t/Email/get/header-header-field-name.t ....................................... ok
+t/Email/get/html-body.t ...................................................... ok
+t/Email/get/max-body-value-bytes.t ........................................... ok
+t/Email/get/no-ids.t ......................................................... ok
+t/Email/get/properties.t ..................................................... ok
+t/Email/get/text-body.t ...................................................... ok
+t/Email/import/bad-values.t .................................................. ok
+t/Email/import/download-after-import.t ....................................... ok
+t/Email/import/good-imports.t ................................................ ok
+t/Email/import/invalid-email.t ............................................... ok
+t/Email/import/one-fails-another-succeeds.t .................................. ok
+t/Email/query/no-existing-entities.t ......................................... ok
+t/Email/query/sorting.t ...................................................... ok
+t/Email/set/create/attachments-using-blob-id.t ............................... ok
+t/Email/set/create/attachments.t ............................................. ok
+t/Email/set/create/blob-not-found.t .......................................... ok
+t/Email/set/create/body-structure-cannot-duplicate-headers-from-email.t ...... ok
+t/Email/set/create/body-structure-subparts.t ................................. ok
+t/Email/set/create/body-structure.t .......................................... ok
+t/Email/set/create/cannot-have-blobid-and-partid.t ........................... ok
+t/Email/set/create/content-transfer-encoding-not-allowed.t ................... ok
+t/Email/set/create/created-response-required-properties.t .................... ok
+t/Email/set/create/email-body-part-must-be-present.t ......................... ok
+t/Email/set/create/email-body-value-restrictions.t ........................... ok
+t/Email/set/create/empty-set-fields-are-null.t ............................... ok
+t/Email/set/create/headers-property-forbidden-in-body-structure.t ............ ok
+t/Email/set/create/headers-property-forbidden.t .............................. ok
+t/Email/set/create/html-body-using-blob-id.t ................................. ok
+t/Email/set/create/html-body.t ............................................... ok
+t/Email/set/create/minimum-properties-required.t ............................. ok
+t/Email/set/create/no-charset-with-partid.t .................................. ok
+t/Email/set/create/no-content-headers-top-level.t ............................ ok
+t/Email/set/create/no-date-server-provides-one.t ............................. ok
+t/Email/set/create/no-duplicate-header-representations.t ..................... ok
+t/Email/set/create/no-message-id-server-provides-one.t ....................... ok
+t/Email/set/create/no-size-with-partid.t ..................................... ok
+t/Email/set/create/only-one-part-in-html-body.t .............................. ok
+t/Email/set/create/only-one-part-in-text-body.t .............................. ok
+t/Email/set/create/size-with-blob-id-must-match.t ............................ ok
+t/Email/set/create/text-body-using-blob-id.t ................................. ok
+t/Email/set/create/text-body.t ............................................... ok
+t/Email/set/destroy/all-mailboxes.t .......................................... ok
+t/Email/set/if-in-state.t .................................................... ok
+t/Email/set/nonexistent-id.t ................................................. ok
+t/Email/set/update/email-keywords.t .......................................... ok
+t/Email/set/update/keyword-set-clear.t ....................................... ok
+t/Email/set/update/one-folder-to-another.t ................................... ok
+t/EmailSubmission/changes/basic.t ............................................ ok
+t/EmailSubmission/foreign-account.t .......................................... ok
+t/EmailSubmission/get/basic.t ................................................ ok
+t/EmailSubmission/query/basic.t .............................................. ok
+t/Identity/changes/basic.t ................................................... ok
+t/Identity/foreign-account.t ................................................. ok
+t/Identity/get/basic.t ....................................................... ok
+t/Identity/set/basic.t ....................................................... ok
+t/MDN/foreign-account.t ...................................................... ok
+t/MDN/parse/basic.t .......................................................... ok
+t/Mailbox/changes/cannot-calculate-changes.t ................................. ok
+t/Mailbox/changes/container-state-tracking.t ................................. ok
+t/Mailbox/changes/max-changes-has-more-changes.t ............................. ok
+t/Mailbox/changes/no-changes.t ............................................... ok
+t/Mailbox/changes/with-changes.t ............................................. ok
+t/Mailbox/foreign-account.t .................................................. ok
+t/Mailbox/get/no-existing-entities.t ......................................... ok
+t/Mailbox/query/filtering-with-filter-conditions.t ........................... ok
+t/Mailbox/query/no-existing-entities.t ....................................... ok
+t/Mailbox/queryChanges/basic.t ............................................... ok
+t/Mailbox/set/create/all-settable-fields-provided.t .......................... ok
+t/Mailbox/set/create/defaults-omitted.t ...................................... ok
+t/Mailbox/set/create/empty-set-fields-are-null.t ............................. ok
+t/Mailbox/set/create/immutable-fields.t ...................................... ok
+t/Mailbox/set/create/missing-required-fields.t ............................... ok
+t/Mailbox/set/destroy/empty-set-fields-are-null.t ............................ ok
+t/Mailbox/set/destroy/good-destroy-no-messages.t ............................. ok
+t/Mailbox/set/destroy/mailbox-has-child-error.t .............................. ok
+t/Mailbox/set/destroy/mailbox-has-email-error.t .............................. ok
+t/Mailbox/set/destroy/on-destroy-remove-messages-true-mail-in-other-boxes.t .. ok
+t/Mailbox/set/destroy/on-destroy-remove-messages-true-mail-only-here.t ....... ok
+t/Mailbox/set/if-in-state.t .................................................. ok
+t/Mailbox/set/nonexistent-id.t ............................................... ok
+t/Mailbox/set/update/basic.t ................................................. ok
+t/Principal/foreign-account.t ................................................ ok
+t/Principal/get/basic.t ...................................................... ok
+t/Principal/getAvailability/basic.t .......................................... ok
+t/Quota/foreign-account.t .................................................... ok
+t/Quota/get/basic.t .......................................................... ok
+t/Quota/query/basic.t ........................................................ ok
+t/SearchSnippet/foreign-account.t ............................................ ok
+t/Thread/changes/changes.t ................................................... ok
+t/Thread/changes/max-changes-has-more-changes.t .............................. ok
+t/Thread/changes/no-changes.t ................................................ ok
+t/Thread/foreign-account.t ................................................... ok
+t/Thread/get/empty-list.t .................................................... ok
+t/Thread/get/few-messages.t .................................................. ok
+t/Thread/get/unknown-ids.t ................................................... ok
+t/VacationResponse/foreign-account.t ......................................... ok
+t/VacationResponse/get/basic.t ............................................... ok
+t/VacationResponse/set/basic.t ............................................... ok
+t/basic.t .................................................................... ok
+t/core/accountId-required.t .................................................. ok
+t/core/backrefs-simple.t ..................................................... ok
+t/core/create-and-reference-in-one-request.t ................................. ok
+t/core/download.t ............................................................ ok
+t/core/jmap-session-resource.t ............................................... ok
+t/core/upload.t .............................................................. ok
+t/getMessageUpdates-sinceState.t ............................................. ok
+t/getMessages-htmlBody.t ..................................................... ok
+t/previews.t ................................................................. ok
+Test Summary Report
+-------------------
+t/Email/query/filtering.t                                                  (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/Email/queryChanges/simple.t                                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/Email/set/create/header-header-field-name.t                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/Email/set/create/no-duplicate-structural-representations.t               (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/Mailbox/changes/changed-properties.t                                     (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/Mailbox/get/limiting-properties-in-response.t                            (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/Mailbox/get/some-entities.t                                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/Mailbox/query/filtering-with-filter-operators.t                          (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/Mailbox/query/sorting-and-limiting.t                                     (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+t/SearchSnippet/get/basic.t                                                (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+Files=173, Tests=169, 73 wallclock secs ( 0.19 usr  0.15 sys + 63.88 cusr  5.97 csys = 70.19 CPU)
+Result: FAIL
+
+# skipped inside, by capability:
+   3 SKIP server does not support urn:ietf:params:jmap:blob
+   3 SKIP server does not support urn:ietf:params:jmap:blob2
+  16 SKIP server does not support urn:ietf:params:jmap:calendars
+  16 SKIP server does not support urn:ietf:params:jmap:contacts
+   2 SKIP server does not support urn:ietf:params:jmap:mdn
+   3 SKIP server does not support urn:ietf:params:jmap:principals
+   3 SKIP server does not support urn:ietf:params:jmap:quota
+   3 SKIP server does not support urn:ietf:params:jmap:vacationresponse
