@@ -16,6 +16,7 @@ import (
 	"github.com/mikepage/robinmail/internal/imap"
 	"github.com/mikepage/robinmail/internal/jmap"
 	"github.com/mikepage/robinmail/internal/notify"
+	"github.com/mikepage/robinmail/internal/oidc"
 	"github.com/mikepage/robinmail/internal/queue"
 	"github.com/mikepage/robinmail/internal/rspamd"
 	"github.com/mikepage/robinmail/internal/smtp"
@@ -143,6 +144,12 @@ func (a *app) serve(stop func()) error {
 		WithUser: func(ctx context.Context, accountID, username string) context.Context {
 			return jmap.WithUser(ctx, jmap.User{AccountID: accountID, Username: username})
 		},
+	}
+	for _, c := range a.cfg.Auth.OIDC {
+		site.OIDC = append(site.OIDC, &web.OIDCProvider{Name: c.Name, Label: c.Label, Claim: c.Claim,
+			AllowUnverified: c.AllowUnverifiedEmail, RequireTOTP: c.RequireTOTP, AutoProvisionDomains: c.AutoProvisionDomains,
+			Client: oidc.New(oidc.Config{Issuer: c.Issuer, ClientID: c.ClientID, ClientSecret: c.ClientSecret, Scopes: c.Scopes})})
+		log.Info("oidc provider", "name", c.Name, "issuer", c.Issuer, "claim", c.Claim, "auto_provision", len(c.AutoProvisionDomains) > 0)
 	}
 	var webServers []*http.Server
 	webErr := make(chan error, 3)

@@ -250,7 +250,14 @@ func (s *Server) Handler() http.Handler {
 	auth("GET /auth/sessions", s.authed(s.sessions))
 	auth("DELETE /auth/sessions/{id}", s.authed(s.revokeSession))
 	auth("POST /auth/sessions/revoke-others", s.authed(s.revokeOtherSessions))
-	s.oidcRoutes(mux)
+	// The two of an OIDC login have their own checks (oidc.go).
+	for pattern, h := range map[string]http.HandlerFunc{
+		"GET /auth/oidc/{name}/start": s.oidcStart, "GET /auth/oidc/{name}/callback": s.oidcCallback,
+	} {
+		method, path, _ := strings.Cut(pattern, " ")
+		allowed[path] = append(allowed[path], method)
+		mux.HandleFunc(pattern, h)
+	}
 	mux.HandleFunc("/auth/", func(w http.ResponseWriter, r *http.Request) {
 		// What arrives here matched no endpoint with its method.
 		for pattern, methods := range allowed {

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,8 @@ type fakeAccounts struct {
 	totp     map[string]*store.TOTP    // by account id
 	recovery map[string]map[string]bool
 	events   []store.AuthEvent
+	domains  map[string]bool   // accepted domains
+	links    map[string]string // account/provider -> subject
 	now      func() time.Time
 	writes   int // sessions touched and app passwords noted as used
 }
@@ -34,7 +37,8 @@ type fakeApp struct {
 
 func newFakeAccounts(now func() time.Time, accounts ...store.Account) *fakeAccounts {
 	f := &fakeAccounts{now: now, accounts: map[string]*store.Account{}, sessions: map[string]*store.Session{},
-		apps: map[string][]fakeApp{}, totp: map[string]*store.TOTP{}, recovery: map[string]map[string]bool{}}
+		apps: map[string][]fakeApp{}, totp: map[string]*store.TOTP{}, recovery: map[string]map[string]bool{},
+		domains: map[string]bool{"example.test": true}}
 	for _, a := range accounts {
 		f.accounts[a.ID] = &a
 	}
@@ -346,4 +350,36 @@ func (f *fakeAccounts) eventsOf(event string) []store.AuthEvent {
 		}
 	}
 	return out
+}
+
+// CreateAccount makes an account if the address is in an accepted domain.
+func (f *fakeAccounts) CreateAccount(_ context.Context, address, hash string) (store.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	domain := address[strings.LastIndexByte(address, '@')+1:]
+	if !f.domains[domain] {
+		return store.Account{}, store.ErrNoDomain
+	}
+	for _, a := range f.accounts {
+		if a.Address == address {
+			return store.Account{}, store.ErrAccountExists
+		}
+	}
+	a := &store.Account{ID: "acct-" + address, Address: address, PasswordHash: hash, CreatedAt: f.now()}
+	f.accounts[a.ID] = a
+	return *a, nil
+}
+
+func (f *fakeAccounts) LinkOIDC(_ context.Context, account, provider, subject string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.links == nil {
+		f.links = map[string]string{}
+	}
+	key := account + "/" + provider
+	if had, ok := f.links[key]; ok && had != subject {
+		return store.ErrOIDCSubject
+	}
+	f.links[key] = subject
+	return nil
 }

@@ -207,3 +207,67 @@ func TestDev(t *testing.T) {
 		t.Errorf("the lab's config: %+v, %v", c, err)
 	}
 }
+
+// The auth section: defaults, and what an OIDC provider must have.
+func TestAuth(t *testing.T) {
+	const base = `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://x:4001"}`
+	c, err := load(t, base+`}`)
+	if err != nil || c.Auth.RequireAppPasswords || c.Auth.AuditRetentionDays != 90 || len(c.Auth.OIDC) != 0 {
+		t.Fatalf("defaults: %+v %v", c, err)
+	}
+	c, err = load(t, base+`,"auth":{"require_app_passwords":true,"audit_retention_days":7,"oidc":[
+		{"name":"kc","issuer":"https://id.example.org/realms/mail","client_id":"robinmail","client_secret":"s3cret"},
+		{"name":"dev","label":"Dev login","issuer":"http://127.0.0.1:8180/realms/robinmail","client_id":"robinmail",
+		 "scopes":["openid","email","profile"],"claim":"preferred_username","require_totp":true,"auto_provision_domains":["Example.Test"]}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc, dev := c.Auth.OIDC[0], c.Auth.OIDC[1]
+	if !c.Auth.RequireAppPasswords || c.Auth.AuditRetentionDays != 7 || kc.Label != "kc" || kc.Claim != "email" ||
+		strings.Join(kc.Scopes, " ") != "openid email" || kc.ClientSecret != "s3cret" || kc.RequireTOTP || kc.AllowUnverifiedEmail ||
+		dev.Label != "Dev login" || dev.Claim != "preferred_username" || len(dev.Scopes) != 3 || !dev.RequireTOTP ||
+		dev.AutoProvisionDomains[0] != "example.test" {
+		t.Errorf("auth: %+v", c.Auth)
+	}
+
+	// The client secret from a file next to the config, first line.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "kc.secret"), []byte("from-the-file\nsecond line\n"), 0o600)
+	path := filepath.Join(dir, "robinmail.json")
+	os.WriteFile(path, []byte(base+`,"auth":{"oidc":[{"name":"kc","issuer":"https://id.example.org","client_id":"x","client_secret_file":"kc.secret"}]}}`), 0o600)
+	if c, err := Load(path); err != nil || c.Auth.OIDC[0].ClientSecret != "from-the-file" {
+		t.Errorf("client_secret_file: %+v %v", c, err)
+	}
+
+	provider := func(members string) string {
+		return base + `,"auth":{"oidc":[{` + members + `}]}}`
+	}
+	const ok = `"name":"kc","issuer":"https://id.example.org","client_id":"x"`
+	for name, body := range map[string]string{
+		"no name":                         provider(`"issuer":"https://id.example.org","client_id":"x"`),
+		"a name with a slash":             provider(`"name":"a/b","issuer":"https://id.example.org","client_id":"x"`),
+		"a name in capitals":              provider(`"name":"KC","issuer":"https://id.example.org","client_id":"x"`),
+		"no issuer":                       provider(`"name":"kc","client_id":"x"`),
+		"an http issuer":                  provider(`"name":"kc","issuer":"http://id.example.org","client_id":"x"`),
+		"an issuer with a query":          provider(`"name":"kc","issuer":"https://id.example.org/?realm=a","client_id":"x"`),
+		"no client id":                    provider(`"name":"kc","issuer":"https://id.example.org"`),
+		"scopes without openid":           provider(ok + `,"scopes":["email"]`),
+		"a scope with a space":            provider(ok + `,"scopes":["openid","e mail"]`),
+		"secret and secret file":          provider(ok + `,"client_secret":"a","client_secret_file":"b"`),
+		"a secret file that is not there": provider(ok + `,"client_secret_file":"nothing-here"`),
+		"a domain that is none":           provider(ok + `,"auto_provision_domains":["not a domain"]`),
+		"the same name twice":             base + `,"auth":{"oidc":[{` + ok + `},{` + ok + `}]}}`,
+		"negative retention":              base + `,"auth":{"audit_retention_days":-1}}`,
+		"an unknown member":               provider(ok + `,"client_secert":"typo"`),
+	} {
+		if _, err := load(t, body); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// http is for a provider on this machine, in development.
+	for _, issuer := range []string{"http://127.0.0.1:8180/realms/x", "http://localhost:8180", "http://[::1]:8180"} {
+		if _, err := load(t, provider(`"name":"kc","issuer":"`+issuer+`","client_id":"x"`)); err != nil {
+			t.Errorf("%s: %v", issuer, err)
+		}
+	}
+}
