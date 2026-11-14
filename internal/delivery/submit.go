@@ -265,6 +265,17 @@ func (s *Submitter) Submit(ctx context.Context, o Outgoing) (store.Submission, e
 
 	raw := normalizeLines(o.Raw)
 	fields, rest := splitHeader(raw)
+	// The addresses a reader sees must be the ones checked below. Two From
+	// or Sender fields (RFC 5322 3.6: at most one of each) leave it to the
+	// reader's program which one that is, and so does a header that ends,
+	// for us, at a line another program still reads as a field, such as
+	// the obsolete "From : ..." (RFC 5322 4.5.2).
+	if len(rest) > 0 && !bytes.HasPrefix(rest, []byte("\r\n")) {
+		return none, &Refusal{Kind: RefuseInvalid, Msg: "the header has a line that is not a header field"}
+	}
+	if countFields(fields, "From") > 1 || countFields(fields, "Sender") > 1 {
+		return none, &Refusal{Kind: RefuseInvalid, Msg: "the message has more than one From or Sender field"}
+	}
 	// The From field, and Sender if there is one, name the user: RFC 6409
 	// 6.1 lets a submission server enforce that, and without it any user
 	// could write mail in the name of another.

@@ -244,6 +244,19 @@ func TestSubmitRefusals(t *testing.T) {
 			Raw: []byte("From: mike@example.test, boss@example.test\r\n\r\nx\r\n")}, RefuseFrom},
 		{"Sender of someone else", Outgoing{From: "mike@example.test", Rcpts: ok,
 			Raw: []byte("From: mike@example.test\r\nSender: boss@example.test\r\n\r\nx\r\n")}, RefuseFrom},
+		// The check must see the From a reader sees: with two, programs
+		// disagree about which that is.
+		{"two From fields, the first someone else's", Outgoing{From: "mike@example.test", Rcpts: ok,
+			Raw: []byte("From: The Boss <boss@example.test>\r\nFrom: mike@example.test\r\n\r\nx\r\n")}, RefuseInvalid},
+		{"two From fields, the last someone else's", Outgoing{From: "mike@example.test", Rcpts: ok,
+			Raw: []byte("From: mike@example.test\r\nfrom: boss@example.test\r\n\r\nx\r\n")}, RefuseInvalid},
+		{"two Sender fields", Outgoing{From: "mike@example.test", Rcpts: ok,
+			Raw: []byte("From: mike@example.test\r\nSender: boss@example.test\r\nSender: mike@example.test\r\n\r\nx\r\n")}, RefuseInvalid},
+		// A line that is no header field ends the header for us, and not
+		// for a program that takes the obsolete "From :" (RFC 5322 4.5).
+		{"a From field behind a line that ends our header", Outgoing{From: "mike@example.test", Rcpts: ok,
+			Raw: []byte("From: mike@example.test\r\nFrom : boss@example.test\r\nSubject: x\r\n\r\nx\r\n")}, RefuseInvalid},
+		{"a header without a body", Outgoing{From: "mike@example.test", Rcpts: ok, Raw: []byte("From: mike@example.test\r\nSubject: x\r\n")}, ""},
 		{"no From", Outgoing{From: "mike@example.test", Rcpts: ok, Raw: []byte("Subject: x\r\n\r\nx\r\n")}, RefuseInvalid},
 		{"From without an address", Outgoing{From: "mike@example.test", Rcpts: ok, Raw: []byte("From: undisclosed:;\r\n\r\nx\r\n")}, RefuseInvalid},
 		{"no recipients", Outgoing{From: "mike@example.test", Raw: draft("")}, RefuseNoRecipients},
