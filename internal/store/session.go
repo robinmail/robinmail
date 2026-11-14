@@ -17,7 +17,7 @@ func (s *Store) AccountByID(ctx context.Context, id string) (Account, error) {
 	if len(res[0].Values) == 0 {
 		return Account{}, ErrNoAccount
 	}
-	return scanAccount(res[0].Values[0]), nil
+	return s.scanAccount(res[0].Values[0]), nil
 }
 
 // Stages of a session.
@@ -103,7 +103,7 @@ func (s *Store) SessionByToken(ctx context.Context, tokenHash string) (Session, 
 	if len(res[0].Values) == 0 || len(res[1].Values) == 0 {
 		return Session{}, Account{}, ErrNoSession
 	}
-	return scanSession(res[0].Values[0]), scanAccount(res[1].Values[0]), nil
+	return scanSession(res[0].Values[0]), s.scanAccount(res[1].Values[0]), nil
 }
 
 // SessionAccount returns the account of a complete login, or ErrNoSession

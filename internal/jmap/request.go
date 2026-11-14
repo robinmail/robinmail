@@ -118,6 +118,11 @@ func init() {
 		"EmailSubmission/queryChanges": {CapSubmission, submissionQueryChanges},
 		"EmailSubmission/set":          {CapSubmission, submissionSet},
 
+		"Quota/get":          {CapQuota, quotaGet},
+		"Quota/changes":      {CapQuota, quotaChanges},
+		"Quota/query":        {CapQuota, quotaQuery},
+		"Quota/queryChanges": {CapQuota, quotaQueryChanges},
+
 		"VacationResponse/get": {CapVacation, vacationGet},
 		"VacationResponse/set": {CapVacation, vacationSet},
 

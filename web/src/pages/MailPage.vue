@@ -233,6 +233,7 @@ const shortcuts = [
         @click="compose.compose()"
       />
       <MailboxNav v-if="store.state.ready" />
+      <QuotaMeter v-if="store.state.ready" class="mt-auto pt-4" />
       <div v-else class="flex flex-col gap-2 px-1" aria-busy="true">
         <USkeleton v-for="n in 5" :key="n" class="h-7 w-full" />
       </div>

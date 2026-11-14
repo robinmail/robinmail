@@ -35,7 +35,20 @@ type Config struct {
 	Outbound      Outbound   `json:"outbound"`
 	IMAP          IMAP       `json:"imap"`
 	Auth          Auth       `json:"auth"`
+	Quota         Quota      `json:"quota"`
 	Dev           Dev        `json:"dev"`
+}
+
+// Quota holds the limits of accounts that have none of their own ("user
+// quota" sets those). Every node of a cluster needs the same values: the
+// limit is checked by the node that stores a message.
+type Quota struct {
+	// DefaultBytes is how many octets of mail an account may hold; 0 is
+	// no limit. [0]
+	DefaultBytes int64 `json:"default_bytes"`
+	// DefaultMessages is how many messages an account may hold; 0 is no
+	// limit. [0]
+	DefaultMessages int64 `json:"default_messages"`
 }
 
 // Auth configures logins. Accounts, app passwords and TOTP need no
@@ -354,6 +367,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.IMAP.MaxConnections < 0 || c.IMAP.MaxConnectionsPerIP < 0 || c.IMAP.MaxConnectionsPerUser < 0 {
 		return nil, errors.New(path + ": limits cannot be negative")
+	}
+	if c.Quota.DefaultBytes < 0 || c.Quota.DefaultMessages < 0 {
+		return nil, errors.New(path + ": quota: limits cannot be negative")
 	}
 	if c.Outbound.Concurrency < 0 || c.Outbound.PerDestination < 0 || c.Dev.RetrySeconds < 0 {
 		return nil, errors.New(path + ": limits cannot be negative")

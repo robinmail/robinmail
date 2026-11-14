@@ -153,6 +153,7 @@ export async function smtpDeliver(from: string, to: string, message: string): Pr
     let buffer = ''
     let last = ''
     let step = -1
+    let refused = false
     socket.setEncoding('utf8')
     socket.setTimeout(15_000, () => socket.destroy(new Error('SMTP timed out')))
     socket.on('error', reject)
@@ -165,8 +166,10 @@ export async function smtpDeliver(from: string, to: string, message: string): Pr
         if (!m) return
         buffer = buffer.slice(m[0].length)
         const code = Number(m[1])
+        if (refused) return // the answer to our QUIT
         if (step >= 0 && steps[step] !== 'QUIT') last = m[0].trim().split('\n').pop()!.trim()
         if (code >= 400 && steps[step] !== 'QUIT') {
+          refused = true
           socket.end('QUIT\r\n')
           return
         }

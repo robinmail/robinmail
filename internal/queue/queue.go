@@ -864,7 +864,9 @@ func (w *Worker) bounce(ctx context.Context, sub store.Submission, msg []byte, f
 	dsn = append([]byte("Return-Path: <>\r\n"), dsn...)
 	// The key makes a second run of the same attempt store nothing.
 	key := "dsn:" + store.SubmissionID(sub.ID) + ":" + hex.EncodeToString(h.Sum(nil)[:12])
-	_, err := w.Store.Deliver(context.WithoutCancel(ctx), sub.Account, store.Message{Raw: dsn, Key: key, ReceivedAt: now})
+	// A full mailbox still gets it: the notification is the only word the
+	// sender gets about the message.
+	_, err := w.Store.Deliver(context.WithoutCancel(ctx), sub.Account, store.Message{Raw: dsn, Key: key, ReceivedAt: now, IgnoreQuota: true})
 	if errors.Is(err, store.ErrDuplicate) {
 		return nil
 	}

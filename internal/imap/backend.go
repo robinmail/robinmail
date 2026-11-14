@@ -26,6 +26,8 @@ var (
 	ErrFlag = errors.New("imap: invalid flag")
 	// ErrNoMessage is a message that is gone.
 	ErrNoMessage = errors.New("imap: no such message")
+	// ErrOverQuota is a message the account has no room for.
+	ErrOverQuota = errors.New("imap: over quota")
 	// ErrTooLarge is a message over the size limit.
 	ErrTooLarge = errors.New("imap: message too large")
 	// ErrLoop is a mailbox moved under itself.

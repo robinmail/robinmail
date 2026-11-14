@@ -97,6 +97,7 @@ func imapErr(err error) error {
 		{store.ErrNoMailbox, imap.ErrNoMailbox}, {store.ErrMailboxExists, imap.ErrExists}, {store.ErrMailboxName, imap.ErrName},
 		{store.ErrMailboxHasChild, imap.ErrHasChildren}, {store.ErrMailboxRole, imap.ErrSpecial}, {store.ErrMailboxLoop, imap.ErrLoop},
 		{store.ErrKeyword, imap.ErrFlag}, {store.ErrNoEmail, imap.ErrNoMessage}, {store.ErrNoBlob, imap.ErrNoMessage},
+		{store.ErrOverQuota, imap.ErrOverQuota},
 	} {
 		if errors.Is(err, m.from) {
 			return m.to
@@ -185,6 +186,15 @@ func (u *imapUser) Summaries(ctx context.Context, ids []int64) (map[int64]imap.S
 		out[e.ID] = s
 	}
 	return out, nil
+}
+
+// Quota makes imapUser an imap.QuotaUser: GETQUOTA and GETQUOTAROOT.
+func (u *imapUser) Quota(ctx context.Context) (imap.Quota, error) {
+	q, err := u.b.st.Quota(ctx, u.acct.ID)
+	if err != nil {
+		return imap.Quota{}, imapErr(err)
+	}
+	return imap.Quota{StorageUsed: q.UsedBytes, StorageLimit: q.Bytes, MessageUsed: q.UsedMessages, MessageLimit: q.Messages}, nil
 }
 
 // SearchText makes imapUser an imap.TextSearcher: SEARCH BODY and TEXT are

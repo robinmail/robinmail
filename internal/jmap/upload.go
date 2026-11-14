@@ -1,9 +1,12 @@
 package jmap
 
 import (
+	"errors"
 	"io"
 	"mime"
 	"net/http"
+
+	"github.com/mikepage/robinmail/internal/store"
 )
 
 // serveUpload is the upload endpoint (RFC 8620 6.1): the body of the POST
@@ -52,6 +55,12 @@ func (h *Handler) serveUpload(w http.ResponseWriter, r *http.Request) {
 		typ = mt
 	}
 	blobID, err := h.Store.Upload(r.Context(), u.AccountID, data, typ)
+	if errors.Is(err, store.ErrOverQuota) {
+		// RFC 8620 6.1 names no status for this; 507 is HTTP's for "the
+		// server is unable to store the representation" (RFC 4918 11.5).
+		problem(w, http.StatusInsufficientStorage, "about:blank", "the account is full", nil)
+		return
+	}
 	if err != nil {
 		problem(w, http.StatusInternalServerError, "about:blank", "the server could not store the upload", nil)
 		return

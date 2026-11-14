@@ -85,6 +85,10 @@ type Store struct {
 	keys   sync.Map // account id -> []byte, the unwrapped blob key
 	// systems holds the ids of the system accounts known to exist.
 	systems sync.Map
+	// DefaultQuota are the limits of accounts that have none of their
+	// own; zero is no limit. Set it before the store is used, and to the
+	// same on every node.
+	DefaultQuota Limits
 	// Now is the clock, replaceable in tests.
 	Now func() time.Time
 	// OnChange, when set, is called with the account after every write that
@@ -279,6 +283,8 @@ func (b *batch) change(typ, sel string, kv ...any) {
 //	AddLoginFailure        not again: it counts
 //	CreateSieveScript, UpdateSieveScript, ActivateSieveScript,
 //	DestroySieveScript     not again: counters, modseq, and guards
+//	SetQuota               not again: modseq
+//	RecountQuota           again: sets the counters to what the emails say
 //	SetVacationResponse    not again: modseq, and the ifInState guard
 //	VacationOnce           not again: its answer is whether this run took
 //	                       the turn; a second run would say no

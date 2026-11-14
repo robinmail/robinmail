@@ -670,6 +670,11 @@ func (s *Store) Upload(ctx context.Context, account string, data []byte, typ str
 	b := s.newBatch(account)
 	b.idempotent() // sets one row to given values
 	b.guardAccount()
+	// An upload is not counted, it goes by itself after a day; but an
+	// account that has no room for these octets as an Email cannot
+	// upload them. The limit on the number of messages does not apply:
+	// an upload is no message, and may be a Sieve script.
+	b.guard(ErrOverQuota, sqlQuotaRoomBytes, "qbytes", s.DefaultQuota.Bytes, "size", len(data))
 	b.add(`INSERT OR REPLACE INTO upload (account_id, blob, size, type, created_at) VALUES (:a, :blob, :size, :type, :now)`,
 		"blob", blobID, "size", len(data), "type", typ)
 	if _, err := s.run(ctx, b); err != nil {

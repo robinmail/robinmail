@@ -7,7 +7,7 @@ import { reactive } from 'vue'
 import type { Batch, Call, JmapClient } from '../jmap/client'
 import { HttpError, isMethodError } from '../jmap/client'
 import { adjustCounts, applyPatch, applyQueryChanges, type EmailPatch } from '../jmap/sync'
-import type { Email, EmailQueryArgs, Filter, Id, Mailbox, ResultReference, SearchSnippet, SetError, Thread } from '../jmap/types'
+import type { Email, EmailQueryArgs, Filter, Id, Mailbox, Quota, ResultReference, SearchSnippet, SetError, Thread } from '../jmap/types'
 
 export const PAGE = 30
 
@@ -70,6 +70,8 @@ export class MailStore {
     emails: {} as Record<Id, Email>,
     threads: {} as Record<Id, Thread>,
     list: { key: '', spec: null, ids: [], total: 0, queryState: '', snippets: {}, loading: false, loadingMore: false, error: '' } as ListState,
+    // The limits of the account and how full it is; empty without limits.
+    quota: [] as Quota[],
     // The server did not answer the last refresh.
     offline: false,
   })
@@ -106,6 +108,7 @@ export class MailStore {
     s.mailboxes = {}
     s.emails = {}
     s.threads = {}
+    s.quota = []
     s.list = { key: '', spec: null, ids: [], total: 0, queryState: '', snippets: {}, loading: false, loadingMore: false, error: '' }
     s.offline = false
     this.client.reset()
@@ -120,8 +123,11 @@ export class MailStore {
     const m = b.call('Mailbox/get', { ids: null })
     const e = b.call('Email/get', { ids: [], properties: ['id'] })
     const t = b.call('Thread/get', { ids: [] })
+    const quota = b.call('Quota/get', { ids: null })
     const r = await b.send()
     const s = this.state
+    // A server without quotas answers with an error: then there are none.
+    s.quota = r.error(quota) ? [] : r.get(quota).list
     this.setMailboxes(r.get(m).list)
     this.client.setState('Mailbox', r.get(m).state)
     this.client.setState('Email', r.get(e).state)
@@ -355,6 +361,8 @@ export class MailStore {
       qc = b.call('Email/queryChanges', { ...queryArgs(list.spec), sinceQueryState: list.queryState, calculateTotal: true })
       chain = this.threadChain(b, qc.ref('/added/*/id'))
     }
+    // How full the account is moves with the mail: two small objects.
+    const quota = b.call('Quota/get', { ids: null })
     const r = await b.send()
     if (epoch !== this.epoch) return false // from before a local change; the action refreshes when it is done
 
@@ -368,6 +376,7 @@ export class MailStore {
       }
     }
 
+    if (!r.error(quota)) state.quota = r.get(quota).list
     const mr = r.get(mc)
     for (const m of [...r.get(mCreated).list, ...r.get(mUpdated).list]) state.mailboxes[m.id] = m
     for (const id of mr.destroyed) delete state.mailboxes[id]

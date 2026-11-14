@@ -19,13 +19,16 @@ import (
 // fakeStore keeps what was delivered, per account and role, and honours
 // delivery keys like the real store.
 type fakeStore struct {
-	accounts    map[string]string // address -> account id
-	noJunk      bool              // accounts have no Junk mailbox
-	failFor     string            // account id whose deliveries fail
-	lookups     error             // fails every Account call
-	keys        map[string]bool
-	mail        map[string][]string // account id + "/" + role -> messages
-	domains     []string
+	accounts map[string]string // address -> account id
+	noJunk   bool              // accounts have no Junk mailbox
+	failFor  string            // account id whose deliveries fail
+	lookups  error             // fails every Account call
+	keys     map[string]bool
+	mail     map[string][]string // account id + "/" + role -> messages
+	domains  []string
+	// quota are the limits and use of accounts, by id; an account
+	// without an entry has no limit.
+	quota       map[string]store.Quota
 	noDomains   error // fails every Domains call
 	domainCalls int
 }
@@ -46,7 +49,7 @@ func (f *fakeStore) Account(_ context.Context, addr string) (store.Account, erro
 	if !ok {
 		return store.Account{}, store.ErrNoAccount
 	}
-	return store.Account{ID: id, Address: addr}, nil
+	return store.Account{ID: id, Address: addr, Quota: f.quota[id]}, nil
 }
 
 func (f *fakeStore) Deliver(_ context.Context, account string, m store.Message) (store.Email, error) {
@@ -58,6 +61,14 @@ func (f *fakeStore) Deliver(_ context.Context, account string, m store.Message) 
 	}
 	if f.keys[account+m.Key] {
 		return store.Email{}, store.ErrDuplicate
+	}
+	if q, ok := f.quota[account]; ok && !m.IgnoreQuota {
+		if fits, _ := q.Room(int64(len(m.Raw))); !fits {
+			return store.Email{}, store.ErrOverQuota
+		}
+		q.UsedBytes += int64(len(m.Raw))
+		q.UsedMessages++
+		f.quota[account] = q
 	}
 	f.keys[account+m.Key] = true
 	role := m.Role

@@ -40,6 +40,14 @@ var (
 	errOnlyDSN   = &smtp.Error{Code: 550, Enhanced: "5.7.1", Msg: "This address only takes delivery status notifications"}
 	errSpamFwd   = &smtp.Error{Code: 550, Enhanced: "5.7.1", Msg: "Message looks like spam and is not forwarded"}
 	errNoForward = &smtp.Error{Code: 451, Enhanced: "4.3.0", Msg: "Forwarding is not available, try again later"}
+	// RFC 5321 4.2.2 has 452 for "insufficient system storage" and 552 for
+	// "exceeded storage allocation"; RFC 3463 3.3 has X.2.2 for a full
+	// mailbox and X.2.3 for a message longer than the mailbox may hold.
+	// A full mailbox is temporary: its owner can make room, and the sender
+	// tries again. A message that is larger than the whole quota never
+	// fits.
+	errMailboxFull  = &smtp.Error{Code: 452, Enhanced: "4.2.2", Msg: "Mailbox full, try again later"}
+	errTooBigForBox = &smtp.Error{Code: 552, Enhanced: "5.2.3", Msg: "Message is larger than the mailbox may hold"}
 )
 
 // forward is a copy of a message that leaves again.

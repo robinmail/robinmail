@@ -406,6 +406,10 @@ func (c *call) storeEmail(run *setRun, raw []byte, mailboxes []int64, keywords [
 		return nil, invalidProps("one of the mailboxes does not exist", "mailboxIds"), nil
 	case errors.Is(err, store.ErrKeyword):
 		return nil, invalidProps("a keyword is 1 to 255 printable ASCII characters without ( ) { ] % * \" \\", "keywords"), nil
+	case errors.Is(err, store.ErrOverQuota):
+		// RFC 8620 5.3: "overQuota: The create would exceed a
+		// server-defined limit on the number or total size of objects".
+		return nil, &setError{Type: "overQuota", Description: "the account is full"}, nil
 	case err != nil:
 		return nil, &setError{Type: "serverFail"}, nil
 	}

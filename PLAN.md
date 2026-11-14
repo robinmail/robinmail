@@ -66,7 +66,7 @@ Every mail table starts with `account_id`.
 | `vacation` | enabled, from_at, to_at, subject, text_body, html_body, modseq | JMAP's VacationResponse: at most one row per account |
 | `vacation_sent` | key, at | automatic replies that went out: a hash of the reply and of whom it was for; trimmed after 45 days |
 | `alias` | address, target, domain, wildcard, created_at | one row per target of an alias; `address` is an address or a pattern with one `*` (`*@domain` is the catch-all); not per account |
-| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq, next_sieve | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts` |
+| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq, next_sieve, quota_bytes, quota_count, used_bytes, used_count | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts`; `quota_*` are the account's own limits (NULL: the default of the config, 0: none) and `used_*` what its emails add up to, kept by triggers |
 | `session` | token_hash, id, account_id, stage, method, created_at, seen_at, expires_at, idle, ip, seen_ip, agent, remember | web login; the hash is SHA-256 of the token in the cookie; `id` is what the user's list shows and revokes by; `stage` is `full`, or `totp` for a login that still owes its code; ends at `expires_at`, or `idle` seconds after `seen_at` |
 | `app_password` | id, name, hash, scope, created_at, used_at, used_ip | a password for one device; `hash` is SHA-256 of the 160 random bits the server made; `scope` lists `imap`, `smtp`, `jmap` (empty: all); revoking deletes the row |
 | `totp` | secret, created_at, confirmed_at, last_step | one row per account; the secret is sealed with the account's blob key; not asked for until confirmed; `last_step` is the newest time step a code was accepted for |
@@ -79,7 +79,7 @@ Every mail table starts with `account_id`.
 | `email_fts` | rowid, subject, addr, body, attach, hdr | the full-text index: an FTS5 table, contentless (the words and their places, not the text); the rowid is the account's `seq` times 2^32 plus the email id; a trigger on `email` removes a row with its email; not per account and not encrypted |
 | `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom; `$deleted` is IMAP's `\Deleted` |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
-| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission, Identity, SieveScript or VacationResponse; op created, updated or destroyed; `at` is for trimming |
+| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission, Identity, SieveScript, VacationResponse or Quota; op created, updated or destroyed; `at` is for trimming |
 | `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
 | `submission` | id, email_id, thread_id, identity_id, message_id, blob, size, mail_from, recipients, rcpt_count, undo, queue, created_at, send_at, next_try, tries, claimed_by, claimed_until, destroyed, submit_key, modseq | outbound queue: one row per message; `recipients` is JSON with the state of each; `blob` is the message as it goes out; a node works on a row while its claim lasts |
 | `identity` | id, name, email, reply_to, bcc, text_signature, html_signature, modseq | JMAP identities; id 1 is made with the account |
@@ -1936,7 +1936,7 @@ Built as follows:
 - Exit: each item shown working with a test.
 
 Built in this order, each item committed with its tests: 1 full-text
-search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas, 6 MTA-STS
+search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas (done), 6 MTA-STS
 serving and TLS-RPT, 7 autoconfig, 8 operations, 9 README, 10 lab and
 cluster cases.
 
@@ -2279,6 +2279,87 @@ Built as follows:
   - **Not handled.** One more read per delivered message and account
     (the `vacation` row). The period is fixed. The reply has no
     signature of the identity.
+- **Quotas.** An account may hold so many octets of mail and so many
+  messages. What counts is its Emails, each once whatever number of
+  mailboxes it is in, by the size of the message. Uploads, the queue and
+  Sieve scripts do not count.
+  - **Counting that holds under concurrency.** Nothing in Go counts. The
+    account row has `used_bytes` and `used_count`, and two triggers on
+    `email` move them with every insert and delete, inside whatever
+    batch does it: delivery, destroy, expunge, a mailbox destroyed with
+    its mail. The limit is a guard in the batch that stores an Email
+    (`store.Deliver`, which is every way in): "what the account holds
+    plus this message is within the limit", evaluated by SQLite inside
+    the batch. rqlite applies batches one after another, so the guard
+    always sees what every earlier batch left, from whatever node.
+    Schema version 12; the migration counts the mail that is there.
+    `quota recount` sets the counters to what the emails add up to, for
+    a database that was changed by hand.
+  - **Limits.** `quota {default_bytes, default_messages}` in the config
+    (0: none, the default) for accounts without limits of their own;
+    `user quota <address> [<storage> <messages>]` shows the use and sets
+    an account's own (`5G`, `none`, `default`). A limit below what the
+    account holds removes nothing; it stops new mail.
+  - **Where it is enforced.**
+    - SMTP, at RCPT: a recipient whose mailbox is full gets `452 4.2.2`,
+      for that recipient only, so the sender's server still delivers to
+      the others. An alias for several accounts is full when all are.
+    - SMTP, after DATA (the account filled up meanwhile, or this
+      message is what does not fit): `452 4.2.2` when there is no room
+      now, `552 5.2.3` when the message alone is larger than the limit
+      and the account was its only recipient. With several recipients
+      the answer is `452` for the whole message: those who have it
+      recognise the retry by the delivery key. RFC 5321 4.2.2 has 452
+      for insufficient storage and 552 for an exceeded allocation; a
+      full mailbox is treated as temporary because its owner can make
+      room, as RFC 3463's X.2.2 allows for.
+    - Mail between users here: the queue gets the same replies, retries
+      a `452` and bounces a `552`.
+    - IMAP `APPEND`: `NO [OVERQUOTA]`. `COPY` and `MOVE` add labels, not
+      messages, and are never over quota.
+    - JMAP `Email/set` create, `/import`, `/copy`: `overQuota`. Upload:
+      HTTP 507, by the octet limit only (an upload is no message, and
+      may be a Sieve script).
+    - Not refused: a bounce our own queue owes the account
+      (`Message.IgnoreQuota`), which would otherwise be lost.
+  - **JMAP Quota** (RFC 9425): capability `urn:ietf:params:jmap:quota`;
+    up to two objects, `octets` and `count`, each only when that limit
+    is set; `Quota/get`, `/changes` (with `updatedProperties: ["used"]`
+    when only the use moved, derived from the Email change log, so no
+    row is written for it), `/query` (filter name, scope, resourceType,
+    type; sort name, used) and `/queryChanges`. Push names `Quota` when
+    mail came or went.
+  - **IMAP QUOTA** (RFC 9208): `QUOTA QUOTA=RES-STORAGE
+    QUOTA=RES-MESSAGE`, `GETQUOTA`, `GETQUOTAROOT`; one quota root `""`
+    per account; `STORAGE` in units of 1024 octets (use rounded up, the
+    limit down); a resource without a limit is not listed and an account
+    without limits has no root. `SETQUOTA` answers `NO [NOPERM]`:
+    `QUOTASET` is not offered, limits are the administrator's.
+  - **Webmail.** The sidebar shows a bar per limit ("1.4 MB of 5 MB",
+    "120 of 1000 messages"), in warning colour from 90%, with a line
+    when the account is full. It is read with the account and with
+    every refresh, in the same request.
+  - **Tests.** `internal/store`: the counters through every way an
+    email comes and goes; limits by octets and by count, own and
+    default; **40 concurrent deliveries through two stores (two nodes)
+    into room for ten: ten stored, thirty refused, counters at ten**.
+    `internal/delivery`: the replies at RCPT and after DATA.
+    `internal/imap`: RFC 9208 3, 4.1 to 4.3, 5.1 and 5.2 with the
+    examples' shape. `internal/jmap`: RFC 9425 3 and 4.1 to 4.4,
+    `overQuota`, the upload. `TestQuotaEndToEnd` (`cmd/robinmail`):
+    a default of three messages; the fourth refused at RCPT while the
+    other recipient of the same transaction gets it; `GETQUOTAROOT`,
+    `APPEND`, `Quota/get`, `Email/import`; an own limit in octets; 552
+    for a message larger than the quota, 452 for one there is no room
+    for; room made by `EXPUNGE`. Playwright (`e2e/quota.spec.ts`).
+  - **Not handled.** No soft or warn limit and no notice to the user
+    before the account is full. No `DELETED-STORAGE` in IMAP `STATUS`.
+    No quota per domain or for the whole server. Sent mail counts: an
+    account at its limit cannot save a draft or keep a copy in Sent
+    (sending itself still works over SMTP submission). The default
+    limits are per node's config and must be the same on all nodes. A
+    message larger than the quota among several recipients is answered
+    `452` and retried by the sender until it gives up.
 
 ## Open questions
 

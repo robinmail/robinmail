@@ -161,6 +161,22 @@ export interface SearchSnippet {
   preview: string | null
 }
 
+// Quota (RFC 9425 4): a limit of the account and how much of it is used.
+// robinmail has up to two: "octets" (the size of all mail) and "count"
+// (the number of messages); a limit that is not set has no object.
+export interface Quota {
+  id: Id
+  resourceType: 'octets' | 'count'
+  used: number
+  hardLimit: number
+  scope: string
+  name: string
+  types: string[]
+  warnLimit: number | null
+  softLimit: number | null
+  description: string | null
+}
+
 // VacationResponse (RFC 8621 8): the automatic reply of the account. There
 // is one, with the id "singleton". Dates are UTC; null is no bound.
 export interface VacationResponse {
@@ -317,6 +333,7 @@ export interface Methods {
     args: Omit<SetArgs<Email>, 'create'> & { create?: Record<string, EmailCreate> }
     response: SetResponse<Email>
   }
+  'Quota/get': { args: GetArgs; response: GetResponse<Quota> }
   'VacationResponse/get': { args: GetArgs; response: GetResponse<VacationResponse> }
   'VacationResponse/set': { args: SetArgs<VacationResponse>; response: SetResponse<VacationResponse> }
   'SieveScript/get': { args: GetArgs; response: GetResponse<SieveScript> }

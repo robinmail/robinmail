@@ -172,9 +172,10 @@ func TestRFC8620EventSourceStateChange(t *testing.T) {
 	if sc.Type != "StateChange" || len(sc.Changed) != 1 {
 		t.Fatalf("StateChange: %s", ev.data)
 	}
-	// New mail: the Email, its thread, the mailbox it went into, and
-	// EmailDelivery (RFC 8621 1.5).
-	if got, want := typesOf(sc, p.acct.ID), []string{"Email", "EmailDelivery", "Mailbox", "Thread"}; !reflect.DeepEqual(got, want) {
+	// New mail: the Email, its thread, the mailbox it went into,
+	// EmailDelivery (RFC 8621 1.5), and the account's Quota, whose "used"
+	// moved (RFC 9425 5).
+	if got, want := typesOf(sc, p.acct.ID), []string{"Email", "EmailDelivery", "Mailbox", "Quota", "Thread"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("types after a delivery: %v, want %v", got, want)
 	}
 	// The state pushed is the state /get returns now, and /changes from
@@ -202,7 +203,7 @@ func TestRFC8620EventSourceStateChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	sc, _ = s.state()
-	if got, want := typesOf(sc, p.acct.ID), []string{"Email", "Mailbox", "Thread"}; !reflect.DeepEqual(got, want) {
+	if got, want := typesOf(sc, p.acct.ID), []string{"Email", "Mailbox", "Quota", "Thread"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("types after a destroy: %v, want %v", got, want)
 	}
 }

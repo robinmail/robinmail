@@ -31,6 +31,10 @@ type Message struct {
 	// ReceivedAt defaults to now.
 	ReceivedAt time.Time
 	Keywords   []string
+	// IgnoreQuota stores the message also when the account is full: for a
+	// notification the server itself owes the account (a bounce), which
+	// would otherwise be lost.
+	IgnoreQuota bool
 }
 
 // sqlNewEmail is the id of the email a delivery batch is creating, valid
@@ -87,6 +91,10 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 	b := s.newBatch(account)
 	b.guardAccount()
 	b.ifState(m.IfInState)
+	if !m.IgnoreQuota {
+		// Before the insert, so it sees what the account held until now.
+		b.guardQuota(s.DefaultQuota, len(m.Raw))
+	}
 	var into string // a SQL condition on mailbox m: the mailboxes the email goes in
 	if len(targets) > 0 {
 		vals, kv := values("t", targets)

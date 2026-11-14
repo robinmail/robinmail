@@ -25,6 +25,8 @@ export class FakeServer {
   log: Change[] = []
   // Every request body, and every method call, the server got.
   requests: Invocation[][] = []
+  // What Quota/get answers: the limits of the account.
+  quota: Record<string, unknown>[] = []
   // Set to answer the next requests with this HTTP status.
   httpStatus = 0
   // May answer a call itself: return a response invocation, or null.
@@ -365,6 +367,8 @@ export class FakeServer {
           ...(args.calculateTotal ? { total: all.length } : {}),
         }]
       }
+      case 'Quota/get':
+        return [name, { accountId, state, list: this.quota, notFound: [] }]
       case 'SearchSnippet/get': {
         const want = words((args.filter as FilterCondition | null)?.text ?? '')
         const mark = (s: string) => {

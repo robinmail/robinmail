@@ -198,6 +198,10 @@ func (c *conn) failure(what string, err error) reply {
 		return noCode("CANNOT", "not a flag a message can have")
 	case errors.Is(err, ErrTooLarge):
 		return noCode("TOOBIG", "the message is too large")
+	case errors.Is(err, ErrOverQuota):
+		// RFC 9208 5.2: OVERQUOTA in the tagged NO of the command that
+		// would have taken the account past a limit.
+		return noCode("OVERQUOTA", "the mailbox is full")
 	case errors.Is(err, ErrNoMessage):
 		return noCode("EXPUNGEISSUED", "the message is gone")
 	}
@@ -230,8 +234,13 @@ func (c *conn) capabilities() string {
 		}
 		return strings.Join(caps, " ")
 	}
-	return strings.Join(append(caps, "IDLE", "NAMESPACE", "UNSELECT", "UIDPLUS", "MOVE", "SPECIAL-USE", "CHILDREN",
-		"LIST-EXTENDED", "LIST-STATUS", "CONDSTORE", "ESEARCH", "SEARCHRES", "BINARY", "STATUS=SIZE", "UTF8=ACCEPT"), " ")
+	caps = append(caps, "IDLE", "NAMESPACE", "UNSELECT", "UIDPLUS", "MOVE", "SPECIAL-USE", "CHILDREN",
+		"LIST-EXTENDED", "LIST-STATUS", "CONDSTORE", "ESEARCH", "SEARCHRES", "BINARY", "STATUS=SIZE", "UTF8=ACCEPT")
+	if _, ok := c.user.(QuotaUser); ok {
+		// RFC 9208 3: QUOTA, and one QUOTA=RES- per resource there is.
+		caps = append(caps, "QUOTA", "QUOTA=RES-STORAGE", "QUOTA=RES-MESSAGE")
+	}
+	return strings.Join(caps, " ")
 }
 
 // command is one entry of the command table.
@@ -257,20 +266,23 @@ func init() {
 		"LOGIN":        {notAuthOnly: true, run: (*conn).cmdLogin},
 		"AUTHENTICATE": {notAuthOnly: true, run: (*conn).cmdAuthenticate},
 
-		"ENABLE":      {state: stateAuth, run: (*conn).cmdEnable},
-		"SELECT":      {state: stateAuth, run: (*conn).cmdSelect},
-		"EXAMINE":     {state: stateAuth, run: (*conn).cmdExamine},
-		"CREATE":      {state: stateAuth, run: (*conn).cmdCreate},
-		"DELETE":      {state: stateAuth, run: (*conn).cmdDelete},
-		"RENAME":      {state: stateAuth, run: (*conn).cmdRename},
-		"SUBSCRIBE":   {state: stateAuth, run: (*conn).cmdSubscribe},
-		"UNSUBSCRIBE": {state: stateAuth, run: (*conn).cmdUnsubscribe},
-		"LIST":        {state: stateAuth, run: (*conn).cmdList},
-		"LSUB":        {state: stateAuth, run: (*conn).cmdLsub},
-		"NAMESPACE":   {state: stateAuth, run: (*conn).cmdNamespace},
-		"STATUS":      {state: stateAuth, run: (*conn).cmdStatus},
-		"APPEND":      {state: stateAuth, run: (*conn).cmdAppend},
-		"IDLE":        {state: stateAuth, run: (*conn).cmdIdle},
+		"ENABLE":       {state: stateAuth, run: (*conn).cmdEnable},
+		"SELECT":       {state: stateAuth, run: (*conn).cmdSelect},
+		"EXAMINE":      {state: stateAuth, run: (*conn).cmdExamine},
+		"CREATE":       {state: stateAuth, run: (*conn).cmdCreate},
+		"DELETE":       {state: stateAuth, run: (*conn).cmdDelete},
+		"RENAME":       {state: stateAuth, run: (*conn).cmdRename},
+		"SUBSCRIBE":    {state: stateAuth, run: (*conn).cmdSubscribe},
+		"UNSUBSCRIBE":  {state: stateAuth, run: (*conn).cmdUnsubscribe},
+		"LIST":         {state: stateAuth, run: (*conn).cmdList},
+		"LSUB":         {state: stateAuth, run: (*conn).cmdLsub},
+		"NAMESPACE":    {state: stateAuth, run: (*conn).cmdNamespace},
+		"STATUS":       {state: stateAuth, run: (*conn).cmdStatus},
+		"APPEND":       {state: stateAuth, run: (*conn).cmdAppend},
+		"IDLE":         {state: stateAuth, run: (*conn).cmdIdle},
+		"GETQUOTA":     {state: stateAuth, run: (*conn).cmdGetQuota},
+		"GETQUOTAROOT": {state: stateAuth, run: (*conn).cmdGetQuotaRoot},
+		"SETQUOTA":     {state: stateAuth, run: (*conn).cmdSetQuota},
 
 		"CHECK":       {state: stateSelected, run: (*conn).cmdCheck},
 		"CLOSE":       {state: stateSelected, run: (*conn).cmdClose},

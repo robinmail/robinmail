@@ -58,5 +58,9 @@
     "require_app_passwords": false,
     "audit_retention_days": 90,
     "oidc": []
+  },
+  "quota": {
+    "default_bytes": 0,
+    "default_messages": 0
   }
 }

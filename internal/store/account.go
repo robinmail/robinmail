@@ -29,6 +29,8 @@ type Account struct {
 	AppPasswords int
 	// TOTP says whether the web login asks for a code.
 	TOTP bool
+	// Quota is what the account may hold and holds (quota.go).
+	Quota Quota
 }
 
 // NoPassword is the password_hash of an account that cannot log in with a
@@ -81,7 +83,14 @@ func (s *Store) CreateAccount(ctx context.Context, address, passwordHash string)
 
 const accountColumns = `id, address, password_hash, created_at, modseq, auth_seq, password_changed_at,
 	(SELECT count(*) FROM app_password p WHERE p.account_id = account.id),
-	EXISTS (SELECT 1 FROM totp t WHERE t.account_id = account.id AND t.confirmed_at > 0)`
+	EXISTS (SELECT 1 FROM totp t WHERE t.account_id = account.id AND t.confirmed_at > 0),
+	quota_bytes, quota_count, used_bytes, used_count`
+
+func (s *Store) scanAccount(row []any) Account {
+	a := scanAccount(row)
+	a.Quota = s.quotaOf(ownLimit(row[9]), ownLimit(row[10]), asInt(row[11]), asInt(row[12]))
+	return a
+}
 
 func scanAccount(row []any) Account {
 	a := Account{ID: asString(row[0]), Address: asString(row[1]), PasswordHash: asString(row[2]),
@@ -102,7 +111,7 @@ func (s *Store) Account(ctx context.Context, address string) (Account, error) {
 	if len(res[0].Values) == 0 {
 		return Account{}, ErrNoAccount
 	}
-	return scanAccount(res[0].Values[0]), nil
+	return s.scanAccount(res[0].Values[0]), nil
 }
 
 // Accounts lists all accounts of users by address. The system accounts
@@ -114,7 +123,7 @@ func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
 	}
 	out := make([]Account, 0, len(res[0].Values))
 	for _, row := range res[0].Values {
-		out = append(out, scanAccount(row))
+		out = append(out, s.scanAccount(row))
 	}
 	return out, nil
 }

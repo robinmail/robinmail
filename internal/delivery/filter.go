@@ -338,6 +338,16 @@ func (d *Deliverer) finish(ctx context.Context, in *incoming) error {
 			in.log.Info("already delivered", "to", a.Address)
 			continue
 		}
+		if errors.Is(err, store.ErrOverQuota) {
+			// The account filled up after RCPT, or the message is what
+			// does not fit. The reply is for the whole message: accounts
+			// that have it already recognise a retry by the delivery key.
+			in.log.Info("over quota", "to", a.Address, "size", len(in.final), "used", a.Quota.UsedBytes, "limit", a.Quota.Bytes)
+			if _, never := a.Quota.Room(int64(len(in.final))); never && alone {
+				return errTooBigForBox
+			}
+			return errMailboxFull
+		}
 		if err != nil {
 			// The sender retries the whole message. Accounts that have it
 			// already recognise the delivery key and store nothing.

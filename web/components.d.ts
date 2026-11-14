@@ -19,6 +19,7 @@ declare module 'vue' {
     MessageBody: typeof import('./src/components/MessageBody.vue')['default']
     MessageList: typeof import('./src/components/MessageList.vue')['default']
     MoveMenu: typeof import('./src/components/MoveMenu.vue')['default']
+    QuotaMeter: typeof import('./src/components/QuotaMeter.vue')['default']
     RichEditor: typeof import('./src/components/RichEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

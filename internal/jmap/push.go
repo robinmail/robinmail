@@ -32,7 +32,7 @@ type Notifier interface {
 
 // pushTypes are the types a StateChange can name: the data types of RFC
 // 8621 that this server has, in the order they are written.
-var pushTypes = []string{"Mailbox", "Thread", "Email", "EmailDelivery", "EmailSubmission", "Identity", "SieveScript", "VacationResponse"}
+var pushTypes = []string{"Mailbox", "Thread", "Email", "EmailDelivery", "EmailSubmission", "Identity", "SieveScript", "VacationResponse", "Quota"}
 
 const (
 	// DefaultMinPing and maxPing bound the ping interval a client may ask
@@ -75,6 +75,9 @@ func (h *Handler) changedTypes(r *http.Request, account string, since int64, wan
 	for name, set := range c.Other {
 		changed[name] = some(*set)
 	}
+	// RFC 9425 5: a Quota changes when its use does, which is whenever
+	// an Email comes or goes.
+	changed["Quota"] = changed["Quota"] || len(c.Email.Created)+len(c.Email.Destroyed) > 0
 	var out []string
 	for _, t := range pushTypes {
 		if (all || changed[t]) && (wanted == nil || wanted[t]) {

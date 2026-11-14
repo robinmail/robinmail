@@ -48,3 +48,17 @@ const roleIcons: Record<string, string> = {
 export function mailboxIcon(role: string | null): string {
   return (role && roleIcons[role]) || 'i-lucide-folder'
 }
+
+// octets writes a size in the unit a person reads it in, with binary
+// prefixes as the server counts: 1536 is "1.5 KB".
+export function octets(n: number): string {
+  if (n < 1024) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v >= 100 || Number.isInteger(v) ? Math.round(v) : v.toFixed(1)} ${units[i]}`
+}

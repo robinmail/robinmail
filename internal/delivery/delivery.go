@@ -146,8 +146,25 @@ func has(list []string, s string) bool {
 // Rcpt accepts only addresses of the accepted domains that lead somewhere:
 // to an account, or through an alias to accounts or to addresses
 // elsewhere. For anything else robinmail does not relay.
+//
+// A recipient whose mailbox is full is refused here already (452 4.2.2):
+// the sender's server then keeps the message for that recipient and still
+// delivers to the others, which a refusal after DATA could not say.
 func (d *Deliverer) Rcpt(ctx context.Context, env *smtp.Envelope, to string) error {
-	return d.route(ctx, env.From, to, &routes{})
+	var r routes
+	if err := d.route(ctx, env.From, to, &r); err != nil {
+		return err
+	}
+	if len(r.forwards) > 0 || len(r.accounts) == 0 {
+		return nil
+	}
+	// An alias for several accounts is full when all of them are.
+	for _, a := range r.accounts {
+		if fits, _ := a.Quota.Room(1); fits {
+			return nil
+		}
+	}
+	return errMailboxFull
 }
 
 // deliveryKey identifies a message for idempotent delivery: the envelope

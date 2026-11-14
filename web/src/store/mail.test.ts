@@ -114,6 +114,28 @@ describe('load and list', () => {
   })
 })
 
+describe('quota', () => {
+  const octets = { id: 'octets', resourceType: 'octets', used: 400, hardLimit: 1000, scope: 'account', name: 'Storage', types: ['Email'] }
+  it('is read with the account and follows the mail', async () => {
+    server.quota = [octets]
+    await start()
+    expect(store.state.quota).toMatchObject([{ id: 'octets', used: 400, hardLimit: 1000 }])
+    server.quota = [{ ...octets, used: 900 }]
+    await store.refresh()
+    expect(store.state.quota[0]!.used).toBe(900)
+    store.reset()
+    expect(store.state.quota).toEqual([])
+  })
+
+  it('is empty on a server without quotas', async () => {
+    server.intercept = (name) => (name === 'Quota/get' ? ['error', { type: 'unknownMethod' }] : null)
+    await start()
+    expect(store.state.quota).toEqual([])
+    await store.refresh()
+    expect(errors).toEqual([])
+  })
+})
+
 describe('search', () => {
   it('asks for the text in the mailbox and keeps what matched', async () => {
     server.deliver({ subject: 'Harbour tour', preview: 'We meet at the quay' })
@@ -167,7 +189,7 @@ describe('refresh', () => {
     expect(server.requests.length).toBe(n + 1)
     expect(server.requests.at(-1)!.map((c) => c[0])).toEqual([
       'Mailbox/changes', 'Mailbox/get', 'Mailbox/get', 'Email/changes', 'Email/get', 'Email/get', 'Thread/changes', 'Thread/get',
-      'Email/queryChanges', 'Email/get', 'Thread/get', 'Email/get',
+      'Email/queryChanges', 'Email/get', 'Thread/get', 'Email/get', 'Quota/get',
     ])
     expect(JSON.stringify(store.state)).toBe(before)
   })

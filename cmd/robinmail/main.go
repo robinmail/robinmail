@@ -49,6 +49,10 @@ commands:
   alias remove <alias> [target]                remove one target of an alias, or the alias
   user add <address>                           create a user (password from the prompt or stdin)
   user list                                    list users
+  user quota <address> [<storage> <messages>]  show a user's quota and use, or set the limits: a number of octets
+                                               (with K, M or G) and a number of messages; "none" for no limit,
+                                               "default" for the default of the config
+  quota recount [address]                      count the mail of accounts again and correct their quota counters
   user password <address>                      set a new password (prompt or stdin); ends the user's sessions
   user totp-disable <address>                  turn TOTP off for a user who lost the authenticator
   user app-passwords <address>                 list a user's app passwords
@@ -157,6 +161,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return a.aliasList(optional(args, 1, ""))
 	case cmd == "alias" && (n == 2 || n == 3) && args[0] == "remove":
 		return a.aliasRemove(args[1], optional(args, 2, ""))
+	case cmd == "user" && (n == 2 || n == 4) && args[0] == "quota":
+		return a.userQuota(args[1], args[2:])
+	case cmd == "quota" && (n == 1 || n == 2) && args[0] == "recount":
+		return a.quotaRecount(optional(args, 1, ""))
 	case cmd == "user" && n == 2 && args[0] == "password":
 		return a.userPassword(args[1])
 	case cmd == "user" && n == 2 && args[0] == "totp-disable":
@@ -241,8 +249,10 @@ func open(ctx context.Context, cfg *config.Config, serving bool) (*app, error) {
 		return nil, fmt.Errorf("%w (make one with \"robinmail key generate\")", err)
 	}
 	a := &app{cfg: cfg, local: blob.NewLocal(cfg.BlobDir()), master: master}
+	limits := store.Limits{Bytes: cfg.Quota.DefaultBytes, Messages: cfg.Quota.DefaultMessages}
 	if cfg.Node.ID == "" {
 		a.store = store.New(db, a.local, master)
+		a.store.DefaultQuota = limits
 		return a, a.store.Init(ctx)
 	}
 	identity, err := cluster.LoadOrCreateIdentity(cfg.DataDir)
@@ -251,6 +261,7 @@ func open(ctx context.Context, cfg *config.Config, serving bool) (*app, error) {
 	}
 	a.replicated = &blob.Replicated{Local: a.local, Copies: cfg.Node.BlobCopies}
 	a.store = store.New(db, a.replicated, master)
+	a.store.DefaultQuota = limits
 	if err := a.store.Init(ctx); err != nil {
 		return nil, err
 	}

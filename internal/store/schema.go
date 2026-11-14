@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 11
+const schemaVersion = 12
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -47,7 +47,11 @@ var schema = []string{
 		auth_seq        INTEGER NOT NULL DEFAULT 0,
 		password_changed_at INTEGER NOT NULL DEFAULT 0,
 		seq            INTEGER NOT NULL DEFAULT 0,
-		next_sieve     INTEGER NOT NULL DEFAULT 1
+		next_sieve     INTEGER NOT NULL DEFAULT 1,
+		quota_bytes    INTEGER,
+		quota_count    INTEGER,
+		used_bytes     INTEGER NOT NULL DEFAULT 0,
+		used_count     INTEGER NOT NULL DEFAULT 0
 	) WITHOUT ROWID`,
 	sqlAccountSeq,
 
@@ -161,6 +165,7 @@ var schema = []string{
 	sqlAliasTable, sqlAliasDomain, sqlAliasTarget,
 	sqlSieveTable, sqlSieveActive, sqlVacationSentTable, sqlVacationSentAt,
 	sqlVacationTable,
+	sqlQuotaInsert, sqlQuotaDelete,
 
 	`INSERT INTO schema_version (version) SELECT ` + fmt.Sprint(schemaVersion) + ` WHERE NOT EXISTS (SELECT 1 FROM schema_version)`,
 }
@@ -233,6 +238,20 @@ var migrations = map[int64][]string{
 	},
 	// 11: JMAP's VacationResponse.
 	10: {sqlVacationTable},
+	// 12: quotas. The account row counts its emails and their octets;
+	// two triggers on email keep the counters. quota_bytes and
+	// quota_count are the account's own limits: NULL is the default of the
+	// configuration, 0 no limit.
+	11: {
+		`ALTER TABLE account ADD COLUMN quota_bytes INTEGER`,
+		`ALTER TABLE account ADD COLUMN quota_count INTEGER`,
+		`ALTER TABLE account ADD COLUMN used_bytes INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE account ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE account SET
+			used_bytes = (SELECT COALESCE(sum(e.size), 0) FROM email e WHERE e.account_id = account.id),
+			used_count = (SELECT count(*) FROM email e WHERE e.account_id = account.id)`,
+		sqlQuotaInsert, sqlQuotaDelete,
+	},
 }
 
 const (
@@ -310,6 +329,15 @@ const (
 		html_body  TEXT,
 		modseq     INTEGER NOT NULL
 	) WITHOUT ROWID`
+
+	// The counters of an account's quota move with its emails, in the
+	// batch that adds or removes them (quota.go).
+	sqlQuotaInsert = `CREATE TRIGGER IF NOT EXISTS email_quota_insert AFTER INSERT ON email BEGIN
+		UPDATE account SET used_bytes = used_bytes + new.size, used_count = used_count + 1 WHERE id = new.account_id;
+	END`
+	sqlQuotaDelete = `CREATE TRIGGER IF NOT EXISTS email_quota_delete AFTER DELETE ON email BEGIN
+		UPDATE account SET used_bytes = used_bytes - old.size, used_count = used_count - 1 WHERE id = old.account_id;
+	END`
 
 	// A web login. token_hash is the SHA-256 of the token in the cookie, so
 	// a copy of this table logs nobody in. id is what the user's list of
