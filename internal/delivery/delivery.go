@@ -39,8 +39,11 @@ type Deliverer struct {
 	// Otherwise the sender gets a 451 and retries later.
 	FailOpen bool
 	Logger   *slog.Logger
-	Resolver Resolver         // nil uses net.DefaultResolver
-	Now      func() time.Time // for tests
+	// Submissions, when set, is told about delivery status notifications
+	// that arrive for mail an account sent (see noteDSN).
+	Submissions DSNStore
+	Resolver    Resolver         // nil uses net.DefaultResolver
+	Now         func() time.Time // for tests
 }
 
 func (d *Deliverer) now() time.Time {
@@ -282,6 +285,7 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 		}
 		log.Info("delivered", "to", a.Address, "email", store.EmailID(e.ID), "role", role, "size", len(out))
 	}
+	d.noteDSN(ctx, env.From, accounts, out)
 	return nil
 }
 
