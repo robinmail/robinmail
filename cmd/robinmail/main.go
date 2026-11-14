@@ -1,6 +1,7 @@
 // Command robinmail is a JMAP-first mail server. "serve" runs the inbound
-// SMTP listener and the web side (login, JMAP, webmail); the other commands
-// manage domains, accounts and the store.
+// SMTP listener, the submission listeners, the outbound queue and the web
+// side (login, JMAP, webmail); the other commands manage domains, accounts
+// and the store.
 package main
 
 import (

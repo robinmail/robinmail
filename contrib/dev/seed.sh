@@ -8,7 +8,11 @@
 #   dev/robinmail -config dev/robinmail.json serve
 #
 # Then JMAP is on http://127.0.0.1:8080 and SMTP on 127.0.0.1:2525, without
-# TLS and without Rspamd. The binary built here has no webmail in it: for
+# TLS and without Rspamd. Mail sent from it to robinmail.test is delivered
+# in the instance itself; mail to any other domain goes nowhere: the config
+# routes it to a port nothing listens on ("outbound": {"routes": {"*":
+# "127.0.0.1:1"}}), so a development instance never sends real mail. It
+# stays in the queue and bounces after five days. The binary built here has no webmail in it: for
 # that use "make dev" (Vite on http://localhost:5173, live reload) or
 # "make" and run ./robinmail with the same config (see the Makefile). Run it again any time: it rebuilds the binary and
 # leaves an existing user and their mail alone.

@@ -80,7 +80,7 @@ dev: web/node_modules
 
 # Builds the image, starts the cluster of contrib/compose/cluster.yaml, runs
 # the tests in internal/clustertest (they kill and restart containers) and
-# removes the cluster again, also when a test failed. About four minutes
+# removes the cluster again, also when a test failed. About six minutes
 # after the first build. KEEP=1 leaves the cluster running.
 cluster-test:
 	contrib/compose/cluster.sh up

@@ -62,21 +62,24 @@ Every mail table starts with `account_id`.
 | Table | Columns | Notes |
 |---|---|---|
 | `domain` | name | domains we accept mail for; managed with `domain add\|list\|remove`, read by every node |
-| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread | id is random and never changes; counters live here; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers |
+| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity | id is random and never changes; counters live here; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers |
 | `session` | token_hash, account_id, expires_at | web login; the hash is SHA-256 of the token in the cookie |
 | `mailbox` | id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq, subscribed | a rename changes `name` only |
 | `email` | id, blob, size, received_at, thread_id, message_id, sender, recipients, cc, bcc, subject, sent_at, preview, has_attachment, modseq | header fields cached for lists, filters and sorting |
 | `email_mailbox` | email_id, mailbox_id, uid | one row per label; the IMAP UID belongs to the row |
 | `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
-| `changes` | modseq, type, id, op, at | type Email, Mailbox or Thread; op created, updated or destroyed; `at` is for trimming |
+| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission or Identity; op created, updated or destroyed; `at` is for trimming |
 | `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
-| `submission` | id, email_id, envelope, state, next_try, claimed_by, claimed_until | outbound queue (phase 5) |
+| `submission` | id, email_id, thread_id, identity_id, message_id, blob, size, mail_from, recipients, rcpt_count, undo, queue, created_at, send_at, next_try, tries, claimed_by, claimed_until, destroyed, submit_key, modseq | outbound queue: one row per message; `recipients` is JSON with the state of each; `blob` is the message as it goes out; a node works on a row while its claim lasts |
+| `identity` | id, name, email, reply_to, bcc, text_signature, html_signature, modseq | JMAP identities; id 1 is made with the account |
+| `upload` | blob, size, type, created_at | blobs a client uploaded; trimmed after a day |
+| `mta_sts` | domain, policy_id, mode, mx, fetched_at, expires_at | MTA-STS policies of other domains, cached for all nodes; not per account |
 | `acme` | key, value | ACME account and certificates, shared by nodes (not built yet) |
 | `node` | id, address, cert, started_at, seen_at | the robinmail nodes: where the others reach each, the SHA-256 of its certificate, its heartbeat |
 | `login_failure` | key, started, count | failed logins per address and per IP in a 15 minute window, for all nodes together |
 | `guard` | ok | always empty; how a batch checks a precondition (below) |
-| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3 and 3 to 4) |
+| `schema_version` | version | checked at start; an older database is migrated in one guarded batch per version (so far 2 to 3, 3 to 4 and 4 to 5) |
 
 Rules:
 
@@ -138,6 +141,8 @@ Rules:
   whole), deletes and trims, rows set to given values. Everything that
   takes a counter or carries a guard fails with "outcome unknown" instead
   and the caller decides. The list is at `run` in `internal/store`.
+  Submitting a message is made repeatable by a random key in the row: a
+  second run fails on it as a whole, and the row is read back.
 
 ## Layout
 
@@ -146,10 +151,10 @@ cmd/robinmail        the binary: server and offline commands
 internal/address     address parsing                    port as is
 internal/tlsconf     TLS config, cert reload            port as is
 internal/config      JSON config                        port, new fields
-internal/smtp        ESMTP server, later client         port as is
+internal/smtp        ESMTP server and client, AUTH      port as is; client and AUTH new
 internal/rspamd      Rspamd client                      port as is
 internal/users       Argon2id hash and verify           port the hashing; storage moves to rqlite
-internal/delivery    recipient to mailbox               port; talks to a store interface, mailbox by role
+internal/delivery    recipient to mailbox; submission   port; talks to a store interface, mailbox by role
 internal/rqlite      rqlite HTTP client for a cluster   new
 internal/blob        encrypted blob files on disk, replicated between nodes   new
 internal/cluster     node table, mutual TLS, blob transfer between nodes      new
@@ -158,12 +163,12 @@ internal/store       schema and all mail operations     new, replaces owl's stor
 internal/message     MIME to JMAP body structure, HTML view   new
 internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, static app new
-internal/queue       outbound delivery                  new
+internal/queue       outbound delivery: MX, MTA-STS, retries, bounces   new
 internal/imap        IMAP server                        new
 web/                 Vue webmail (Vite, Nuxt UI); src/jmap is the client, e2e the browser test
 Makefile             web build, binary with the webmail, tests, dev
 Dockerfile           the binary with the webmail in an image
-contrib/rspamd       Rspamd config                      port as is
+contrib/rspamd       Rspamd config, DKIM signing        port as is; dkim_signing.conf new
 contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
                      cluster.yaml, cluster.sh: three rqlite and three robinmail nodes
 contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev
@@ -644,15 +649,211 @@ Built as follows:
   - Clock differences between nodes: `received_at`, session expiry and the
     blob grace period use each node's own clock.
 
-### Phase 5: outbound, submission, compose
+### Phase 5: outbound, submission, compose — Go side done, webmail open
 
 - Submission on 465 and 587, outbound through Rspamd for DKIM, queue in
   `submission` (a node claims a row for a limited time), MX delivery with
   STARTTLS, MTA-STS, retries, bounces.
 - JMAP `Email/set` create, blob upload, `EmailSubmission/set`, `Identity/get`.
-- Webmail: compose, reply, forward, attachments, drafts.
+- Webmail: compose, reply, forward, attachments, drafts. **Open**: a
+  session of its own, built on the JMAP methods listed below.
 - Exit: send between two robinmail clusters; an unreachable host is retried
   and bounces; a killed node does not lose queued mail.
+
+Built as follows (the Go side):
+
+- **Submission** (`smtp.Server` with `Auth`, `delivery.Handler`). Config
+  `submission {listen, listen_tls, max_recipients_per_hour, undo_seconds}`;
+  both listeners need a certificate. 587 offers `AUTH` only after
+  STARTTLS, 465 has TLS from the first byte. `AUTH PLAIN` and `LOGIN`
+  check the account password through `web.Server.Login`, so SMTP shares
+  the login failure counters (in memory and in rqlite) and the bound on
+  Argon2id with the web login. Refusals: `538 5.7.11` for AUTH without TLS,
+  `530 5.7.0` for MAIL without STARTTLS or without AUTH, `535 5.7.8`,
+  `454 4.7.0` when limited or when the store is away, `550 5.7.1` for a
+  sender that is not the user's.
+- **What a submitted message must be and becomes** (`delivery.Submitter`,
+  for SMTP and JMAP alike). Envelope sender, `From` and `Sender` must be
+  the account's address, with or without a `+tag`; the null reverse-path
+  is allowed. `Bcc` is removed, `Date` and `Message-ID` are added when
+  missing, bare LF becomes CRLF. On top goes `Received: by <host>
+  (robinmail) with ESMTPSA id <id> (<TLS>); <date>`: no FROM clause, so
+  neither the address nor the EHLO name of the user's computer reaches a
+  recipient (a deliberate deviation from RFC 5321 4.4, as large providers
+  do it). A JMAP submission says `(JMAP)` instead of a WITH clause. Limits:
+  the `smtp` message size and recipient count, and
+  `max_recipients_per_hour` (300) per account, counted in the `submission`
+  table inside the insert, so it holds for all nodes together.
+- **Rspamd and DKIM.** The message is scanned with the account's address
+  in `User`, which makes Rspamd's `dkim_signing` sign it. Over HTTP Rspamd
+  returns the signature in the field `dkim-signature` of its reply, not
+  among the milter headers; it is written as the field it is, above the
+  message. `reject` refuses the submission (`550 5.7.1`,
+  `forbiddenToSend`), `soft reject` and an unreachable Rspamd defer it;
+  with `fail_open`, and without an Rspamd at all, mail goes out unsigned,
+  with a warning at start. `contrib/rspamd/local.d/dkim_signing.conf`: one
+  key per domain in `/var/lib/rspamd/dkim/<domain>.robinmail.key`, selector
+  `robinmail`. `robinmail dns <domain> [key file]` makes the key if the
+  file is not there (RSA 2048) and prints the MX, SPF, DKIM, DMARC and
+  MTA-STS records. robinmail itself signs and verifies nothing.
+- **Queue** (`internal/queue`, table `submission`). One row per message,
+  with the recipients and their state as JSON and a blob of its own: the
+  message as it goes out. Every node runs a worker (`outbound
+  {concurrency, per_destination, routes}`) that lists due rows every 5
+  seconds and claims one with a guarded update: claimed by a token, for 2
+  minutes, renewed every 40 seconds while the attempt runs. Results are
+  written under the claim; a node that lost it cannot write. A node that
+  dies leaves a claim that runs out. Recipients are grouped per domain:
+  one connection and one transaction per domain, at most 2 connections
+  per domain per node, an idle connection is kept 30 seconds and reused
+  after an `RSET`.
+- **Where mail goes** (RFC 5321 5.1). MX records by preference, equal
+  ones in random order; no MX means the domain's own address; a null MX
+  (RFC 7505) fails with 5.1.10; a domain without MX and address with
+  5.1.2; our own host name among the MX hosts drops it and everything not
+  preferred over it, and 5.4.6 if nothing is left. Every address of a
+  host is tried, so IPv4 covers for IPv6 and the reverse. A domain of
+  ours (the `domain` table) is never looked up: the message is stored
+  here through `delivery.Local`. `outbound.routes` sends a domain, or
+  `*`, to a fixed `host:port` without DNS (a relay; development).
+- **SMTP client** (`internal/smtp`). EHLO with HELO fallback, STARTTLS,
+  PIPELINING (one write for MAIL, RCPT and DATA), SIZE, 8BITMIME, SMTPUTF8,
+  multi-line replies, a result per recipient, the timeouts of RFC 5321
+  4.5.3.2. A non-ASCII domain is sent as A-labels; a non-ASCII local part
+  or header needs SMTPUTF8 and fails with 5.6.7 without it; 8-bit content
+  to a server without 8BITMIME fails with 5.6.3 (we do not convert).
+  Without a policy TLS is opportunistic: used when offered, certificate
+  not checked, one try without TLS if the handshake fails.
+- **MTA-STS** (RFC 8461). The TXT record is read for every delivery; a new
+  id, or no cached policy, fetches
+  `https://mta-sts.<domain>/.well-known/mta-sts.txt` (no redirects,
+  `text/plain`, 64 kB). Policies are cached in `mta_sts` for all nodes; a
+  cached one keeps applying when DNS or the fetch fails, until it
+  expires. `enforce`: only hosts the policy names, STARTTLS required, TLS
+  1.2 or later, certificate valid for the host; otherwise the message
+  waits (4.7.0). `testing`: the same is checked and logged. DANE is not
+  implemented: it needs a resolver that validates DNSSEC. TLS-RPT is
+  phase 8.
+- **Retries and bounces.** After a try a message waits 5 minutes, then
+  twice as long each time up to 4 hours: 36 tries in five days, then it is
+  given up with 4.4.7. A 5yz reply fails that recipient at once. What
+  failed is reported to the sender as an RFC 3464 `multipart/report`
+  (text, `message/delivery-status`, the original header) from
+  `MAILER-DAEMON@<host>`, stored in the sender's Inbox with `Return-Path:
+  <>`, in the thread of the message. Every sender is a local user, so a
+  bounce never leaves the server. A message with the null reverse-path
+  gets none.
+- **Incoming notifications.** A DSN from elsewhere is ordinary mail in the
+  Inbox. If it has the null reverse-path and returns the Message-ID of a
+  message the account sent, its `failed` and `delivered` recipients are
+  recorded in that submission's `deliveryStatus`.
+- **JMAP.** Capability `urn:ietf:params:jmap:submission`
+  (`maxDelayedSend` 0, no extensions). Upload: `POST
+  /jmap/upload/{accountId}/` answers 201 with `blobId`, `type`, `size`; an
+  upload nothing refers to is removed after a day. A blobId is the SHA-256
+  of a message or upload, optionally followed by part ids:
+  `<blob>-3` is part 3, `<blob>-3-2` part 2 of the message attached as
+  part 3.
+  - `Email/set` create: `mailboxIds`, `keywords`, `receivedAt`; the header
+    properties `from`, `to`, `cc`, `bcc`, `replyTo`, `sender`, `subject`,
+    `sentAt`, `messageId`, `inReplyTo`, `references` and any
+    `header:Name:asForm[:all]`; the body as `bodyStructure`, or as
+    `textBody`, `htmlBody` and `attachments`, from which
+    mixed[alternative[text, related[html, inline images]], attachments]
+    is made; parts from `bodyValues` (`partId`) or a blob (`blobId`), with
+    `type`, `name`, `disposition`, `cid`, `language`, `location`. `Date`
+    and `Message-ID` are added. Emails are immutable: a changed draft is a
+    create and a destroy in one call.
+  - `Email/import`, `Email/parse`, and `Email/copy`. RFC 8620 5.4 says
+    the two accounts of a `/copy` "MUST" differ; a user here has one
+    account, so it is offered within the account (deviation, with a test).
+  - `Identity/get|changes|set`. Identity `i1` is the account's address and
+    cannot be destroyed; others may only be for that address with a
+    `+tag` (`forbiddenFrom` otherwise). `email` never changes.
+  - `EmailSubmission/get|changes|query|queryChanges|set`. Create takes
+    `identityId`, `emailId` and optionally `envelope` (without one: sender
+    from `Sender` or `From`, recipients from `To`, `Cc`, `Bcc`).
+    `onSuccessUpdateEmail` and `onSuccessDestroyEmail` run as an
+    `Email/set` whose response follows. `undoStatus` is `pending` for
+    `undo_seconds` (10) and can be set to `canceled` until a node claims
+    the message; then `final` and `cannotUnsend`. `deliveryStatus` per
+    recipient: `delivered` is `queued`, `no`, `yes` (in a mailbox on this
+    server, or confirmed by a DSN) or `unknown` (another server took it);
+    `smtpReply` is the last reply; `displayed` is always `unknown`.
+    Destroying a submission removes the record, not the mail.
+- **Message building** (`internal/message`). `Build` writes a tree of
+  parts; text is 7bit when it is ASCII in lines of at most 78, otherwise
+  quoted-printable, or base64 when most of it would be escaped; other
+  types base64; an attached message is never re-encoded. Headers: RFC 2047
+  encoded words of at most 75 characters that never split a character,
+  quoted or encoded display names, folding at 78, RFC 2231 for parameter
+  values that are long or not ASCII.
+- **Commands and files.** `robinmail dns`; `contrib/dev/send-demo.sh`
+  (two local servers, `curl`); the development instance of `seed.sh`
+  routes every other domain to a dead port, so it cannot send real mail; `compose.yaml` has a second rqlite
+  (`rqlite-b`, port 4003) and mounts the DKIM config; `cluster.yaml` has
+  `robinmail-sink`, a robinmail with its own database for the cluster to
+  exchange mail with. Schema version 5; the migration replaces the unused
+  `submission` table.
+- **Tests.** RFC tests for RFC 5321 (client, MX rules), 2920, 1870, 6152,
+  6531, 3207, 4954, 4616, 8314, 7505, 8461, 3464, 3463, 2047, 2231, 2045
+  and RFC 8621 4.6 to 4.9, 6 and 7; what `Build` writes is read back by
+  our parser, `net/mail` and `mime/multipart`. No test asks a real name
+  server or connects beyond loopback: DNS and the dialer are injected.
+  - `TestSendBetweenTwoServers` (`cmd/robinmail`): two servers with a
+    domain and a database each. Submission over 587 and 465, delivery to
+    the other server, a reply over JMAP, a 5.1.1 bounce at once, local
+    delivery without SMTP, MTA-STS `enforce` with a certificate that is
+    and one that is not valid for the MX host.
+  - `TestSendRetriesThenBounces`: the test moves the queue's clock; 36
+    attempts on the schedule, then the bounce with 4.4.7.
+  - `TestOutgoingMailIsSignedByRspamd`: through a real Rspamd with a key
+    made by `robinmail dns`; the body hash and the RSA signature of what
+    arrived verify against the printed public key.
+  - `internal/queue`: a node that dies holding a claim (nothing happens
+    until the claim runs out, then one delivery), three nodes on one
+    queue (30 messages, each once), the exact backoff schedule.
+  - `make cluster-test` (f): the other side is frozen so claims are held,
+    60 messages are submitted through node 1, node 2 is killed with 8
+    claims. 52 arrived within a second of letting the other side go, the
+    8 of the dead node 2 minutes after the kill; 0 lost, 0 doubled; the
+    reply from the other side was read through the restarted node.
+- **The tests found and fixed**, in the new code:
+  - Nothing was signed: the DKIM signature was looked for among Rspamd's
+    milter headers (the real Rspamd test).
+  - A recipient with an undeliverable domain was failed without being
+    reported to the sender.
+  - `Build` added a line end to every part of a multipart, so a text body
+    came back one line end longer than it was created with.
+- **Deviations kept on purpose**, each with a test or a comment that says
+  why: no FROM clause in the submission `Received` line; `Email/copy`
+  within one account; `header:Content-*` properties on a body part are
+  refused except `Content-Description` (the part's own properties write
+  those fields); a 4yz reply to a recipient is not tried on the next MX
+  host but waits for the next try.
+- **Not handled.**
+  - A message can be delivered twice: when a node dies, or cannot reach
+    rqlite, after the other server said 250 and before that is written
+    down, the next attempt sends it again. SMTP cannot prevent that. A
+    receiving robinmail drops the second copy (its delivery key).
+  - A claim outlives its node by up to 2 minutes; mail a dying node held
+    is that much late.
+  - No DANE, no TLS-RPT, no REQUIRETLS, no DSN extension (RFC 3461: no
+    `NOTIFY`, `RET`, `ENVID`), no "delayed" notice before the final
+    bounce, no FUTURERELEASE.
+  - A bounce quotes only the header of the original.
+  - An incoming DSN is matched by the Message-ID it returns. Someone who
+    knows that id and a recipient can make a sent message look failed to
+    its sender; nothing else changes.
+  - Finished JMAP submissions stay until the client destroys them;
+    submissions over SMTP are trimmed after a day.
+  - Mail between two users of the same server is not scanned on the way
+    in: it was scanned when it was submitted.
+  - No app passwords: SMTP AUTH takes the account password until phase 7.
+  - Phase 2's gap is still there: when storing an inbound message fails
+    for some of its recipients the sender gets `451`, not a notification.
+  - No relay limit per IP or per connection beyond the SMTP server's own,
+    and no limit on the size of the queue.
 
 ### Phase 6: push and IMAP
 
@@ -692,6 +893,12 @@ Built as follows:
   same sender within a week is dropped as a retry. Intended, but worth
   knowing.
 - Where phase 5 gets tested against real providers: which host and domain.
+  Still open: everything sent so far went over loopback or a Docker
+  network. What only real providers can show: whether Gmail, Outlook and
+  the like accept the mail (PTR, SPF, DKIM alignment, their rate limits),
+  how their greylisting and 4yz replies meet our backoff, what their
+  MTA-STS policies and certificates do under `enforce`, and whether their
+  bounces parse.
 - The strict `MAIL FROM` grammar refuses senders that exist in the wild,
   mostly hosts with an underscore in their name. Postfix accepts those by
   default. The RFC says `501`; real traffic in phase 5 will show whether
@@ -703,9 +910,9 @@ Built as follows:
 - `<Postmaster>` without a domain picks one domain's postmaster. With
   several domains of different owners that may be the wrong person.
 - The Decisions say the name of a blob "is also the JMAP blobId". That
-  holds for a message. A body part needs a blobId too and has no file of
-  its own, so its id is `<message blob>-<partId>`. Phase 5's upload will
-  make real blobs again; `Email/set` create then has to accept both kinds.
+  holds for a message and for an upload. A body part has no file of its
+  own, so its id is `<blob>-<partId>`, and `Email/set` create, `/import`
+  and `/parse` accept both kinds.
 - The HTML view drops `<style>` blocks, so mail that is laid out with a
   style sheet instead of attributes looks plain. Keeping them needs a CSS
   sanitiser of our own. Worth it once the webmail shows real mail.
@@ -754,3 +961,23 @@ Built as follows:
   threads better but only the server can count.
 - `go build ./...` walks `web/node_modules` when it exists. No npm package
   there ships Go files now; one that does would become part of `./...`.
+- DKIM keys are files on every Rspamd. A cluster has to copy them by
+  hand. Rspamd can also take the key with the request
+  (`use_http_headers`), which would let robinmail keep keys in rqlite;
+  not tried.
+- `undo_seconds` is a server setting (10). The webmail cannot ask for a
+  longer or shorter hold per message; FUTURERELEASE (`HOLDFOR`) would be
+  the standard way.
+- `deliveryStatus` says `unknown` for mail another server accepted, as RFC
+  8621 defines it. A user will read that as "sent"; the webmail has to
+  word it.
+- The queue asks rqlite for due rows every 5 seconds on every node, also
+  when it is empty. A submission could wake the local worker at once; the
+  5 seconds are what a send waits today at most.
+- The MTA-STS TXT record is looked up for every delivery to a domain, and
+  the resolver's cache is the only one in front of it.
+- A bounce is stored in the Inbox without going through Rspamd or any
+  filter; with Sieve (phase 8) it should pass through the user's rules.
+- The tests of all packages share one rqlite database. Queue rows are now
+  purged by the tests that make them, but a `serve` on the development
+  database still works whatever is queued there.

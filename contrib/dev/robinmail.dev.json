@@ -10,6 +10,13 @@
   },
   "web": {
     "http_listen": "127.0.0.1:8080",
-    "dev_origins": ["http://localhost:5173"]
+    "dev_origins": [
+      "http://localhost:5173"
+    ]
+  },
+  "outbound": {
+    "routes": {
+      "*": "127.0.0.1:1"
+    }
   }
 }
