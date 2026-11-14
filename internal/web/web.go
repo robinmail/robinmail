@@ -37,6 +37,13 @@ type Accounts interface {
 	DeleteSession(ctx context.Context, tokenHash string) error
 }
 
+// Limits counts failed logins for all nodes together. *store.Store has it.
+type Limits interface {
+	LoginFailures(ctx context.Context, window time.Duration, keys ...string) (map[string]store.LoginFailure, error)
+	AddLoginFailure(ctx context.Context, window time.Duration, keys ...string) error
+	ClearLoginFailures(ctx context.Context, keys ...string) error
+}
+
 // SessionTTL is how long a login lasts.
 const SessionTTL = 30 * 24 * time.Hour
 
@@ -47,6 +54,9 @@ type Server struct {
 	// another host are refused, except localhost on a plain listener.
 	Hostname string
 	Accounts Accounts
+	// Limits shares the login failure counters between the nodes. nil
+	// leaves only this node's own, in memory.
+	Limits Limits
 	// JMAP serves /jmap/ and /.well-known/jmap. It gets only requests of
 	// an authenticated user, with the user in the context.
 	JMAP http.Handler
@@ -92,7 +102,8 @@ func Placeholder() fs.FS {
 
 // Login rate limits: failed attempts per window.
 const (
-	loginWindow       = 15 * time.Minute
+	LoginWindow       = 15 * time.Minute
+	loginWindow       = LoginWindow
 	maxFailsPerAddr   = 10
 	maxFailsPerIP     = 50
 	maxHashing        = 4 // Argon2id takes 64 MiB per check

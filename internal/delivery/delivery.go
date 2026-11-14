@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mikepage/robinmail/internal/address"
@@ -42,13 +41,6 @@ type Deliverer struct {
 	Logger   *slog.Logger
 	Resolver Resolver         // nil uses net.DefaultResolver
 	Now      func() time.Time // for tests
-	// DomainTTL is how long the list of accepted domains is kept before it
-	// is read from the store again. [30s]
-	DomainTTL time.Duration
-
-	mu        sync.Mutex
-	domains   []string
-	domainsAt time.Time
 }
 
 func (d *Deliverer) now() time.Time {
@@ -58,35 +50,13 @@ func (d *Deliverer) now() time.Time {
 	return time.Now()
 }
 
-// acceptedDomains returns the domain table, read at most once per DomainTTL:
-// every RCPT asks, and a flood of them should not turn into a flood of
-// queries. A domain added or removed on any node takes effect within the
-// TTL. When the store cannot be reached an older list is better than
-// deferring all mail, so it stays in use until the store answers again.
+// acceptedDomains reads the domain table. Nothing is cached: every node
+// asks rqlite each time, so a domain added or removed on any node counts
+// for the next RCPT everywhere. It is one small read next to the account
+// lookup every RCPT does anyway. When rqlite does not answer, the mail is
+// deferred, as it would be at the account lookup a line later.
 func (d *Deliverer) acceptedDomains(ctx context.Context) ([]string, error) {
-	ttl := d.DomainTTL
-	if ttl == 0 {
-		ttl = 30 * time.Second
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	now := d.now()
-	if d.domains != nil && now.Sub(d.domainsAt) < ttl {
-		return d.domains, nil
-	}
-	list, err := d.Store.Domains(ctx)
-	if err != nil {
-		if d.domains != nil {
-			d.log().Warn("domain lookup failed, using the last known list", "err", err)
-			return d.domains, nil
-		}
-		return nil, err
-	}
-	if list == nil {
-		list = []string{}
-	}
-	d.domains, d.domainsAt = list, now
-	return list, nil
+	return d.Store.Domains(ctx)
 }
 
 // Resolver is the part of *net.Resolver used for reverse DNS.

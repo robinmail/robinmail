@@ -343,41 +343,30 @@ func FuzzNewField(f *testing.F) {
 	})
 }
 
-// The accepted domains come from the store and are cached for DomainTTL.
+// The accepted domains come from the store and are read for every RCPT:
+// a change made on any node counts at once on all of them.
 func TestDomainsFromStore(t *testing.T) {
 	d, st := setup(t, "")
-	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
-	d.Now = func() time.Time { return now }
 	rcpt := func(to string) int { return code(d.Rcpt(context.Background(), env(), to)) }
 
 	st.accounts["anna@second.test"] = "acct-anna"
 	if got := rcpt("anna@second.test"); got != 550 {
 		t.Errorf("recipient in a domain not in the table = %d, want 550", got)
 	}
-	// Added on another node: unknown here until the cache expires.
+	// Added on another node.
 	st.domains = []string{"example.test", "second.test"}
+	if got := rcpt("anna@second.test"); got != 0 {
+		t.Errorf("right after the domain was added = %d, want accepted", got)
+	}
+	// Removed on another node.
+	st.domains = []string{"example.test"}
 	if got := rcpt("anna@second.test"); got != 550 {
-		t.Errorf("within the TTL = %d, want 550", got)
+		t.Errorf("right after the domain was removed = %d, want 550", got)
 	}
-	if st.domainCalls != 1 {
-		t.Errorf("%d domain lookups for two RCPTs, want 1", st.domainCalls)
-	}
-	now = now.Add(31 * time.Second)
-	if got := rcpt("anna@second.test"); got != 0 {
-		t.Errorf("after the TTL = %d, want accepted", got)
-	}
-
-	// The store going away keeps the last known list in use.
+	// Without an answer there is nothing to decide on: defer.
 	st.noDomains = errors.New("rqlite is down")
-	now = now.Add(time.Hour)
-	if got := rcpt("anna@second.test"); got != 0 {
-		t.Errorf("with the store down and a cached list = %d, want accepted", got)
-	}
-	// Without any list there is nothing to decide on: defer.
-	d2, st2 := setup(t, "")
-	st2.noDomains = errors.New("rqlite is down")
-	if got := code(d2.Rcpt(context.Background(), env(), "mike@example.test")); got != 451 {
-		t.Errorf("with the store down and no list = %d, want 451", got)
+	if got := rcpt("mike@example.test"); got != 451 {
+		t.Errorf("with the store down = %d, want 451", got)
 	}
 }
 

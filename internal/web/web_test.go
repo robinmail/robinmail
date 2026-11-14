@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -692,5 +693,151 @@ func TestStatic(t *testing.T) {
 	}
 	if rec := st.do("GET", tlsBase+"/auth/anything", ""); rec.Code != 404 || strings.Contains(rec.Body.String(), "webmail") {
 		t.Errorf("/auth/anything: %d", rec.Code)
+	}
+}
+
+// fakeLimits is the failure counters in rqlite: one map shared by every
+// node of a test.
+type fakeLimits struct {
+	mu     sync.Mutex
+	now    func() time.Time
+	m      map[string]store.LoginFailure
+	down   bool
+	reads  int
+	writes int
+}
+
+func (f *fakeLimits) LoginFailures(_ context.Context, window time.Duration, keys ...string) (map[string]store.LoginFailure, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	if f.down {
+		return nil, errors.New("rqlite is down")
+	}
+	out := map[string]store.LoginFailure{}
+	for _, k := range keys {
+		if v, ok := f.m[k]; ok && v.Started.Add(window).After(f.now()) {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeLimits) AddLoginFailure(_ context.Context, window time.Duration, keys ...string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes++
+	if f.down {
+		return errors.New("rqlite is down")
+	}
+	for _, k := range keys {
+		v, ok := f.m[k]
+		if !ok || !v.Started.Add(window).After(f.now()) {
+			v = store.LoginFailure{Started: f.now()}
+		}
+		v.Count++
+		f.m[k] = v
+	}
+	return nil
+}
+
+func (f *fakeLimits) ClearLoginFailures(_ context.Context, keys ...string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes++
+	for _, k := range keys {
+		delete(f.m, k)
+	}
+	return nil
+}
+
+// Two nodes share the failure counters: guesses spread over both are
+// counted together, and the lock-out holds on a node that saw none of
+// them.
+func TestLoginRateLimitAcrossNodes(t *testing.T) {
+	a, b := newSite(t), newSite(t)
+	limits := &fakeLimits{now: func() time.Time { return a.clock }, m: map[string]store.LoginFailure{}}
+	a.s.Limits, b.s.Limits = limits, limits
+
+	for i := 0; i < maxFailsPerAddr; i++ {
+		node := []*site{a, b}[i%2]
+		if rec := node.login(tlsBase, "anna@example.test", "guess", from(fmt.Sprintf("198.51.100.%d:1000", i))); rec.Code != 401 {
+			t.Fatalf("attempt %d: %d", i, rec.Code)
+		}
+	}
+	// Each node saw half: neither would lock out by itself.
+	c := newSite(t) // a third node that saw nothing
+	c.s.Limits = limits
+	for name, node := range map[string]*site{"a": a, "b": b, "c": c} {
+		checks := node.verified.Load()
+		rec := node.login(tlsBase, "anna@example.test", "correct horse", from("203.0.113.9:1000"))
+		if rec.Code != 429 || rec.Header().Get("Retry-After") == "" {
+			t.Errorf("node %s after %d failures in the cluster: %d", name, maxFailsPerAddr, rec.Code)
+		}
+		if node.verified.Load() != checks {
+			t.Errorf("node %s: a locked-out login still cost a password check", name)
+		}
+	}
+	if rec := c.login(tlsBase, "bob@example.test", "battery staple", from("203.0.113.9:1000")); rec.Code != 200 {
+		t.Errorf("another account: %d", rec.Code)
+	}
+	// The window ends for all nodes together.
+	a.clock = a.clock.Add(loginWindow + time.Second)
+	c.clock = a.clock
+	if rec := c.login(tlsBase, "anna@example.test", "correct horse"); rec.Code != 200 {
+		t.Errorf("after the window: %d", rec.Code)
+	}
+
+	// The same for one IP guessing at many addresses through two nodes.
+	limits.m = map[string]store.LoginFailure{}
+	a, b = newSite(t), newSite(t)
+	a.s.Limits, b.s.Limits = limits, limits
+	limits.now = func() time.Time { return a.clock }
+	for i := 0; i < maxFailsPerIP; i++ {
+		[]*site{a, b}[i%2].login(tlsBase, fmt.Sprintf("user%d@example.test", i), "guess", from("198.51.100.7:4000"))
+	}
+	if rec := b.login(tlsBase, "bob@example.test", "battery staple", from("198.51.100.7:5000")); rec.Code != 429 {
+		t.Errorf("IP after %d failures over two nodes: %d", maxFailsPerIP, rec.Code)
+	}
+}
+
+// What the shared counters cost: a login without failures behind it reads
+// once and writes nothing; a success after failures clears the address and
+// leaves the IP; and when rqlite is away the node's own counters still
+// limit.
+func TestLoginRateLimitCostAndFallback(t *testing.T) {
+	st := newSite(t)
+	limits := &fakeLimits{now: func() time.Time { return st.clock }, m: map[string]store.LoginFailure{}}
+	st.s.Limits = limits
+
+	if rec := st.login(tlsBase, "anna@example.test", "correct horse"); rec.Code != 200 {
+		t.Fatal(rec.Code)
+	}
+	if limits.reads != 1 || limits.writes != 0 {
+		t.Errorf("a clean login cost %d reads and %d writes, want 1 and 0", limits.reads, limits.writes)
+	}
+	st.login(tlsBase, "anna@example.test", "guess", from("198.51.100.7:1"))
+	st.login(tlsBase, "anna@example.test", "guess", from("198.51.100.7:1"))
+	if limits.m["a:anna@example.test"].Count != 2 || limits.m["i:198.51.100.7"].Count != 2 {
+		t.Errorf("after two failures: %+v", limits.m)
+	}
+	st.login(tlsBase, "anna@example.test", "correct horse", from("198.51.100.7:1"))
+	if _, ok := limits.m["a:anna@example.test"]; ok || limits.m["i:198.51.100.7"].Count != 2 {
+		t.Errorf("after a success: %+v", limits.m)
+	}
+	// A name that is not an address is counted under its own text.
+	st.login(tlsBase, "not an address", "guess")
+	if limits.m["a:not an address"].Count != 1 {
+		t.Errorf("unparsable name: %+v", limits.m)
+	}
+
+	limits.down = true
+	for i := 0; i < maxFailsPerAddr; i++ {
+		if rec := st.login(tlsBase, "bob@example.test", "guess", from(fmt.Sprintf("198.51.100.%d:1000", i))); rec.Code != 401 {
+			t.Fatalf("attempt %d with rqlite down: %d", i, rec.Code)
+		}
+	}
+	if rec := st.login(tlsBase, "bob@example.test", "battery staple"); rec.Code != 429 {
+		t.Errorf("with rqlite down the node's own limit did not hold: %d", rec.Code)
 	}
 }

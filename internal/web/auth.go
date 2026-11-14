@@ -95,6 +95,10 @@ func (s *Server) credentials(r *http.Request, username, password string) (store.
 	if wait, blocked := s.byAddress.blocked(key); blocked {
 		return store.Account{}, http.StatusTooManyRequests, wait
 	}
+	shared, wait, blocked := s.sharedFailures(r, key, ip)
+	if blocked {
+		return store.Account{}, http.StatusTooManyRequests, wait
+	}
 
 	var acct store.Account
 	hash := "" // an unknown account costs as much time as a wrong password
@@ -116,11 +120,54 @@ func (s *Server) credentials(r *http.Request, username, password string) (store.
 	if !match {
 		s.byIP.fail(ip)
 		s.byAddress.fail(key)
+		if s.Limits != nil {
+			if err := s.Limits.AddLoginFailure(r.Context(), loginWindow, addressKey(key), ipKey(ip)); err != nil {
+				s.Logger.Warn("login: counting the failure for the other nodes failed", "err", err)
+			}
+		}
 		s.Logger.Warn("login failed", "address", key, "ip", ip)
 		return store.Account{}, http.StatusUnauthorized, 0
 	}
 	s.byAddress.reset(key)
+	// Only when there is something to forget: most logins have no failures
+	// behind them and then cost no write.
+	if _, had := shared[addressKey(key)]; had {
+		if err := s.Limits.ClearLoginFailures(r.Context(), addressKey(key)); err != nil {
+			s.Logger.Warn("login: clearing the failures failed", "err", err)
+		}
+	}
 	return acct, 0, 0
+}
+
+// Keys of the shared counters.
+func addressKey(address string) string { return "a:" + address }
+func ipKey(ip string) string           { return "i:" + ip }
+
+// sharedFailures asks the counters all nodes share whether the address or
+// the IP is locked out. The limits are the same as for this node's own
+// counters in memory, which stay as they are: they are what is left when
+// rqlite does not answer, and then the limits hold per node again.
+//
+// The cost for a login is one read that the nearest rqlite node answers
+// from its own copy (store.LoginFailures), next to an Argon2id check that
+// takes a hundred times longer. Only a failed login writes.
+func (s *Server) sharedFailures(r *http.Request, key, ip string) (map[string]store.LoginFailure, time.Duration, bool) {
+	if s.Limits == nil {
+		return nil, 0, false
+	}
+	fails, err := s.Limits.LoginFailures(r.Context(), loginWindow, addressKey(key), ipKey(ip))
+	if err != nil {
+		s.Logger.Warn("login: reading the shared failure counters failed, using this node's own", "err", err)
+		return nil, 0, false
+	}
+	for k, max := range map[string]int{addressKey(key): maxFailsPerAddr, ipKey(ip): maxFailsPerIP} {
+		if f, ok := fails[k]; ok && f.Count >= max {
+			if left := f.Started.Add(loginWindow).Sub(s.Now()); left > 0 {
+				return fails, left, true
+			}
+		}
+	}
+	return fails, 0, false
 }
 
 // login is POST /auth/login with {"username": "...", "password": "..."}.
@@ -261,7 +308,8 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (store.Acc
 
 // limiter counts failures per key in a fixed window and blocks a key that
 // reached the maximum until its window ends. It lives in memory: per node,
-// and gone at a restart. Phase 7 moves it to rqlite.
+// and gone at a restart. The counters all nodes share are in rqlite
+// (sharedFailures); this one is the fallback for when rqlite is away.
 type limiter struct {
 	mu     sync.Mutex
 	max    int
