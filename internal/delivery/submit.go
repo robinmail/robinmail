@@ -416,7 +416,7 @@ func (d *Deliverer) Local(ctx context.Context, from, to string, msg []byte) erro
 	fields = removeHeader(fields, "Return-Path", 0)
 	top := []field{{name: "Return-Path", raw: []byte("Return-Path: <" + oneLine(from) + ">\r\n")}}
 	out := joinHeader(append(top, fields...), rest)
-	_, err = d.Store.Deliver(ctx, acct.ID, store.Message{Raw: out, Key: "local:" + deliveryKey(from, msg), ReceivedAt: d.now()})
+	_, err = d.Store.Deliver(ctx, acct.ID, store.Message{Raw: out, Key: "local:" + deliveryKey(from, msg), Role: store.RoleInbox, ReceivedAt: d.now()})
 	if err != nil && !errors.Is(err, store.ErrDuplicate) {
 		d.log().Error("local delivery failed", "to", acct.Address, "err", err)
 		return errTempFail
