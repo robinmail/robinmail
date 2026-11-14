@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -64,21 +65,28 @@ func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, token string,
 // check verifies a password. The number of Argon2id computations running
 // at once is bounded: each takes 64 MiB. ok is false if the request went
 // away while waiting for a slot.
-func (s *Server) check(r *http.Request, hash, password string) (match, ok bool) {
+func (s *Server) check(ctx context.Context, hash, password string) (match, ok bool) {
 	select {
 	case s.hashing <- struct{}{}:
-	case <-r.Context().Done():
+	case <-ctx.Done():
 		return false, false
 	}
 	defer func() { <-s.hashing }()
 	return s.Verify(hash, password), true
 }
 
-// credentials checks an address and password, with the rate limits. It
-// returns the account, or the HTTP status to refuse with and how long the
-// client should wait.
+// credentials checks the address and password of an HTTP request.
 func (s *Server) credentials(r *http.Request, username, password string) (store.Account, int, time.Duration) {
-	ip := clientIP(r)
+	return s.Login(r.Context(), clientIP(r), username, password)
+}
+
+// Login checks an address and password, with the rate limits. It returns
+// the account, or an HTTP status that says why not (401 wrong, 429 too
+// many failures, 503 cannot tell right now) and how long the client should
+// wait. Every way into a node goes through here, SMTP AUTH too, so they
+// share the failure counters and the bound on password hashing.
+func (s *Server) Login(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration) {
+	s.init()
 	// The limiter key of an address that does not parse is the text itself,
 	// cut: guessing at nonsense names is limited like guessing at real ones.
 	key := username
@@ -95,7 +103,7 @@ func (s *Server) credentials(r *http.Request, username, password string) (store.
 	if wait, blocked := s.byAddress.blocked(key); blocked {
 		return store.Account{}, http.StatusTooManyRequests, wait
 	}
-	shared, wait, blocked := s.sharedFailures(r, key, ip)
+	shared, wait, blocked := s.sharedFailures(ctx, key, ip)
 	if blocked {
 		return store.Account{}, http.StatusTooManyRequests, wait
 	}
@@ -104,7 +112,7 @@ func (s *Server) credentials(r *http.Request, username, password string) (store.
 	hash := "" // an unknown account costs as much time as a wrong password
 	if perr == nil {
 		var err error
-		acct, err = s.Accounts.Account(r.Context(), addr.String())
+		acct, err = s.Accounts.Account(ctx, addr.String())
 		switch {
 		case err == nil:
 			hash = acct.PasswordHash
@@ -113,7 +121,7 @@ func (s *Server) credentials(r *http.Request, username, password string) (store.
 			return store.Account{}, http.StatusServiceUnavailable, 0
 		}
 	}
-	match, ok := s.check(r, hash, password)
+	match, ok := s.check(ctx, hash, password)
 	if !ok {
 		return store.Account{}, http.StatusServiceUnavailable, 0
 	}
@@ -121,7 +129,7 @@ func (s *Server) credentials(r *http.Request, username, password string) (store.
 		s.byIP.fail(ip)
 		s.byAddress.fail(key)
 		if s.Limits != nil {
-			if err := s.Limits.AddLoginFailure(r.Context(), loginWindow, addressKey(key), ipKey(ip)); err != nil {
+			if err := s.Limits.AddLoginFailure(ctx, loginWindow, addressKey(key), ipKey(ip)); err != nil {
 				s.Logger.Warn("login: counting the failure for the other nodes failed", "err", err)
 			}
 		}
@@ -132,7 +140,7 @@ func (s *Server) credentials(r *http.Request, username, password string) (store.
 	// Only when there is something to forget: most logins have no failures
 	// behind them and then cost no write.
 	if _, had := shared[addressKey(key)]; had {
-		if err := s.Limits.ClearLoginFailures(r.Context(), addressKey(key)); err != nil {
+		if err := s.Limits.ClearLoginFailures(ctx, addressKey(key)); err != nil {
 			s.Logger.Warn("login: clearing the failures failed", "err", err)
 		}
 	}
@@ -151,11 +159,11 @@ func ipKey(ip string) string           { return "i:" + ip }
 // The cost for a login is one read that the nearest rqlite node answers
 // from its own copy (store.LoginFailures), next to an Argon2id check that
 // takes a hundred times longer. Only a failed login writes.
-func (s *Server) sharedFailures(r *http.Request, key, ip string) (map[string]store.LoginFailure, time.Duration, bool) {
+func (s *Server) sharedFailures(ctx context.Context, key, ip string) (map[string]store.LoginFailure, time.Duration, bool) {
 	if s.Limits == nil {
 		return nil, 0, false
 	}
-	fails, err := s.Limits.LoginFailures(r.Context(), loginWindow, addressKey(key), ipKey(ip))
+	fails, err := s.Limits.LoginFailures(ctx, loginWindow, addressKey(key), ipKey(ip))
 	if err != nil {
 		s.Logger.Warn("login: reading the shared failure counters failed, using this node's own", "err", err)
 		return nil, 0, false

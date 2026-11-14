@@ -78,3 +78,18 @@ func ValidDomain(s string) bool {
 	}
 	return true
 }
+
+// Owns reports whether the account with the given canonical address may
+// send as addr: its own address, or that with a "+tag", which is delivered
+// to it as well.
+func Owns(account, addr string) bool {
+	a, err := Parse(addr)
+	if err != nil {
+		return false
+	}
+	if a.String() == account {
+		return true
+	}
+	base, _, tagged := strings.Cut(a.Local, "+")
+	return tagged && base != "" && base+"@"+a.Domain == account
+}
