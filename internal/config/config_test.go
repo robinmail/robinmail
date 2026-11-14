@@ -145,3 +145,41 @@ func TestNodeAndRqliteURLs(t *testing.T) {
 		}
 	}
 }
+
+// The sections for sending: defaults, and what is refused.
+func TestSubmissionAndOutbound(t *testing.T) {
+	const base = `"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://127.0.0.1:4001"}`
+	c, err := load(t, `{`+base+`}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Submission.Listen != "" || c.Submission.MaxRecipientsPerHour != 300 || c.Submission.UndoSeconds == nil || *c.Submission.UndoSeconds != 10 {
+		t.Errorf("defaults: %+v", c.Submission)
+	}
+	c, err = load(t, `{`+base+`,"tls":{"cert_file":"c.pem","key_file":"k.pem"},
+		"submission":{"listen":":587","listen_tls":":465","max_recipients_per_hour":50,"undo_seconds":0},
+		"outbound":{"concurrency":4,"per_destination":1,"routes":{"example.org":"relay.example.net:25","*":"127.0.0.1:2525"}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 0 is a value: send at once.
+	if *c.Submission.UndoSeconds != 0 || c.Submission.MaxRecipientsPerHour != 50 || c.Outbound.Routes["*"] != "127.0.0.1:2525" || c.Outbound.Concurrency != 4 {
+		t.Errorf("config: %+v %+v", c.Submission, c.Outbound)
+	}
+	for name, extra := range map[string]string{
+		// A password must not cross a listener that cannot encrypt.
+		"submission without a certificate":   `"submission":{"listen":":587"}`,
+		"implicit TLS without a certificate": `"submission":{"listen_tls":":465"}`,
+		"a negative rate limit":              `"submission":{"max_recipients_per_hour":-1}`,
+		"an undo time of more than an hour":  `"submission":{"undo_seconds":3601}`,
+		"a negative undo time":               `"submission":{"undo_seconds":-1}`,
+		"a route without a port":             `"outbound":{"routes":{"example.org":"relay.example.net"}}`,
+		"a route for something not a domain": `"outbound":{"routes":{"not a domain":"127.0.0.1:25"}}`,
+		"negative concurrency":               `"outbound":{"concurrency":-1}`,
+		"an unknown member":                  `"submission":{"port":587}`,
+	} {
+		if _, err := load(t, `{`+base+`,`+extra+`}`); err == nil {
+			t.Errorf("%s is accepted", name)
+		}
+	}
+}
