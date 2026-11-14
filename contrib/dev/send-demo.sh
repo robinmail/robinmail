@@ -61,13 +61,15 @@ setup() { # command domain user
 setup a a.robinmail.test anna@a.robinmail.test "$A/robinmail.json"
 setup b b.robinmail.test bob@b.robinmail.test "$B/robinmail.json"
 
-a serve 2> "$A/serve.log" &
+# The binary itself in the background, not the shell function: the pid is
+# then the server's, and the trap below stops it.
+dev/robinmail -config "$A/robinmail.json" serve 2> "$A/serve.log" &
 PID_A=$!
-b serve 2> "$B/serve.log" &
+dev/robinmail -config "$B/robinmail.json" serve 2> "$B/serve.log" &
 PID_B=$!
 JAR_A=$(mktemp)
 JAR_B=$(mktemp)
-trap '{ kill $PID_A $PID_B; wait $PID_A $PID_B; } 2>/dev/null; rm -f "$JAR_A" "$JAR_B"' EXIT
+trap '{ kill $PID_A $PID_B; wait $PID_A $PID_B; } 2>/dev/null || true; rm -f "$JAR_A" "$JAR_B"' EXIT
 for url in $A_URL $B_URL; do
 	i=0
 	until curl -s -o /dev/null -m 2 "$url/auth/session"; do
