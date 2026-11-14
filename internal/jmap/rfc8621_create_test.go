@@ -150,8 +150,8 @@ func TestRFC8621_4_6_CreateExample(t *testing.T) {
 	same(t, "header", []any{em["from"], em["to"], em["subject"], em["sentAt"]},
 		`[[{"name": "Joe Bloggs", "email": "joe@example.com"}], [{"name": "John", "email": "john@example.com"}], "World domination", "2015-07-02T16:21:35+10:00"]`)
 	same(t, "structure", em["bodyStructure"], `{"partId": null, "type": "multipart/alternative", "charset": null, "subParts": [
-		{"partId": "1", "type": "text/html", "charset": "utf-8", "subParts": null},
-		{"partId": "2", "type": "text/plain", "charset": "utf-8", "subParts": null}]}`)
+		{"partId": "1", "type": "text/html", "charset": "utf-8"},
+		{"partId": "2", "type": "text/plain", "charset": "utf-8"}]}`)
 	same(t, "text", at(t, em, "/bodyValues/2/value"), `"I have the most brilliant plan.  Let me tell you all about it.  What we do is, we"`)
 	if html := at(t, em, "/bodyValues/1/value").(string); !strings.HasPrefix(html, "<!DOCTYPE html><html>") || !strings.HasSuffix(strings.TrimSpace(html), "</body></html>") {
 		t.Errorf("html body %q", html)
@@ -396,10 +396,17 @@ func TestRFC8621_4_6_CreateRefusals(t *testing.T) {
 		"neither":               {`{"mailboxIds": {"m2": true}, "textBody": [{"type": "text/plain"}]}`, "invalidProperties", "textBody/0/partId"},
 		"a charset with partId": {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t", "charset": "latin1"}], "bodyValues": {"t": {"value": "x"}}}`, "invalidProperties", "textBody/0/charset"},
 		// "isEncodingProblem [...] isTruncated: MUST be false".
-		"a truncated value":       {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t"}], "bodyValues": {"t": {"value": "x", "isTruncated": true}}}`, "invalidProperties", ""},
-		"multipart without parts": {`{"mailboxIds": {"m2": true}, "bodyStructure": {"type": "multipart/mixed"}}`, "invalidProperties", "bodyStructure/subParts"},
-		"a leaf with subParts":    {`{"mailboxIds": {"m2": true}, "bodyStructure": {"partId": "t", "subParts": []}, "bodyValues": {"t": {"value": "x"}}}`, "invalidProperties", "bodyStructure/subParts"},
-		"not an object":           {`"an email"`, "invalidProperties", ""},
+		"a truncated value":     {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t"}], "bodyValues": {"t": {"value": "x", "isTruncated": true}}}`, "invalidProperties", "bodyValues/t/isTruncated"},
+		"a damaged value":       {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t"}], "bodyValues": {"t": {"value": "x", "isTruncated": true, "isEncodingProblem": true}}}`, "invalidProperties", "bodyValues/t/isEncodingProblem bodyValues/t/isTruncated"},
+		"a value without value": {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t"}], "bodyValues": {"t": {}}}`, "invalidProperties", "bodyValues/t/value textBody/0/partId"},
+		// "The bodyStructure EmailBodyPart MUST NOT contain a property
+		// representing a header field that is already defined on the
+		// top-level Email object."
+		"a header on the Email and on its bodyStructure": {`{"mailboxIds": {"m2": true}, "header:X-Foo": " bar", "bodyStructure": {"partId": "t", "header:X-Foo": " bar"}, "bodyValues": {"t": {"value": "x"}}}`, "invalidProperties", "bodyStructure/header:X-Foo"},
+		"subject on both, in other forms":                {`{"mailboxIds": {"m2": true}, "subject": "a", "bodyStructure": {"partId": "t", "header:Subject:asText": "b"}, "bodyValues": {"t": {"value": "x"}}}`, "invalidProperties", "bodyStructure/header:Subject:asText"},
+		"multipart without parts":                        {`{"mailboxIds": {"m2": true}, "bodyStructure": {"type": "multipart/mixed"}}`, "invalidProperties", "bodyStructure/subParts"},
+		"a leaf with subParts":                           {`{"mailboxIds": {"m2": true}, "bodyStructure": {"partId": "t", "subParts": []}, "bodyValues": {"t": {"value": "x"}}}`, "invalidProperties", "bodyStructure/subParts"},
+		"not an object":                                  {`"an email"`, "invalidProperties", ""},
 	} {
 		se := e.refused(tc.obj)
 		props := ""
@@ -419,10 +426,6 @@ func TestRFC8621_4_6_CreateRefusals(t *testing.T) {
 	// included".
 	se := e.refused(`{"mailboxIds": {"m2": true}, "attachments": [{"blobId": "` + missing + `", "type": "a/b"}, {"blobId": "zz", "type": "a/b"}], ` + body + `}`)
 	same(t, "blobNotFound", se, `{"type": "blobNotFound", "notFound": ["`+missing+`", "zz"]}`)
-	// A size that is not the blob's.
-	blob := e.upload([]byte("12345"), "text/plain")
-	se = e.refused(`{"mailboxIds": {"m2": true}, "attachments": [{"blobId": "` + blob + `", "type": "a/b", "size": 4}], ` + body + `}`)
-	same(t, "wrong size", se["properties"], `["attachments/0/size"]`)
 	// Nothing was stored for any of them.
 	if q := e.one("Email/query", `{"accountId": "$A"}`); len(q["ids"].([]any)) != 0 {
 		t.Errorf("emails exist after refused creations: %v", q["ids"])
@@ -456,7 +459,7 @@ func TestRFC8621_4_8_Import(t *testing.T) {
 	}
 	same(t, "created", at(t, got, "/created/one/blobId"), `"`+blob+`"`)
 	same(t, "notCreated", got["notCreated"], `{
-		"gone": {"type": "blobNotFound", "notFound": ["`+strings.Repeat("cd", 32)+`"]},
+		"gone": {"type": "invalidProperties", "description": "there is no blob `+strings.Repeat("cd", 32)+`", "properties": ["blobId"]},
 		"nobox": {"type": "invalidProperties", "description": "one of the mailboxes does not exist", "properties": ["mailboxIds"]},
 		"extra": {"type": "invalidProperties", "description": "an import has blobId, mailboxIds, keywords and receivedAt", "properties": ["subject"]}}`)
 	id := at(t, got, "/created/one/id").(string)

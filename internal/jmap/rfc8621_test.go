@@ -650,16 +650,22 @@ func TestRFC8621EmailProperties(t *testing.T) {
 	same(t, "all, raw", prop("header:X-Tag:all"), `[" one", " two"]`)
 	same(t, "headers", at(t, prop("headers"), "/0"), `{"name": "Return-Path", "value": " <bounce@example.com>"}`)
 
-	// 4.1.4: bodyStructure. Deviation, on purpose: subParts is always in
-	// the bodyStructure, although the default bodyProperties of 4.2 do not
-	// list it. A structure without its parts is of no use to anyone, and
-	// the servers we know do the same.
+	// 4.1.4: bodyStructure. Deviation, on purpose: a multipart always has
+	// its subParts in the bodyStructure, although the default
+	// bodyProperties of 4.2 do not list it. A structure without its parts
+	// is of no use to anyone, and the servers we know do the same. A part
+	// that is not a multipart has the property only when it is asked for.
 	same(t, "bodyStructure", prop("bodyStructure", `, "bodyProperties": ["partId", "type"]`), `{
 		"partId": null, "type": "multipart/mixed", "subParts": [
 			{"partId": null, "type": "multipart/alternative", "subParts": [
-				{"partId": "1", "type": "text/plain", "subParts": null},
-				{"partId": "2", "type": "text/html", "subParts": null}]},
-			{"partId": "3", "type": "application/pdf", "subParts": null}]}`)
+				{"partId": "1", "type": "text/plain"},
+				{"partId": "2", "type": "text/html"}]},
+			{"partId": "3", "type": "application/pdf"}]}`)
+	same(t, "bodyStructure, subParts asked for", prop("bodyStructure", `, "bodyProperties": ["partId", "subParts"]`), `{
+		"partId": null, "subParts": [
+			{"partId": null, "subParts": [{"partId": "1", "subParts": null}, {"partId": "2", "subParts": null}]},
+			{"partId": "3", "subParts": null}]}`)
+	same(t, "a list of parts, subParts asked for", prop("attachments", `, "bodyProperties": ["partId", "subParts"]`), `[{"partId": "3", "subParts": null}]`)
 	same(t, "body part headers", prop("attachments", `, "bodyProperties": ["header:Content-Type:asRaw", "headers", "size"]`), `[{
 		"header:Content-Type:asRaw": " application/pdf; name=old.pdf", "size": 9,
 		"headers": [

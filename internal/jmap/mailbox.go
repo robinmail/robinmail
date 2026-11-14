@@ -3,6 +3,7 @@ package jmap
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -718,6 +719,17 @@ func (c *call) parseMailboxPatch(obj map[string]json.RawMessage) (mailboxPatch, 
 			if string(v) != "null" {
 				return p, invalidProps("the server does not let a client set a role", "role")
 			}
+		case "myRights":
+			// Not settable. Each right given is named, which says more
+			// than the property alone.
+			var rights map[string]json.RawMessage
+			if json.Unmarshal(v, &rights) != nil || len(rights) == 0 {
+				bad = append(bad, key)
+				break
+			}
+			for right := range rights {
+				bad = append(bad, key+"/"+right)
+			}
 		default:
 			bad = append(bad, key)
 		}
@@ -727,6 +739,39 @@ func (c *call) parseMailboxPatch(obj map[string]json.RawMessage) (mailboxPatch, 
 		return p, invalidProps("these properties cannot be set, or have the wrong type", bad...)
 	}
 	return p, nil
+}
+
+// dropUnchanged takes the server-set properties out of an update that
+// have the value the mailbox has now. RFC 8620 5.3: "Any server-set
+// properties MAY be included in the patch if their value is identical to
+// the current server value": a client may send back the whole object it
+// got with one property changed. A value that differs stays, and is
+// refused; of myRights only the rights that differ stay.
+func dropUnchanged(obj map[string]json.RawMessage, current map[string]any) {
+	same := func(given json.RawMessage, now any) bool {
+		var a, b any
+		raw, err := json.Marshal(now)
+		return err == nil && json.Unmarshal(given, &a) == nil && json.Unmarshal(raw, &b) == nil && reflect.DeepEqual(a, b)
+	}
+	for _, key := range []string{"id", "role", "totalEmails", "unreadEmails", "totalThreads", "unreadThreads"} {
+		if v, given := obj[key]; given && same(v, current[key]) {
+			delete(obj, key)
+		}
+	}
+	var rights map[string]json.RawMessage
+	if v, given := obj["myRights"]; given && json.Unmarshal(v, &rights) == nil && rights != nil {
+		now, _ := current["myRights"].(map[string]bool)
+		for right, v := range rights {
+			if have, known := now[right]; known && same(v, have) {
+				delete(rights, right)
+			}
+		}
+		if len(rights) == 0 {
+			delete(obj, "myRights")
+		} else if raw, err := json.Marshal(rights); err == nil {
+			obj["myRights"] = raw
+		}
+	}
 }
 
 // depthUnder returns how deep a mailbox under parent would be, 1 for the
@@ -872,7 +917,26 @@ func mailboxSet(c *call, raw json.RawMessage) (any, *methodError) {
 			run.notUpdated[sid] = &setError{Type: "notFound"}
 			continue
 		}
-		p, se := c.parseMailboxPatch(args.Update[sid])
+		obj := args.Update[sid]
+		serverSet := false
+		for _, key := range []string{"id", "role", "totalEmails", "unreadEmails", "totalThreads", "unreadThreads", "myRights"} {
+			if _, given := obj[key]; given {
+				serverSet = true
+			}
+		}
+		if serverSet {
+			// Only then is the mailbox as it is now needed.
+			all, err := st.Mailboxes(c.ctx, args.AccountID)
+			if err != nil {
+				return nil, storeErr(err)
+			}
+			for _, m := range all {
+				if m.ID == id {
+					dropUnchanged(obj, mailboxObject(m))
+				}
+			}
+		}
+		p, se := c.parseMailboxPatch(obj)
 		if se != nil {
 			run.notUpdated[sid] = se
 			continue

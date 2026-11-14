@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -261,21 +262,22 @@ func partObject(p *message.Part, blob string, props []string, specs map[string]h
 		case "location":
 			out[prop] = p.Location
 		case "subParts":
-			// Only in bodyStructure, below.
+			// A part that is not a multipart has none: null. Those of
+			// a multipart are written below.
+			out[prop] = nil
 		default:
 			out[prop] = specs[prop].value(p.Headers)
 		}
 	}
-	if withSubParts {
-		if p.IsMultipart() {
-			subs := make([]map[string]any, len(p.SubParts))
-			for i, sp := range p.SubParts {
-				subs[i] = partObject(sp, blob, props, specs, true)
-			}
-			out["subParts"] = subs
-		} else {
-			out["subParts"] = nil
+	// In bodyStructure a multipart always has its parts, asked for or
+	// not: the structure is those parts. A leaf has the property only
+	// when it was asked for.
+	if withSubParts && p.IsMultipart() {
+		subs := make([]map[string]any, len(p.SubParts))
+		for i, sp := range p.SubParts {
+			subs[i] = partObject(sp, blob, props, specs, true)
 		}
+		out["subParts"] = subs
 	}
 	return out
 }
@@ -292,10 +294,20 @@ func emailGet(c *call, raw json.RawMessage) (any, *methodError) {
 		FetchTextBodyValues bool      `json:"fetchTextBodyValues"`
 		FetchHTMLBodyValues bool      `json:"fetchHTMLBodyValues"`
 		FetchAllBodyValues  bool      `json:"fetchAllBodyValues"`
-		MaxBodyValueBytes   int64     `json:"maxBodyValueBytes"`
+		MaxBodyValueBytes   int64     `json:"-"`
+		// An UnsignedInt: not null, not a string, not negative, not a
+		// fraction.
+		RawMaxBodyValueBytes json.RawMessage `json:"maxBodyValueBytes"`
 	}
 	if e := c.decodeArgs(raw, &args, &args.AccountID); e != nil {
 		return nil, e
+	}
+	if v := args.RawMaxBodyValueBytes; v != nil {
+		n, err := strconv.ParseUint(string(v), 10, 53)
+		if err != nil {
+			return nil, invalidArgs("maxBodyValueBytes must be an UnsignedInt")
+		}
+		args.MaxBodyValueBytes = int64(n)
 	}
 	if args.IDs == nil {
 		return nil, mErr("requestTooLarge", "the server does not return all emails at once; give ids")

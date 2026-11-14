@@ -85,6 +85,7 @@ func writePart(b *bytes.Buffer, p *BuildPart, depth int) {
 	multipart := strings.HasPrefix(typ, "multipart/")
 	var body []byte
 	var boundary, encoding string
+	softEnd := false // end the quoted-printable text with a soft line break
 	var children [][]byte
 	if multipart {
 		if depth < MaxDepth {
@@ -108,6 +109,13 @@ func writePart(b *bytes.Buffer, p *BuildPart, depth int) {
 		default:
 			body = crlf
 			encoding = transferEncoding(typ, body)
+			// A message ends in CRLF. Text that does not, as the only
+			// part, would gain a line end it was not given. In
+			// quoted-printable it need not: a soft line break ends
+			// the last line and is no part of the text (RFC 2045 6.7).
+			if depth == 0 && len(body) > 0 && !bytes.HasSuffix(body, []byte("\r\n")) && encoding != "base64" {
+				encoding, softEnd = "quoted-printable", true
+			}
 		}
 	}
 
@@ -183,6 +191,22 @@ func writePart(b *bytes.Buffer, p *BuildPart, depth int) {
 		w := quotedprintable.NewWriter(b)
 		w.Write(body)
 		w.Close()
+		if softEnd {
+			// The line may be full (76): then its last character, or
+			// escape, moves to a line of its own.
+			out := b.Bytes()
+			line := out[bytes.LastIndexByte(out, '\n')+1:]
+			if len(line) > 75 {
+				cut := len(line) - 1
+				if i := bytes.LastIndexByte(line, '='); i >= len(line)-3 {
+					cut = i
+				}
+				tail := string(line[cut:])
+				b.Truncate(b.Len() - len(tail))
+				b.WriteString("=\r\n" + tail)
+			}
+			b.WriteString("=\r\n")
+		}
 	default:
 		b.Write(body)
 	}

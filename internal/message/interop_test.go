@@ -6,6 +6,11 @@ package message
 // address the peer took with 250 and could not deliver to.
 
 import (
+	"bytes"
+	"encoding/base64"
+	"io"
+	"mime/quotedprintable"
+	"net/mail"
 	"os"
 	"strings"
 	"testing"
@@ -84,5 +89,63 @@ func TestNotANotification(t *testing.T) {
 	other := strings.Replace(string(raw), "multipart/mixed;", "multipart/report; report-type=disposition-notification;", 1)
 	if _, ok := ParseDSN(Parse([]byte(other))); ok {
 		t.Error("a report of another type is read as a delivery status notification")
+	}
+}
+
+// A text that is the whole body and has no line end at its end keeps it
+// that way: the message must end in CRLF, so the text goes out as
+// quoted-printable with a soft line break at the end (RFC 2045 6.7 rule
+// 5), and no line is longer than 76. Before, such a text gained a line
+// end; Fastmail's JMAP-TestSuite reads a value back and compares.
+func TestBuildKeepsTextWithoutAFinalLineEnd(t *testing.T) {
+	for _, text := range []string{
+		"this is a text part",
+		"two\r\nlines",
+		strings.Repeat("x", 75), strings.Repeat("x", 76), strings.Repeat("x", 77),
+		strings.Repeat("x", 73) + "=", strings.Repeat("x", 74) + "=", strings.Repeat("x", 75) + "=",
+		strings.Repeat("x", 151), strings.Repeat("x", 152), strings.Repeat("é", 40),
+		"ends in a space ", "=", ".",
+	} {
+		raw := Build([]Header{Field("Subject", "x")}, &BuildPart{Type: "text/plain", Body: []byte(text)})
+		if !bytes.HasSuffix(raw, []byte("\r\n")) {
+			t.Errorf("%q: the message does not end in CRLF", text)
+		}
+		for _, line := range strings.Split(string(raw), "\r\n") {
+			if len(line) > 76 {
+				t.Errorf("%q: a line of %d: %q", text, len(line), line)
+			}
+		}
+		m := Parse(raw)
+		if got := string(m.Leaves[0].Content()); got != text {
+			t.Errorf("our parser reads %q back as %q", text, got)
+		}
+		// And a parser that is not ours.
+		msg, err := mail.ReadMessage(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r io.Reader = msg.Body
+		switch msg.Header.Get("Content-Transfer-Encoding") {
+		case "quoted-printable":
+			r = quotedprintable.NewReader(r)
+		case "base64":
+			r = base64.NewDecoder(base64.StdEncoding, r)
+		default:
+			t.Errorf("%q: transfer encoding %q", text, msg.Header.Get("Content-Transfer-Encoding"))
+		}
+		if got, _ := io.ReadAll(r); string(got) != text {
+			t.Errorf("the standard library reads %q back as %q", text, got)
+		}
+	}
+	// A text that ends in a line end needs none of this.
+	raw := Build(nil, &BuildPart{Type: "text/plain", Body: []byte("plain\r\n")})
+	if strings.Contains(string(raw), "quoted-printable") || !strings.HasSuffix(string(raw), "\r\n\r\nplain\r\n") {
+		t.Errorf("a text with a line end:\n%s", raw)
+	}
+	// Nor does a part inside a multipart: the delimiter's line break is
+	// not its content.
+	raw = Build(nil, &BuildPart{Type: "multipart/mixed", SubParts: []*BuildPart{{Type: "text/plain", Body: []byte("inside")}}})
+	if m := Parse(raw); string(m.Leaves[0].Content()) != "inside" || strings.Contains(string(raw), "quoted-printable") {
+		t.Errorf("inside a multipart:\n%s", raw)
 	}
 }

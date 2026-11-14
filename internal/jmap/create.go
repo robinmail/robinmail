@@ -78,6 +78,14 @@ func formValue(name, form string, raw json.RawMessage) (string, bool) {
 		if json.Unmarshal(raw, &v) != nil || !message.ValidRaw(v) {
 			return "", false
 		}
+		// A Raw value is what follows the colon, and by convention that
+		// starts with a space. A client that gives "cat" means the field
+		// "Foo: cat", not "Foo:cat", which is legal and which some
+		// readers do not expect (RFC 8621 4.6 lets the server adjust a
+		// message it writes; the JMAP-TestSuite reads " cat" back).
+		if v != "" && v[0] != ' ' && v[0] != '\t' {
+			v = " " + v
+		}
 		return v, true
 	case message.FormText:
 		var v string
@@ -199,6 +207,9 @@ type createBody struct {
 	missing []string          // blob ids that do not exist
 	bad     []string          // properties that are not valid
 	parts   int
+	// top has the names, in lower case, of the header fields the Email
+	// itself defines.
+	top map[string]bool
 }
 
 // partProperties are the properties an EmailBodyPart may have when an
@@ -242,6 +253,17 @@ func (b *createBody) part(raw json.RawMessage, path string, depth int) *message.
 	fields, bad := headerFields(obj)
 	for _, name := range bad {
 		b.bad = append(b.bad, path+"/"+name)
+	}
+	if depth == 0 {
+		// "The bodyStructure EmailBodyPart MUST NOT contain a property
+		// representing a header field that is already defined on the
+		// top-level Email object": the two are one header section, and
+		// the field would be there twice.
+		for name := range obj {
+			if spec, ok := parseHeaderSpec(name); ok && b.top[strings.ToLower(spec.name)] {
+				b.bad = append(b.bad, path+"/"+name)
+			}
+		}
 	}
 	p.Headers = fields
 	p.Type, _ = str("type")
@@ -299,9 +321,9 @@ func (b *createBody) part(raw json.RawMessage, path string, depth int) *message.
 				b.bad = append(b.bad, path+"/"+name)
 			}
 		}
-		if !strings.HasPrefix(p.Type, "text/") {
-			b.bad = append(b.bad, path+"/type")
-		}
+		// Any type: the RFC does not keep a value to text parts, and a
+		// client may well put JSON or a calendar in one. The content is
+		// the value in UTF-8.
 		p.Body = []byte(text)
 	default:
 		data, err := b.c.h.blobData(b.c.ctx, b.account, blobID)
@@ -309,12 +331,8 @@ func (b *createBody) part(raw json.RawMessage, path string, depth int) *message.
 			b.missing = append(b.missing, blobID)
 			break
 		}
-		if v, given := obj["size"]; given && string(v) != "null" {
-			var size int64
-			if json.Unmarshal(v, &size) != nil || size != int64(len(data)) {
-				b.bad = append(b.bad, path+"/size")
-			}
-		}
+		// "If a blobId is given, [size] may be included but is ignored
+		// by the server": also one that is wrong.
 		p.Charset, _ = str("charset")
 		p.Body = data
 		// A file: a text attachment with LF line ends must download as
@@ -440,7 +458,10 @@ func (c *call) createEmail(run *setRun, raw json.RawMessage) (map[string]any, *s
 	fields, badHeaders := headerFields(obj)
 	bad = append(bad, badHeaders...)
 
-	b := &createBody{c: c, account: run.account, values: map[string]string{}}
+	b := &createBody{c: c, account: run.account, values: map[string]string{}, top: map[string]bool{}}
+	for _, f := range fields {
+		b.top[strings.ToLower(f.Name)] = true
+	}
 	if v, ok := obj["bodyValues"]; ok && string(v) != "null" {
 		var values map[string]struct {
 			Value             *string `json:"value"`
@@ -452,11 +473,20 @@ func (c *call) createEmail(run *setRun, raw json.RawMessage) (map[string]any, *s
 		}
 		for id, bv := range values {
 			// A value that is damaged or cut off is not something to
-			// write a message from (RFC 8621 4.6).
-			if bv.Value == nil || bv.IsEncodingProblem || bv.IsTruncated {
-				bad = append(bad, "bodyValues/"+id)
+			// write a message from (RFC 8621 4.6): "isEncodingProblem
+			// and isTruncated MUST be either false or omitted".
+			if bv.Value == nil {
+				bad = append(bad, "bodyValues/"+id+"/value")
 				continue
 			}
+			if bv.IsEncodingProblem {
+				bad = append(bad, "bodyValues/"+id+"/isEncodingProblem")
+			}
+			if bv.IsTruncated {
+				bad = append(bad, "bodyValues/"+id+"/isTruncated")
+			}
+			// Known all the same, so the part that uses it is not
+			// reported as well.
 			b.values[id] = *bv.Value
 		}
 	}
@@ -618,6 +648,11 @@ func emailImport(c *call, raw json.RawMessage) (any, *methodError) {
 		if json.Unmarshal(obj["blobId"], &blobID) != nil || blobID == "" {
 			bad = append(bad, "blobId")
 		}
+		// Both are required: a client that left out both hears so at
+		// once.
+		if v, ok := obj["mailboxIds"]; !ok || string(v) == "null" {
+			bad = append(bad, "mailboxIds")
+		}
 		if len(bad) > 0 {
 			sort.Strings(bad)
 			run.notCreated[cid] = invalidProps("an import has blobId, mailboxIds, keywords and receivedAt", bad...)
@@ -630,7 +665,12 @@ func emailImport(c *call, raw json.RawMessage) (any, *methodError) {
 		}
 		data, err := c.h.blobData(c.ctx, args.AccountID, blobID)
 		if errors.Is(err, store.ErrNoBlob) {
-			run.notCreated[cid] = &setError{Type: "blobNotFound", NotFound: []string{blobID}}
+			// RFC 8621 4.8: "If the blobId, mailboxIds, or keywords
+			// properties are invalid (e.g., missing, wrong type, id not
+			// found), the server MUST reject the import with an
+			// invalidProperties SetError." blobNotFound is for
+			// Email/set (4.6).
+			run.notCreated[cid] = invalidProps("there is no blob "+blobID, "blobId")
 			continue
 		}
 		if err != nil {
