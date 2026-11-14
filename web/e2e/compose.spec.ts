@@ -8,7 +8,7 @@
 // A send takes a while on purpose: the server holds a message for
 // undo_seconds (10) and its queue looks every 5 seconds.
 import { expect, test, type Browser, type Locator, type Page } from '@playwright/test'
-import { OTHER, USER, cleanUp, deliver, emailsBySubject, jmap, login } from './dev'
+import { OTHER, PASSWORD, USER, cleanUp, deliver, emailsBySubject, jmap, login } from './dev'
 
 test.describe.configure({ timeout: 120_000 })
 
@@ -412,10 +412,21 @@ a list
   await to(c).fill(OTHER)
   await c.getByTestId('composer-send').click()
   await expect(page.getByTestId('composer')).toHaveCount(0)
+  // Forward as attachment: the whole message as a file.
+  await page.locator('article[data-email]').first().getByRole('button', { name: 'Message actions' }).click()
+  await page.getByRole('menuitem', { name: 'Forward as attachment' }).click()
+  c = composer(page)
+  await expect(c.getByTestId('composer-attachment')).toContainText(`${subject}.eml`)
+  await expect(subjectOf(c)).toHaveValue(`Fwd: ${subject}`)
+  await to(c).fill(OTHER)
+  await c.getByTestId('composer-send').click()
+  await expect(page.getByTestId('composer')).toHaveCount(0)
+
   const all = await emailsBySubject(page, subject, ['keywords', 'mailboxIds', 'attachments'])
   expect(all.find((e) => e.keywords.$forwarded)).toBeTruthy()
-  const forwarded = all.find((e) => !e.keywords.$forwarded)!
-  expect(forwarded.attachments.map((x: { name: string }) => x.name)).toEqual(['list.txt'])
+  const forwarded = all.filter((e) => !e.keywords.$forwarded).map((e) => e.attachments.map((x: { name: string }) => x.name).join())
+  expect(forwarded.sort()).toEqual([`${subject}.eml`, 'list.txt'].sort())
+  expect(all.flatMap((e) => e.attachments.map((x: { type: string }) => x.type)).sort()).toEqual(['message/rfc822', 'text/plain', 'text/plain'])
 
   // Clean up: the identity, the mail, here and at the other user.
   await page.getByRole('link', { name: 'Identities and signatures' }).click()
@@ -425,8 +436,35 @@ a list
   expect(problems).toEqual([])
   await cleanUp(page, subject)
   const b = await open(browser, OTHER, baseURL!)
-  await arrived(b.page, `Fwd: ${subject}`)
+  await expect.poll(async () => (await emailsBySubject(b.page, `Fwd: ${subject}`)).length, { timeout: DELIVERY }).toBe(2)
   await cleanUp(b.page, subject)
+})
+
+test('an expired session keeps what was typed and saves it after the login', async ({ browser, baseURL }) => {
+  const subject = `E2E expired ${Date.now()}`
+  const { page } = await open(browser, USER, baseURL!)
+  await page.getByTestId('compose').click()
+  const c = composer(page)
+  await subjectOf(c).fill(subject)
+  await body(c).fill('Written before the session ended.')
+  await expect(c.getByTestId('composer-status')).toHaveText('Saved')
+
+  // The session ends; the next save is refused and the login page shows.
+  await page.context().clearCookies()
+  await body(c).pressSequentially(' And this after.')
+  await expect(page).toHaveURL(/\/login/)
+  await page.getByLabel('Email address').fill(USER)
+  await page.getByLabel('Password').fill(PASSWORD)
+  await page.getByRole('button', { name: 'Log in' }).click()
+
+  // The composer is back as it was, and now it is saved.
+  await expect(body(c)).toHaveValue('Written before the session ended. And this after.')
+  await expect(c.getByTestId('composer-status')).toHaveText('Saved')
+  const saved = await emailsBySubject(page, subject, ['preview'])
+  expect(saved.map((e) => e.preview)).toEqual(['Written before the session ended. And this after.'])
+  await c.getByTestId('composer-discard').click()
+  await c.getByTestId('composer-discard').click()
+  await expect.poll(async () => (await emailsBySubject(page, subject)).length).toBe(0)
 })
 
 test('on a phone the composer fills the screen', async ({ browser, baseURL }) => {

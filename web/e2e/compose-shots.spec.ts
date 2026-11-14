@@ -63,12 +63,14 @@ for (const [size, viewport] of Object.entries(sizes)) {
       await shot('6-reply')
       await page.getByTestId('composer').last().getByTestId('composer-discard').click()
       // A message that was sent: one recipient gets it, one does not exist.
+      // (An address at another domain would show "Queued", and stay in the
+      // development queue for five days: it is routed to a dead port.)
       const subject = `Shots sent ${size} ${scheme} ${Date.now()}`
       // On a phone the list, with its button for a new message, is behind the thread.
       if (size === 'phone') await page.getByRole('button', { name: 'Back to the list' }).click()
       await page.getByTestId(size === 'phone' ? 'compose-small' : 'compose').click()
       const c = page.getByTestId('composer').last()
-      await c.getByLabel('To', { exact: true }).fill(`${OTHER}, nobody-${Date.now()}@robinmail.test, far@away.example`)
+      await c.getByLabel('To', { exact: true }).fill(`${OTHER}, nobody-${Date.now()}@robinmail.test`)
       await c.getByLabel('Subject').fill(subject)
       await c.getByTestId('rich-body').click()
       await page.keyboard.type('Who gets this?')
