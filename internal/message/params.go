@@ -162,3 +162,9 @@ func percentDecode(s string) []byte {
 	}
 	return out
 }
+
+// Params reads a field of the Content-Type kind (RFC 2045 5.1): the value
+// in lowercase, and its parameters by lowercase name with RFC 2231
+// continuations joined and extended values decoded. IMAP's BODYSTRUCTURE
+// is built from it.
+func Params(v string) (value string, params map[string]string) { return parseParams(v) }
