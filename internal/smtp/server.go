@@ -269,6 +269,15 @@ func (s *Server) handle(c net.Conn) {
 		s.mu.Unlock()
 	}()
 	sess.serve()
+	// The session's own connection, not c: after STARTTLS that is the TLS
+	// layer, whose Close says goodbye first (close_notify, RFC 8446 6.1).
+	// Without it the other side sees a connection cut off in the middle,
+	// and Exim logs every delivery as a TLS error.
+	s.mu.Lock()
+	conn := sess.conn
+	s.mu.Unlock()
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	conn.Close()
 }
 
 // session is one SMTP connection.
