@@ -42,7 +42,11 @@ type BuildPart struct {
 	Headers []Header
 	// Body is the content before any transfer encoding. Text has its line
 	// ends made CRLF.
-	Body     []byte
+	Body []byte
+	// Exact says Body is the content of a file: what a reader decodes
+	// must be these bytes. Text whose line ends are not all CRLF is then
+	// written as base64 instead of being changed to fit.
+	Exact    bool
 	SubParts []*BuildPart
 }
 
@@ -93,10 +97,18 @@ func writePart(b *bytes.Buffer, p *BuildPart, depth int) {
 		boundary = newBoundary(children)
 	} else {
 		body = p.Body
-		if strings.HasPrefix(typ, "text/") {
-			body = toCRLF(body)
+		switch crlf := toCRLF(body); {
+		case !strings.HasPrefix(typ, "text/"):
+			encoding = transferEncoding(typ, body)
+		case p.Exact && (len(crlf) != len(body) || depth == 0 && len(body) > 0 && !bytes.HasSuffix(body, []byte("\r\n"))):
+			// Canonical text has CRLF line ends (RFC 2045 2.8), and the
+			// message as a whole ends in one. A file that is not like
+			// that stays as it is inside base64.
+			encoding = "base64"
+		default:
+			body = crlf
+			encoding = transferEncoding(typ, body)
 		}
-		encoding = transferEncoding(typ, body)
 	}
 
 	ct := []string{typ}

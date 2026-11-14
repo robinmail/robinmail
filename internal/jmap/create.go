@@ -317,6 +317,9 @@ func (b *createBody) part(raw json.RawMessage, path string, depth int) *message.
 		}
 		p.Charset, _ = str("charset")
 		p.Body = data
+		// A file: a text attachment with LF line ends must download as
+		// it was uploaded.
+		p.Exact = true
 	}
 	return p
 }

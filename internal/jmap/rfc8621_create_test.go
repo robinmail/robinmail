@@ -301,6 +301,58 @@ func TestRFC8621_4_6_CreateWithAttachments(t *testing.T) {
 	}
 }
 
+// A text file that is attached comes back byte for byte: its line ends
+// are not made CRLF, as those of a text body are. (RFC 8621 4.6 lets the
+// server choose the encoding; RFC 2045 2.8 wants CRLF in text that is not
+// base64, so such a file goes out as base64.) Found by the webmail's
+// end-to-end test, which attached a file with LF line ends.
+func TestCreateKeepsTheBytesOfATextAttachment(t *testing.T) {
+	e := newEnv(t)
+	files := [][]byte{
+		[]byte("#!/bin/sh\necho one\necho two\n"),
+		[]byte("old mac\rline ends\r"),
+		[]byte("a,b\r\n1,2\r\n"),
+		[]byte("no line end at all"),
+		[]byte("caf\xe9 in latin-1\n"),
+	}
+	var parts []string
+	for i, f := range files {
+		parts = append(parts, `{"blobId": "`+e.upload(f, "text/plain")+`", "type": "text/plain", "name": "f`+fmt.Sprint(i)+`.txt", "disposition": "attachment"}`)
+	}
+	created := e.create(`{"mailboxIds": {"m2": true}, "from": [{"name": null, "email": "` + e.acct.Address + `"}], "subject": "files",
+		"textBody": [{"partId": "t", "type": "text/plain"}], "bodyValues": {"t": {"value": "see attached\n"}},
+		"attachments": [` + strings.Join(parts, ",") + `]}`)
+	got := e.one("Email/get", `{"accountId": "$A", "ids": ["`+created["id"].(string)+`"], "properties": ["attachments"], "bodyProperties": ["blobId", "size"]}`)
+	atts := at(t, got, "/list/0/attachments").([]any)
+	if len(atts) != len(files) {
+		t.Fatalf("%d attachments, want %d", len(atts), len(files))
+	}
+	for i, want := range files {
+		a := atts[i].(map[string]any)
+		dl := e.get("/jmap/download/" + e.acct.ID + "/" + a["blobId"].(string) + "/x")
+		if dl.Code != 200 || !bytes.Equal(dl.Body.Bytes(), want) {
+			t.Errorf("file %d: %d %q, want %q", i, dl.Code, dl.Body.String(), want)
+		}
+		if a["size"].(float64) != float64(len(want)) {
+			t.Errorf("file %d: size %v, want %d", i, a["size"], len(want))
+		}
+	}
+	// The message is still 7-bit clean lines of at most 998 octets.
+	for _, l := range bytes.Split(e.raw(created["id"].(string)), []byte("\r\n")) {
+		if len(l) > 998 || bytes.ContainsAny(l, "\r\n") {
+			t.Errorf("a line of %d octets, or a bare line end: %q", len(l), l)
+		}
+	}
+
+	// A text file as the whole body, without a line end at its end.
+	one := e.create(`{"mailboxIds": {"m2": true}, "from": [{"name": null, "email": "` + e.acct.Address + `"}], "subject": "one file",
+		"bodyStructure": {"blobId": "` + e.upload([]byte("just this"), "text/plain") + `", "type": "text/plain"}}`)
+	got = e.one("Email/get", `{"accountId": "$A", "ids": ["`+one["id"].(string)+`"], "properties": ["bodyStructure"], "bodyProperties": ["blobId"]}`)
+	if dl := e.get("/jmap/download/" + e.acct.ID + "/" + at(t, got, "/list/0/bodyStructure/blobId").(string) + "/x"); dl.Body.String() != "just this" {
+		t.Errorf("a file as the body: %q", dl.Body.String())
+	}
+}
+
 // RFC 8621 4.6: what a creation may not have.
 func TestRFC8621_4_6_CreateRefusals(t *testing.T) {
 	e := newEnv(t)
