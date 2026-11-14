@@ -53,6 +53,9 @@ type Deliverer struct {
 	// reply) to one address, with the null reverse-path; nil sends none.
 	// SendAs lists the alias addresses of an account, which count as the
 	// recipient's own when deciding whether a message names them.
+	// Reports, when set, keeps the TLS reports (RFC 8460) that arrive as
+	// mail for one of our addresses. *store.Store has it.
+	Reports   ReportStore
 	Filters   FilterStore
 	AutoReply func(ctx context.Context, account store.Account, rcpt string, raw []byte) error
 	SendAs    func(ctx context.Context, accountAddress string) ([]string, error)

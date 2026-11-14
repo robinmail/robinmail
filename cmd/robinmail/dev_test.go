@@ -116,7 +116,7 @@ func TestDevConfigAndCertificate(t *testing.T) {
 	// And the server takes the pair: a client that trusts the certificate
 	// and dials 127.0.0.1, as a mail client does after its one exception,
 	// completes the handshake.
-	tc, err := tlsconf.New(cfg.TLS, cfg.Hostname, cfg.DataDir)
+	tc, err := tlsconf.New(cfg.TLS, cfg.Hostname, cfg.DataDir, nil)
 	if err != nil {
 		t.Fatalf("the server does not load the pair: %v", err)
 	}

@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"github.com/mikepage/robinmail/internal/sieve"
 	"github.com/mikepage/robinmail/internal/smtp"
 	"github.com/mikepage/robinmail/internal/store"
+	"github.com/mikepage/robinmail/internal/tlsrpt"
 )
 
 // FilterStore is what running an account's Sieve script needs.
@@ -370,6 +372,9 @@ func (d *Deliverer) finish(ctx context.Context, in *incoming) error {
 		}
 	}
 	d.noteDSN(ctx, in.from, accounts, in.final)
+	if len(accounts) > 0 {
+		d.noteTLSReport(ctx, in)
+	}
 	return nil
 }
 
@@ -410,4 +415,39 @@ func (d *Deliverer) rejectNotice(ctx context.Context, acct store.Account, in *in
 		return
 	}
 	in.log.Info("rejection notice queued", "account", acct.Address, "to", clean(in.from))
+}
+
+// ReportStore keeps TLS reports sent to us.
+type ReportStore interface {
+	SaveTLSReport(ctx context.Context, r store.TLSReportIn) (bool, error)
+}
+
+// noteTLSReport looks whether a message that was just stored is a TLS
+// report (RFC 8460 5.3) and if so keeps the report where the
+// administrator finds it ("robinmail tlsrpt received"). The message
+// stays ordinary mail in the mailbox it was for, which is how the report
+// reached us: the rua address a domain publishes is a mailbox or an alias
+// like any other.
+//
+// Anybody can send one: a report is somebody's claim about how mail to us
+// went, nothing is acted on, and it is kept with the name its sender gave
+// itself.
+func (d *Deliverer) noteTLSReport(ctx context.Context, in *incoming) {
+	if d.Reports == nil || !bytes.Contains(in.final[:min(len(in.final), 64<<10)], []byte("tlsrpt")) {
+		return
+	}
+	r, err := tlsrpt.FromMessage(message.Parse(in.final))
+	if err != nil {
+		return
+	}
+	ok, failed := r.Totals()
+	saved, err := d.Reports.SaveTLSReport(ctx, store.TLSReportIn{
+		Organization: clean(r.OrganizationName), ReportID: clean(r.ReportID), Domain: clean(r.Policies[0].Policy.Domain),
+		Start: r.DateRange.Start, End: r.DateRange.End, Successful: ok, Failed: failed, JSON: string(r.JSON())})
+	if err != nil {
+		in.log.Warn("keeping a TLS report failed", "err", err)
+		return
+	}
+	in.log.Info("TLS report received", "from", clean(r.OrganizationName), "domain", clean(r.Policies[0].Policy.Domain),
+		"successful", ok, "failed", failed, "new", saved)
 }

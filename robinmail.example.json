@@ -62,5 +62,15 @@
   "quota": {
     "default_bytes": 0,
     "default_messages": 0
+  },
+  "mta_sts": {
+    "mode": "testing",
+    "max_age_seconds": 86400,
+    "mx": []
+  },
+  "tls_rpt": {
+    "disabled": false,
+    "from": "",
+    "organization": ""
   }
 }

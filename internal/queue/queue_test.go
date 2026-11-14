@@ -2,6 +2,7 @@ package queue
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"net"
 	"strings"
@@ -486,10 +487,21 @@ func TestOpportunisticTLS(t *testing.T) {
 	broken := startMX(t, "mx.broken.test", brokenTLS(t))
 	x.domainMX("broken.test", broken, 10)
 
+	rec := &tlsRecorder{}
+	x.w.TLSResults = rec
 	sub := x.send("no policy", "a@odd.test", "b@broken.test")
 	x.run()
 	if got := x.sub(sub.ID); states(got) != "a=delivered b=delivered" {
 		t.Fatalf("submission %+v", got)
+	}
+	// For the report (RFC 8460 4.3.2: "no-policy-found"): TLS that was
+	// used counts as a session that worked, whatever the certificate; a
+	// handshake that failed is a failure, though the mail went through.
+	if got := rec.of("odd.test"); len(got) != 1 || got[0].Result != "" || !strings.Contains(got[0].Policy, `"policy-type":"no-policy-found"`) {
+		t.Errorf("TLS results without a policy: %+v", got)
+	}
+	if got := rec.of("broken.test"); len(got) != 1 || got[0].Result != "validation-failure" || got[0].MX != "mx.broken.test" {
+		t.Errorf("TLS results of a failed handshake: %+v", got)
 	}
 	if envs, _ := odd.got(); envs[0].TLS == nil {
 		t.Error("an expired certificate for another name: TLS was not used")
@@ -536,8 +548,31 @@ func TestMTASTSEnforce(t *testing.T) {
 	x.domainMX("wrongname.test", wrongName, 10)
 	x.dns.txt["_mta-sts.wrongname.test"] = []string{"v=STSv1; id=" + id}
 
+	// What goes into the TLS report of each domain (RFC 8460 4.3).
+	rec := &tlsRecorder{}
+	x.w.TLSResults = rec
 	sub := x.send("strict", "a@good.test", "b@badcert.test", "c@expired.test", "d@notls.test", "e@wrongmx.test", "f@wrongname.test")
 	x.run()
+	for domain, want := range map[string]string{
+		"good.test":      "", // a session that worked
+		"badcert.test":   "certificate-not-trusted",
+		"expired.test":   "certificate-expired",
+		"notls.test":     "starttls-not-supported",
+		"wrongmx.test":   "validation-failure",
+		"wrongname.test": "certificate-host-mismatch",
+	} {
+		got := rec.of(domain)
+		if len(got) != 1 || got[0].Result != want {
+			t.Errorf("TLS results of %s: %+v, want one %q", domain, got, want)
+			continue
+		}
+		// The policy that applied travels with the count, as the report
+		// will show it; a failure names the host and the address.
+		if !strings.Contains(got[0].Policy, `"policy-type":"sts"`) || !strings.Contains(got[0].Policy, `"mode: enforce"`) ||
+			!strings.Contains(got[0].Policy, `"policy-domain":"`+domain+`"`) || (want != "" && got[0].MX == "") || (want == "" && got[0].MX != "") {
+			t.Errorf("TLS result of %s: %+v", domain, got[0])
+		}
+	}
 	got := x.sub(sub.ID)
 	if states(got) != "a=delivered b=queued c=queued d=queued e=queued f=queued" {
 		t.Fatalf("submission: %s", states(got))
@@ -592,6 +627,10 @@ func TestMTASTSEnforce(t *testing.T) {
 	if got := x.sub(sub2.ID); states(got) != "g=delivered" {
 		t.Errorf("mode testing: %+v", got.Recipients)
 	}
+	// Delivered, and reported as the failure enforce would have made of it.
+	if got := rec.of("testing.test"); len(got) != 1 || got[0].Result != "certificate-not-trusted" || !strings.Contains(got[0].Policy, `"mode: testing"`) {
+		t.Errorf("TLS results under testing: %+v", got)
+	}
 
 	// The owner of badcert.test fixes the certificate: the next try
 	// delivers. The old connection attempt left nothing behind.
@@ -643,4 +682,29 @@ func TestRetryOverride(t *testing.T) {
 		}
 		x.advance(time.Duration(try) * 3 * time.Second)
 	}
+}
+
+// tlsRecorder keeps what a worker reports about TLS.
+type tlsRecorder struct {
+	mu   sync.Mutex
+	list []store.TLSResult
+}
+
+func (r *tlsRecorder) CountTLSResult(_ context.Context, res store.TLSResult) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.list = append(r.list, res)
+	return nil
+}
+
+func (r *tlsRecorder) of(domain string) []store.TLSResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []store.TLSResult
+	for _, x := range r.list {
+		if x.Domain == domain {
+			out = append(out, x)
+		}
+	}
+	return out
 }

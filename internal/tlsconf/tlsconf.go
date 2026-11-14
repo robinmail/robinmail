@@ -2,10 +2,13 @@
 package tlsconf
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,11 +25,24 @@ var ErrNotConfigured = errors.New("tls: no certificate configured")
 //
 // With ACME, certificates are validated over TLS-ALPN-01, so one listener
 // using this config has to be reachable on port 443.
-func New(c config.TLS, hostname, dataDir string) (*tls.Config, error) {
+//
+// also, when not nil, says for which other names a certificate may be
+// asked for: the mta-sts.<domain> and autoconfig.<domain> names of the
+// domains the server has. It is asked at every handshake for a name
+// without a certificate, so that a domain added later needs no restart,
+// and it is what keeps a stranger from making the server order
+// certificates for names it has nothing to do with. With certificate
+// files nothing is ordered: the files have to cover those names.
+func New(c config.TLS, hostname, dataDir string, also func(ctx context.Context, name string) bool) (*tls.Config, error) {
 	if c.ACME {
 		m := &autocert.Manager{
-			Prompt:     autocert.AcceptTOS,
-			HostPolicy: autocert.HostWhitelist(hostname),
+			Prompt: autocert.AcceptTOS,
+			HostPolicy: func(ctx context.Context, name string) error {
+				if strings.EqualFold(name, hostname) || (also != nil && also(ctx, strings.ToLower(name))) {
+					return nil
+				}
+				return fmt.Errorf("tls: %q is not a name of this server", name)
+			},
 			Cache:      autocert.DirCache(filepath.Join(dataDir, "acme")),
 			Email:      c.ACMEEmail,
 		}

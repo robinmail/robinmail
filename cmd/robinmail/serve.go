@@ -58,7 +58,9 @@ const shutdownGrace = 30 * time.Second
 func (a *app) serve(stop func()) error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	tc, err := tlsconf.New(a.cfg.TLS, a.cfg.Hostname, a.cfg.DataDir)
+	// The names of our domains this server also answers under.
+	domainNames := &ownDomains{list: a.store.Domains}
+	tc, err := tlsconf.New(a.cfg.TLS, a.cfg.Hostname, a.cfg.DataDir, extraNames(a.cfg, domainNames))
 	switch {
 	case errors.Is(err, tlsconf.ErrNotConfigured):
 		log.Warn("no certificate configured, STARTTLS is off")
@@ -149,6 +151,7 @@ func (a *app) serve(stop func()) error {
 		AuthChanges:         authHub,
 		RequireAppPasswords: a.cfg.Auth.RequireAppPasswords,
 		SendAs:              a.store.SendAddresses,
+		Hosts:               extraHosts(a.cfg, domainNames, nil),
 		JMAP: &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store),
 			SendAs: a.store.SendAddresses, Push: hub, Closing: a.ctx.Done()},
 		Static:     webStatic,
@@ -315,6 +318,12 @@ func (a *app) serve(stop func()) error {
 	}
 	if worker.NodeID == "" {
 		worker.NodeID = a.cfg.Hostname
+	}
+	// TLS reporting (RFC 8460): the worker counts how TLS went, mail that
+	// is a report for us is kept, and once a day the counts go out.
+	worker.TLSResults, d.Reports = a.store, a.store
+	if !a.cfg.TLSRPT.Disabled {
+		go tlsReportLoop(a.ctx, a.tlsReporter(sender, log), time.Duration(rand.Int64N(int64(10*time.Minute))), time.Hour)
 	}
 	if s := a.cfg.Dev.RetrySeconds; s > 0 {
 		log.Warn("dev.retry_seconds is set: the outbound queue does not follow its retry schedule", "seconds", s)
@@ -518,6 +527,10 @@ func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger, auditReten
 		log.Error("trimming the queue failed", "err", err)
 		return
 	}
+	if err := st.TrimTLSReports(ctx, now.Add(-store.TLSResultRetention), now.Add(-store.TLSReportRetention)); err != nil {
+		log.Error("trimming TLS reports failed", "err", err)
+		return
+	}
 	if _, err := st.TrimSTSPolicies(ctx, now.Add(-24*time.Hour)); err != nil {
 		log.Error("trimming MTA-STS policies failed", "err", err)
 		return
@@ -575,4 +588,56 @@ func jmapSend(sender *delivery.Submitter, st *store.Store) func(context.Context,
 // auditRetention is how long auth events are kept.
 func (a *app) auditRetention() time.Duration {
 	return time.Duration(a.cfg.Auth.AuditRetentionDays) * 24 * time.Hour
+}
+
+// tlsReporter is the sender of this node's daily TLS reports. They go out
+// in the name of tls_rpt.from, or without that of postmaster at the first
+// domain the server has; a server without a domain sends none.
+func (a *app) tlsReporter(sender *delivery.Submitter, log *slog.Logger) *tlsReporter {
+	from := func(ctx context.Context) string {
+		if a.cfg.TLSRPT.From != "" {
+			return a.cfg.TLSRPT.From
+		}
+		domains, err := a.store.Domains(ctx)
+		if err != nil || len(domains) == 0 {
+			return ""
+		}
+		return "postmaster@" + domains[0]
+	}
+	organization := a.cfg.TLSRPT.Organization
+	if organization == "" {
+		organization = a.cfg.Hostname
+	}
+	return &tlsReporter{
+		st: a.store, host: a.cfg.Hostname, from: from, organization: organization,
+		lookupTXT: net.DefaultResolver.LookupTXT,
+		mail: func(ctx context.Context, key, from, rcpt string, raw []byte) error {
+			return sender.Report(ctx, a.store, key, from, rcpt, raw)
+		},
+		// No redirects: the report goes where the record says or nowhere.
+		post: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		now:  time.Now, log: log,
+	}
+}
+
+// tlsReportLoop makes the reports that are due: once after first, then
+// every interval. Days that are over are looked at each time, so the
+// reports of a day go out within the interval after it ends, on whichever
+// node comes first.
+func tlsReportLoop(ctx context.Context, r *tlsReporter, first, interval time.Duration) {
+	t := time.NewTimer(first)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		rctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		if _, err := r.run(rctx); err != nil {
+			r.log.Warn("tls reports: not all could be made", "err", err)
+		}
+		cancel()
+		t.Reset(interval)
+	}
 }

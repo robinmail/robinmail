@@ -85,6 +85,9 @@ Every mail table starts with `account_id`.
 | `identity` | id, name, email, reply_to, bcc, text_signature, html_signature, modseq | JMAP identities; id 1 is made with the account |
 | `upload` | blob, size, type, created_at | blobs a client uploaded; trimmed after a day |
 | `mta_sts` | domain, policy_id, mode, mx, fetched_at, expires_at | MTA-STS policies of other domains, cached for all nodes; not per account |
+| `tls_result` | day, domain, policy, result, mx, ip, count | TLS reporting (RFC 8460): outbound sessions counted per UTC day, recipient domain, policy and outcome; kept 7 days; not per account |
+| `tls_report_sent` | day, domain, at, outcome | the TLS reports that were made: the row is the claim, so one node makes each; kept 90 days |
+| `tls_report_in` | id, received_at, organization, report_id, domain, start_at, end_at, successful, failed, json | TLS reports other servers sent us; unique per organization and report id; kept 90 days |
 | `acme` | key, value | ACME account and certificates, shared by nodes (not built yet) |
 | `node` | id, address, cert, started_at, seen_at | the robinmail nodes: where the others reach each, the SHA-256 of its certificate, its heartbeat |
 | `login_failure` | key, started, count | failures in a 15 minute window, for all nodes together: `a:` wrong passwords at the web login per address, `m:` wrong secrets from mail clients per address, `t:` wrong TOTP and recovery codes per address, `i:` all of them per IP |
@@ -178,6 +181,7 @@ internal/message     MIME to JMAP body structure, HTML view   new
 internal/search      words of a text, search terms, snippets  new
 internal/srs         sender rewriting for forwarded mail (SRS0, SRS1)   new
 internal/sieve       Sieve scripts: parser and interpreter (RFC 5228 and extensions)   new
+internal/tlsrpt      TLS reports (RFC 8460): the JSON, the record, the mail   new
 internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, settings, OIDC login, static app   new
 internal/totp        HOTP and TOTP (RFC 4226, RFC 6238), otpauth URI    new
@@ -757,8 +761,8 @@ Built as follows (the Go side):
   expires. `enforce`: only hosts the policy names, STARTTLS required, TLS
   1.2 or later, certificate valid for the host; otherwise the message
   waits (4.7.0). `testing`: the same is checked and logged. DANE is not
-  implemented: it needs a resolver that validates DNSSEC. TLS-RPT is
-  phase 8.
+  implemented: it needs a resolver that validates DNSSEC. TLS-RPT and
+  serving our own policy came in phase 8.
 - **Retries and bounces.** After a try a message waits 5 minutes, then
   twice as long each time up to 4 hours: 36 tries in five days, then it is
   given up with 4.4.7. A 5yz reply fails that recipient at once. What
@@ -871,7 +875,7 @@ Built as follows (the Go side):
     receiving robinmail drops the second copy (its delivery key).
   - A claim outlives its node by up to 2 minutes; mail a dying node held
     is that much late.
-  - No DANE, no TLS-RPT, no REQUIRETLS, no DSN extension (RFC 3461: no
+  - No DANE, no REQUIRETLS, no DSN extension (RFC 3461: no
     `NOTIFY`, `RET`, `ENVID`), no "delayed" notice before the final
     bounce, no FUTURERELEASE.
   - A bounce quotes only the header of the original.
@@ -1937,7 +1941,7 @@ Built as follows:
 
 Built in this order, each item committed with its tests: 1 full-text
 search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas (done), 6 MTA-STS
-serving and TLS-RPT, 7 autoconfig, 8 operations, 9 README, 10 lab and
+serving and TLS-RPT (done), 7 autoconfig, 8 operations, 9 README, 10 lab and
 cluster cases.
 
 Built as follows:
@@ -2360,6 +2364,91 @@ Built as follows:
     limits are per node's config and must be the same on all nodes. A
     message larger than the quota among several recipients is answered
     `452` and retried by the sender until it gives up.
+
+- **MTA-STS serving, TLS reports, DNS records.**
+  - **Our own policy** (RFC 8461 3.2, 3.3). `mta_sts {mode,
+    max_age_seconds, mx}` in the config; without a mode nothing is
+    served. The web listener answers
+    `https://mta-sts.<domain>/.well-known/mta-sts.txt` for every domain
+    in `domain` (read from the store, cached 30 seconds, so `domain add`
+    needs no restart): the policy as `text/plain` with CRLF, GET and
+    HEAD only, 404 for every other path. Nothing else of the web server
+    is reachable under that name; a name that is no domain of ours gets
+    421 as before. One policy for all domains: they share the mail
+    servers. `mx` defaults to the hostname. With ACME the certificate
+    for `mta-sts.<domain>` is asked for on the first handshake (the host
+    policy accepts the names of our domains); with certificate files
+    the certificate has to cover them, which `robinmail dns` says.
+  - **The id** of the `_mta-sts` TXT record is the first 20 hex digits of
+    the SHA-256 of the policy text: the same on every node, new when the
+    policy changes, and nothing to keep.
+  - **TLS reports out** (RFC 8460). The queue worker counts every
+    session with a recipient domain's server in `tls_result`: one row
+    per UTC day, domain, policy and outcome, `count = count + 1` in one
+    statement, from any node. The policy is the MTA-STS policy that
+    applied (`sts`, with its lines) or `no-policy-found`. Outcomes:
+    success, `starttls-not-supported`, `certificate-host-mismatch`,
+    `certificate-expired`, `certificate-not-trusted`,
+    `validation-failure`, `sts-policy-fetch-error`,
+    `sts-policy-invalid`; failures carry the MX and its address.
+    Counted for policies in `testing` too, which is what that mode is
+    for. A session over a route of the config is counted under the
+    recipient domain, without a policy.
+  - Every hour (first after up to ten minutes) each node looks at the
+    last three finished days. For a domain with counts and no row in
+    `tls_report_sent` it inserts the row (`INSERT OR IGNORE`: one node
+    gets it), reads `_smtp._tls.<domain>` (RFC 8460 3; exactly one
+    `v=TLSRPTv1` record or none), builds the report and sends it to
+    every `rua`: `mailto:` as a message (RFC 8460 5.3: `TLS-Report-Domain`
+    and `TLS-Report-Submitter` fields, `multipart/report;
+    report-type=tlsrpt`, the report as `application/tlsrpt+gzip`), signed
+    by Rspamd with the domain's DKIM key and queued like any mail with
+    an idempotency key; `https:` as a POST of the gzip (5.4), no
+    redirects. What became of it is kept in the row (`tlsrpt results`).
+    The report is claimed before it is sent: a node that dies in between
+    leaves that day's report for that domain unsent. A lost report costs
+    less than a doubled one that makes the receiver count twice.
+  - Reports are sent from `tls_rpt.from` (default `postmaster@` the
+    first domain), `organization-name` is `tls_rpt.organization` (the
+    hostname), the report id `<yyyymmdd>.<domain>@<hostname>`.
+    `tls_rpt.disabled` stops the sending; counting and receiving go on.
+  - **TLS reports in.** The `rua` we publish is a mailbox or an alias
+    like any other (`postmaster@<domain>` in `robinmail dns`). A message
+    that was stored and carries a report (`application/tlsrpt+gzip` or
+    `+json`, also as the whole body) is parsed after delivery and kept
+    in `tls_report_in`, once per organization and report id; the message
+    itself stays in the mailbox. `tlsrpt received` lists them, `tlsrpt
+    show <id>` prints the JSON. Nothing is verified or acted on: a
+    report is its sender's claim. There is no HTTPS endpoint for
+    reports to us.
+  - **`robinmail dns`** now also prints: `_mta-sts` TXT and the
+    `mta-sts` CNAME with the policy as a comment (when `mta_sts` is
+    set), `_smtp._tls` TXT, the `autoconfig` CNAME, and the SRV records
+    of RFC 6186 and RFC 8314 (`_imaps`, `_imap`, `_submissions`,
+    `_submission` with the ports of the config; `0 0 0 .` for what is
+    not offered: POP3, and whichever of the others has no listener).
+  - **Tests.** `internal/tlsrpt`: RFC 8460 3 (the record and its
+    examples), 4.3 and 4.4 with the report of Appendix B, 5.1 (file
+    name), 5.3 (the message and its fields); the parser is fuzzed.
+    `internal/store`: counts from two stores at once add up; a report
+    is claimed by one of twenty callers; a received report is kept
+    once. `internal/queue`: an MTA-STS `enforce` failure and an
+    opportunistic session are counted with their result types.
+    `TestMTASTSPolicyServed` (`cmd/robinmail`): the policy over HTTPS
+    for a domain, 404 for other paths, 421 for foreign names, a domain
+    added while the server runs, the `dns` output.
+    `TestTLSReports`: counts of yesterday become one report, sent by
+    mail to a robinmail (this one, which keeps it) and by POST; a second
+    run sends nothing; a repeated report is kept once.
+  - **Not handled.** No DANE, so no `tlsa` policies or results. One
+    policy for all domains. No report is sent when a domain's record
+    could not be read on the hour it was claimed. No summary for the
+    administrator of reports received: they are listed, not judged. No
+    compression choice: always gzip. The session that delivers a report
+    is counted like any other, so two servers that report to each other
+    exchange one report a day about the previous day's report; it does
+    not grow. A failed MTA-STS check also holds back a report (RFC 8460
+    5.3 would have it delivered regardless).
 
 ## Open questions
 

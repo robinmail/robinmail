@@ -36,7 +36,39 @@ type Config struct {
 	IMAP          IMAP       `json:"imap"`
 	Auth          Auth       `json:"auth"`
 	Quota         Quota      `json:"quota"`
+	MTASTS        MTASTS     `json:"mta_sts"`
+	TLSRPT        TLSRPT     `json:"tls_rpt"`
 	Dev           Dev        `json:"dev"`
+}
+
+// MTASTS is the MTA-STS policy (RFC 8461) robinmail serves for its own
+// domains, at https://mta-sts.<domain>/.well-known/mta-sts.txt on the web
+// listener. With ACME the certificate for those names is asked for; with
+// certificate files the certificate has to cover them. The DNS records
+// are in "robinmail dns".
+type MTASTS struct {
+	// Mode is "testing", "enforce" or "none"; empty serves no policy. [""]
+	Mode string `json:"mode"`
+	// MaxAgeSeconds is how long a sender may cache the policy. [86400]
+	MaxAgeSeconds int64 `json:"max_age_seconds"`
+	// MX are the names (or "*.example.org" patterns) of the mail servers
+	// of our domains. [the hostname]
+	MX []string `json:"mx"`
+}
+
+// TLSRPT configures TLS reporting (RFC 8460). robinmail counts how the TLS
+// of its deliveries went and sends each domain that asks for it (a TXT
+// record at _smtp._tls) a report once a day; reports sent to us are kept
+// ("robinmail tlsrpt").
+type TLSRPT struct {
+	// Disabled turns the sending of reports off. Counting and receiving
+	// go on. [false]
+	Disabled bool `json:"disabled"`
+	// From is the address reports are sent from and name as their
+	// contact. [postmaster@<the first domain>]
+	From string `json:"from"`
+	// Organization is the organization-name of the reports. [the hostname]
+	Organization string `json:"organization"`
 }
 
 // Quota holds the limits of accounts that have none of their own ("user
@@ -367,6 +399,31 @@ func Load(path string) (*Config, error) {
 	}
 	if c.IMAP.MaxConnections < 0 || c.IMAP.MaxConnectionsPerIP < 0 || c.IMAP.MaxConnectionsPerUser < 0 {
 		return nil, errors.New(path + ": limits cannot be negative")
+	}
+	switch c.MTASTS.Mode {
+	case "", "none", "testing", "enforce":
+	default:
+		return nil, errors.New(path + `: mta_sts: mode is "testing", "enforce" or "none"`)
+	}
+	// RFC 8461 3.2: max_age is at most 31557600 (a year).
+	if c.MTASTS.MaxAgeSeconds < 0 || c.MTASTS.MaxAgeSeconds > 31557600 {
+		return nil, errors.New(path + ": mta_sts: max_age_seconds is 0 to 31557600")
+	}
+	if c.MTASTS.MaxAgeSeconds == 0 {
+		c.MTASTS.MaxAgeSeconds = 86400
+	}
+	if len(c.MTASTS.MX) == 0 {
+		c.MTASTS.MX = []string{c.Hostname}
+	}
+	for _, mx := range c.MTASTS.MX {
+		if !address.ValidDomain(strings.TrimPrefix(strings.ToLower(mx), "*.")) {
+			return nil, fmt.Errorf("%s: mta_sts: %q is not a host name or a *. pattern", path, mx)
+		}
+	}
+	if c.TLSRPT.From != "" {
+		if _, err := address.Parse(c.TLSRPT.From); err != nil {
+			return nil, fmt.Errorf("%s: tls_rpt: from %q is not an address", path, c.TLSRPT.From)
+		}
 	}
 	if c.Quota.DefaultBytes < 0 || c.Quota.DefaultMessages < 0 {
 		return nil, errors.New(path + ": quota: limits cannot be negative")

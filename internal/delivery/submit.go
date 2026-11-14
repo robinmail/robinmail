@@ -574,3 +574,45 @@ func (d *Deliverer) noteDSN(ctx context.Context, from string, accounts []store.A
 		}
 	}
 }
+
+// Report queues a message the server itself sends to an address elsewhere
+// in the name of one of its domains: a TLS report (RFC 8460). Rspamd signs
+// it as it signs a user's mail (RFC 8460 5.3 wants reports DKIM-signed),
+// then it goes into the queue under the system account of the domain. key
+// makes a second call queue nothing.
+func (s *Submitter) Report(ctx context.Context, fw Forwarder, key, from, rcpt string, raw []byte) error {
+	at := strings.LastIndexByte(from, '@')
+	if at < 0 || !smtp.ValidMailbox(rcpt) {
+		return fmt.Errorf("delivery: a report needs a sender and a recipient address")
+	}
+	fields, rest := splitHeader(normalizeLines(raw))
+	out := joinHeader(fields, rest)
+	var added []field
+	if s.Rspamd != nil {
+		res, err := s.Rspamd.Check(ctx, rspamd.Request{From: from, Rcpts: []string{rcpt}, QueueID: queueID(), User: from}, out)
+		switch {
+		case err != nil && !s.FailOpen:
+			return fmt.Errorf("delivery: the report could not be signed: %w", err)
+		case err != nil:
+			s.log().Warn("rspamd failed, sending a report unsigned", "err", err)
+		default:
+			for _, sig := range res.DKIMSignatures {
+				if message.ValidRaw(" " + sig) {
+					added = append(added, field{name: "DKIM-Signature", raw: []byte("DKIM-Signature: " + sig + "\r\n")})
+				}
+			}
+			for _, h := range res.AddHeaders {
+				if strings.EqualFold(h.Name, "DKIM-Signature") {
+					if f, ok := newField(h.Name, h.Value); ok {
+						added = append(added, f)
+					}
+				}
+			}
+		}
+	}
+	err := fw.Forward(ctx, from[at+1:], key, from, rcpt, joinHeader(append(added, fields...), rest))
+	if errors.Is(err, store.ErrForwarded) {
+		return nil
+	}
+	return err
+}

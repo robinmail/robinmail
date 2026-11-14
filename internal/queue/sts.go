@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mikepage/robinmail/internal/store"
+	"github.com/mikepage/robinmail/internal/tlsrpt"
 )
 
 // MTA-STS (RFC 8461) lets a domain say that mail for it must go over TLS
@@ -209,11 +211,13 @@ func (w *Worker) policy(ctx context.Context, domain string) *store.STSPolicy {
 	body, err := w.fetchSTSPolicy(ctx, domain)
 	if err != nil {
 		w.log().Warn("mta-sts: fetching the policy failed", "domain", domain, "err", err)
+		w.tlsResult(ctx, domain, &store.STSPolicy{Domain: domain}, tlsrpt.STSPolicyFetchError, "", "")
 		return use()
 	}
 	mode, mx, maxAge, err := parseSTSPolicy(body)
 	if err != nil {
 		w.log().Warn("mta-sts: the policy is not valid", "domain", domain, "err", err)
+		w.tlsResult(ctx, domain, &store.STSPolicy{Domain: domain}, tlsrpt.STSPolicyInvalid, "", "")
 		return use()
 	}
 	cached = store.STSPolicy{Domain: domain, ID: id, Mode: mode, MX: mx, FetchedAt: now, ExpiresAt: now.Add(maxAge)}
@@ -238,4 +242,61 @@ func verifyPeer(st *tls.ConnectionState, host string, roots *x509.CertPool, now 
 	}
 	_, err := st.PeerCertificates[0].Verify(opts)
 	return err
+}
+
+// TLSRecorder counts the outcome of a TLS session for the daily report.
+type TLSRecorder interface {
+	CountTLSResult(ctx context.Context, r store.TLSResult) error
+}
+
+// tlsResult counts one session with a mail server of a recipient domain:
+// "" for one that worked, or the result-type of RFC 8460 4.3. A success is
+// counted per policy, a failure per policy, host and address. Counting
+// that fails is logged and nothing more: mail matters more than a report
+// about it.
+func (w *Worker) tlsResult(ctx context.Context, domain string, policy *store.STSPolicy, result, mx, ip string) {
+	if w.TLSResults == nil {
+		return
+	}
+	p := tlsrpt.Policy{Type: tlsrpt.PolicyNone, Domain: domain}
+	if policy != nil {
+		p.Type = tlsrpt.PolicySTS
+		p.MXHost = policy.MX
+		if policy.Mode != "" {
+			// The policy as it was fetched, line by line (RFC 8460 4.4:
+			// "policy-string").
+			p.String = []string{"version: STSv1", "mode: " + policy.Mode}
+			for _, m := range policy.MX {
+				p.String = append(p.String, "mx: "+m)
+			}
+			if age := policy.ExpiresAt.Sub(policy.FetchedAt); age > 0 {
+				p.String = append(p.String, "max_age: "+strconv.FormatInt(int64(age/time.Second), 10))
+			}
+		}
+	}
+	text, _ := json.Marshal(p)
+	r := store.TLSResult{Domain: domain, Policy: string(text), Result: result}
+	if result != "" {
+		r.MX, r.IP = mx, ip
+	}
+	if err := w.TLSResults.CountTLSResult(context.WithoutCancel(ctx), r); err != nil {
+		w.log().Warn("tls report: counting a result failed", "domain", domain, "err", err)
+	}
+}
+
+// tlsFailure names what was wrong with a server's certificate in the
+// words of RFC 8460 4.3.1.
+func tlsFailure(err error) string {
+	var host x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var unknown x509.UnknownAuthorityError
+	switch {
+	case errors.As(err, &host):
+		return tlsrpt.CertificateHostMismatch
+	case errors.As(err, &invalid) && invalid.Reason == x509.Expired:
+		return tlsrpt.CertificateExpired
+	case errors.As(err, &unknown), errors.As(err, &invalid):
+		return tlsrpt.CertificateNotTrusted
+	}
+	return tlsrpt.ValidationFailure
 }

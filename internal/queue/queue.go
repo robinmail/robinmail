@@ -36,6 +36,7 @@ import (
 	"github.com/mikepage/robinmail/internal/rqlite"
 	"github.com/mikepage/robinmail/internal/smtp"
 	"github.com/mikepage/robinmail/internal/store"
+	"github.com/mikepage/robinmail/internal/tlsrpt"
 )
 
 // Store is what a Worker needs from the store. *store.Store has it.
@@ -102,6 +103,10 @@ type Worker struct {
 	Now      func() time.Time
 	// Retry is how long a message waits after its n-th try [Backoff].
 	Retry func(n int) time.Duration
+	// TLSResults, when set, is told how the TLS of each session with a
+	// recipient domain's mail server went, for TLS reporting (RFC 8460).
+	// *store.Store has it.
+	TLSResults TLSRecorder
 	// Trace logs every command and reply of the SMTP client.
 	Trace  bool
 	Logger *slog.Logger
@@ -690,6 +695,9 @@ func (w *Worker) deliverDomain(ctx context.Context, domain, from string, rcpts [
 	last := temporary("4.4.1", "no mail server for "+domain+" could be reached")
 	dials := 0
 	for _, hp := range hosts {
+		if policy != nil && !stsMatch(policy.MX, hp.host) {
+			w.tlsResult(ctx, domain, policy, tlsrpt.ValidationFailure, hp.host, "")
+		}
 		if enforce && !stsMatch(policy.MX, hp.host) {
 			// RFC 8461 5: a host the policy does not name is not used.
 			log.Warn("queue: MX host is not in the MTA-STS policy, skipping", "host", hp.host)
@@ -708,7 +716,11 @@ func (w *Worker) deliverDomain(ctx context.Context, domain, from string, rcpts [
 			if dials++; dials > maxDials || ctx.Err() != nil {
 				return sameOutcome(len(rcpts), fromFailure(last))
 			}
-			p, fail := w.connect(ctx, hp, a.IP, policy, log)
+			reported := domain
+			if routed {
+				reported = "" // a fixed route says nothing about the domain's own servers
+			}
+			p, fail := w.connect(ctx, reported, hp, a.IP, policy, log)
 			if fail != nil {
 				last = fail
 				continue
@@ -735,8 +747,16 @@ type hostPort struct{ host, port string }
 // (RFC 8461 4.2): STARTTLS is required, with TLS 1.2 or later and a
 // certificate that is valid for the host; anything less and this host is
 // not used. In mode testing the same is checked and only logged.
-func (w *Worker) connect(ctx context.Context, hp hostPort, ip net.IP, policy *store.STSPolicy, log *slog.Logger) (*pooled, *failure) {
+//
+// domain is the recipient domain, for the TLS report of it; empty reports
+// nothing.
+func (w *Worker) connect(ctx context.Context, domain string, hp hostPort, ip net.IP, policy *store.STSPolicy, log *slog.Logger) (*pooled, *failure) {
 	enforce := policy != nil && policy.Mode == stsEnforce
+	report := func(result string) {
+		if domain != "" {
+			w.tlsResult(ctx, domain, policy, result, hp.host, ip.String())
+		}
+	}
 	address := net.JoinHostPort(ip.String(), hp.port)
 	for _, useTLS := range []bool{true, false} {
 		conn, err := w.dial(ctx, address)
@@ -764,28 +784,40 @@ func (w *Worker) connect(ctx context.Context, hp hostPort, ip net.IP, policy *st
 		switch {
 		case enforce && !offered:
 			c.Quit()
+			report(tlsrpt.StartTLSNotSupported)
 			return nil, temporary("4.7.0", hp.host+" does not offer STARTTLS, which the MTA-STS policy requires")
 		case enforce:
 			cfg := &tls.Config{ServerName: hp.host, RootCAs: w.RootCAs, MinVersion: tls.VersionTLS12}
 			if err := c.StartTLS(cfg); err != nil {
+				report(tlsFailure(err))
 				return nil, temporary("4.7.0", "TLS with "+hp.host+" failed, and the MTA-STS policy requires it: "+replyText(err))
 			}
 			p.secure = true
+			report("")
 			return p, nil
 		case offered && useTLS:
 			if err := c.StartTLS(&tls.Config{ServerName: hp.host, InsecureSkipVerify: true}); err != nil {
 				log.Info("queue: STARTTLS failed, trying without", "host", hp.host, "err", err)
+				report(tlsrpt.ValidationFailure)
 				continue
 			}
 			if policy != nil {
+				// Mode testing: what enforce would have refused is
+				// reported as the failure it would have been.
 				if err := verifyPeer(c.TLS(), hp.host, w.RootCAs, time.Now()); err != nil {
 					log.Warn("queue: MTA-STS (testing): the certificate would not pass", "host", hp.host, "err", err)
+					report(tlsFailure(err))
+					return p, nil
 				}
 			}
+			report("")
 			return p, nil
 		}
-		if policy != nil && !offered {
-			log.Warn("queue: MTA-STS (testing): the server does not offer STARTTLS", "host", hp.host)
+		if !offered {
+			if policy != nil {
+				log.Warn("queue: MTA-STS (testing): the server does not offer STARTTLS", "host", hp.host)
+			}
+			report(tlsrpt.StartTLSNotSupported)
 		}
 		return p, nil
 	}

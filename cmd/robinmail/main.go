@@ -52,6 +52,9 @@ commands:
   user quota <address> [<storage> <messages>]  show a user's quota and use, or set the limits: a number of octets
                                                (with K, M or G) and a number of messages; "none" for no limit,
                                                "default" for the default of the config
+  tlsrpt results [days]                        show how the TLS of outbound mail went (default: 2 days), and the reports made
+  tlsrpt received [count]                      list the TLS reports other servers sent us (default: 20)
+  tlsrpt show <id>                             print one of them
   quota recount [address]                      count the mail of accounts again and correct their quota counters
   user password <address>                      set a new password (prompt or stdin); ends the user's sessions
   user totp-disable <address>                  turn TOTP off for a user who lost the authenticator
@@ -163,6 +166,12 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return a.aliasRemove(args[1], optional(args, 2, ""))
 	case cmd == "user" && (n == 2 || n == 4) && args[0] == "quota":
 		return a.userQuota(args[1], args[2:])
+	case cmd == "tlsrpt" && (n == 1 || n == 2) && args[0] == "results":
+		return a.tlsrptResults(optional(args, 1, "2"))
+	case cmd == "tlsrpt" && (n == 1 || n == 2) && args[0] == "received":
+		return a.tlsrptReceived(optional(args, 1, "20"))
+	case cmd == "tlsrpt" && n == 2 && args[0] == "show":
+		return a.tlsrptShow(args[1])
 	case cmd == "quota" && (n == 1 || n == 2) && args[0] == "recount":
 		return a.quotaRecount(optional(args, 1, ""))
 	case cmd == "user" && n == 2 && args[0] == "password":

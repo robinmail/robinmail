@@ -62,7 +62,7 @@ func serialOf(t *testing.T, r *reloader) int64 {
 }
 
 func TestNotConfigured(t *testing.T) {
-	if _, err := New(config.TLS{}, "mail.example.test", t.TempDir()); !errors.Is(err, ErrNotConfigured) {
+	if _, err := New(config.TLS{}, "mail.example.test", t.TempDir(), nil); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("New = %v, want ErrNotConfigured", err)
 	}
 }
@@ -72,7 +72,7 @@ func TestFilesAndReload(t *testing.T) {
 	certFile, keyFile := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 	writeCert(t, certFile, keyFile, 1)
 
-	tc, err := New(config.TLS{CertFile: certFile, KeyFile: keyFile}, "mail.example.test", dir)
+	tc, err := New(config.TLS{CertFile: certFile, KeyFile: keyFile}, "mail.example.test", dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

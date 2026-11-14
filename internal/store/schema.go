@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 12
+const schemaVersion = 13
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -166,6 +166,7 @@ var schema = []string{
 	sqlSieveTable, sqlSieveActive, sqlVacationSentTable, sqlVacationSentAt,
 	sqlVacationTable,
 	sqlQuotaInsert, sqlQuotaDelete,
+	sqlTLSResultTable, sqlTLSReportSentTable, sqlTLSReportInTable, sqlTLSReportInID,
 
 	`INSERT INTO schema_version (version) SELECT ` + fmt.Sprint(schemaVersion) + ` WHERE NOT EXISTS (SELECT 1 FROM schema_version)`,
 }
@@ -252,6 +253,8 @@ var migrations = map[int64][]string{
 			used_count = (SELECT count(*) FROM email e WHERE e.account_id = account.id)`,
 		sqlQuotaInsert, sqlQuotaDelete,
 	},
+	// 13: TLS reporting (RFC 8460).
+	12: {sqlTLSResultTable, sqlTLSReportSentTable, sqlTLSReportInTable, sqlTLSReportInID},
 }
 
 const (
@@ -338,6 +341,41 @@ const (
 	sqlQuotaDelete = `CREATE TRIGGER IF NOT EXISTS email_quota_delete AFTER DELETE ON email BEGIN
 		UPDATE account SET used_bytes = used_bytes - old.size, used_count = used_count - 1 WHERE id = old.account_id;
 	END`
+
+	// TLS reporting (tlsrpt.go). tls_result counts the sessions of
+	// outbound deliveries per UTC day, recipient domain, policy and
+	// outcome. tls_report_sent marks the reports that were made, so that
+	// one node makes each. tls_report_in keeps reports sent to us.
+	sqlTLSResultTable = `CREATE TABLE IF NOT EXISTS tls_result (
+		day    INTEGER NOT NULL,
+		domain TEXT NOT NULL,
+		policy TEXT NOT NULL,
+		result TEXT NOT NULL DEFAULT '',
+		mx     TEXT NOT NULL DEFAULT '',
+		ip     TEXT NOT NULL DEFAULT '',
+		count  INTEGER NOT NULL,
+		PRIMARY KEY (day, domain, policy, result, mx, ip)
+	) WITHOUT ROWID`
+	sqlTLSReportSentTable = `CREATE TABLE IF NOT EXISTS tls_report_sent (
+		day     INTEGER NOT NULL,
+		domain  TEXT NOT NULL,
+		at      INTEGER NOT NULL,
+		outcome TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (day, domain)
+	) WITHOUT ROWID`
+	sqlTLSReportInTable = `CREATE TABLE IF NOT EXISTS tls_report_in (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		received_at  INTEGER NOT NULL,
+		organization TEXT NOT NULL DEFAULT '',
+		report_id    TEXT NOT NULL,
+		domain       TEXT NOT NULL DEFAULT '',
+		start_at     INTEGER NOT NULL,
+		end_at       INTEGER NOT NULL,
+		successful   INTEGER NOT NULL DEFAULT 0,
+		failed       INTEGER NOT NULL DEFAULT 0,
+		report       TEXT NOT NULL
+	)`
+	sqlTLSReportInID = `CREATE UNIQUE INDEX IF NOT EXISTS tls_report_in_id ON tls_report_in (organization, report_id)`
 
 	// A web login. token_hash is the SHA-256 of the token in the cookie, so
 	// a copy of this table logs nobody in. id is what the user's list of

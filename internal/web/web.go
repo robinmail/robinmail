@@ -100,6 +100,10 @@ type Server struct {
 	// submission and Basic auth for every account, also those without an
 	// app password.
 	RequireAppPasswords bool
+	// Hosts, when set, returns the handler for another host name this
+	// server answers under (mta-sts.<domain>, autoconfig.<domain>), or
+	// nil for a name that is not ours.
+	Hosts func(host string) http.Handler
 	// SendAs, when set, lists the alias addresses an account may send as
 	// (store.SendAddresses), for the identities page.
 	SendAs func(ctx context.Context, address string) ([]string, error)
@@ -279,6 +283,15 @@ func (s *Server) Handler() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.securityHeaders(w, r)
+		// Names that are ours for one purpose: the MTA-STS policy host of
+		// a domain, its autoconfig host. They get that and nothing else:
+		// no login, no API, no webmail.
+		if s.Hosts != nil && hostname(r.Host) != strings.ToLower(s.Hostname) {
+			if h := s.Hosts(hostname(r.Host)); h != nil {
+				h.ServeHTTP(w, r)
+				return
+			}
+		}
 		if !s.hostAllowed(r) {
 			// Not a name of ours: a stale DNS record, or a page that
 			// rebinds its own name to this address to get at the API.

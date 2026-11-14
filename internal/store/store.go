@@ -283,6 +283,11 @@ func (b *batch) change(typ, sel string, kv ...any) {
 //	AddLoginFailure        not again: it counts
 //	CreateSieveScript, UpdateSieveScript, ActivateSieveScript,
 //	DestroySieveScript     not again: counters, modseq, and guards
+//	CountTLSResult         not again: it counts
+//	ClaimTLSReport         not again: its answer is whether this run claimed
+//	NoteTLSReport, SaveTLSReport, TrimTLSReports
+//	                       again: a row set to given values, INSERT OR
+//	                       IGNORE by the report's id, deletes
 //	SetQuota               not again: modseq
 //	RecountQuota           again: sets the counters to what the emails say
 //	SetVacationResponse    not again: modseq, and the ifInState guard
