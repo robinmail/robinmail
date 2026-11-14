@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
 import { auth, client, store } from './app'
-import { currentAccount } from './jmap/client'
+import { currentSession } from './auth/api'
 import LoginPage from './pages/LoginPage.vue'
 
 // The route carries what a reload or the back button must bring back:
@@ -11,6 +11,7 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: LoginPage },
     { path: '/mail/:mailbox?/:thread?', name: 'mail', component: () => import('./pages/MailPage.vue') },
     { path: '/settings', name: 'settings', component: () => import('./pages/SettingsPage.vue') },
+    { path: '/settings/security', name: 'security', component: () => import('./pages/SecurityPage.vue') },
     { path: '/:rest(.*)*', redirect: { name: 'mail' } },
   ],
 })
@@ -23,7 +24,9 @@ export function safeNext(next: unknown): string {
 router.beforeEach(async (to: RouteLocationNormalized) => {
   if (!auth.checked) {
     try {
-      auth.account = await currentAccount()
+      const { session, waiting } = await currentSession()
+      auth.account = session
+      auth.waiting = waiting
     } catch {
       auth.account = null // the login page shows what is wrong when the user tries
     }
@@ -43,5 +46,5 @@ client.onUnauthorized = () => {
   store.reset()
   const here = router.currentRoute.value
   // The composers stay as they are: what was typed is saved after the login.
-  void router.replace({ name: 'login', query: here.name === 'mail' || here.name === 'settings' ? { next: here.fullPath } : {} })
+  void router.replace({ name: 'login', query: here.name === 'mail' || here.name === 'settings' || here.name === 'security' ? { next: here.fullPath } : {} })
 }

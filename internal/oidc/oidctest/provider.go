@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -82,8 +83,13 @@ type grant struct {
 	user                       map[string]any
 }
 
-// New starts a provider with one client and one user.
-func New() *Provider {
+// New starts a provider with one client and one user, on a free port.
+func New() *Provider { return NewAt("") }
+
+// NewAt is New on a given address, such as "127.0.0.1:8090", for a
+// provider whose issuer has to be known beforehand. It panics when the
+// address cannot be listened on.
+func NewAt(addr string) *Provider {
 	p := &Provider{ClientID: "robinmail", ClientSecret: "test-secret-of-the-fake-provider", Now: time.Now, codes: map[string]grant{},
 		User: map[string]any{"sub": "user-1", "email": "anna@example.test", "email_verified": true}}
 	p.newKeys()
@@ -93,7 +99,16 @@ func New() *Provider {
 	mux.HandleFunc("GET /authorize", p.authorize)
 	mux.HandleFunc("POST /token", p.token)
 	mux.HandleFunc("GET /jwks", p.jwks)
-	p.Server = httptest.NewServer(mux)
+	p.Server = httptest.NewUnstartedServer(mux)
+	if addr != "" {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			panic(err)
+		}
+		p.Server.Listener.Close()
+		p.Server.Listener = l
+	}
+	p.Server.Start()
 	p.Issuer = p.Server.URL
 	return p
 }

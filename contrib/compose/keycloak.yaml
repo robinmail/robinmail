@@ -1,0 +1,40 @@
+# Keycloak for trying the OpenID Connect login against a real provider. It
+# is not needed to run or to test robinmail: accounts are built in, and the
+# tests use a provider of their own (internal/oidc/oidctest). This is the
+# one check that the login works with software we did not write.
+#
+#   make keycloak-test        starts this, logs a user in through the webmail
+#                             with a browser, and removes it again
+#
+# or by hand:
+#
+#   docker compose -f contrib/compose/keycloak.yaml up -d
+#   contrib/dev/e2e.sh keycloak        # the browser test
+#   docker compose -f contrib/compose/keycloak.yaml down
+#
+# The realm in keycloak/robinmail-realm.json has one client, "robinmail",
+# for the development instance on http://127.0.0.1:8080, and two users: one
+# with the address of that instance's user, dev@robinmail.test, and one
+# robinmail has no mailbox for. Client secret and passwords in that file
+# are for this container only, which listens on 127.0.0.1 and keeps
+# nothing: "down" removes it all.
+#
+# Keycloak runs in development mode over plain HTTP. robinmail accepts an
+# http issuer only on a loopback address, which this is.
+name: robinmail-keycloak
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "127.0.0.1:8180:8080"
+    environment:
+      # The issuer is this URL whatever name a request comes in under, so
+      # that robinmail on the host and the browser see the same one.
+      KC_HOSTNAME: "http://127.0.0.1:8180"
+      KC_HTTP_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: robinmail-keycloak-admin
+    volumes:
+      - ./keycloak/robinmail-realm.json:/opt/keycloak/data/import/robinmail-realm.json:ro

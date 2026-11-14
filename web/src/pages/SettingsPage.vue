@@ -87,6 +87,7 @@ async function submit() {
       <h1 class="font-semibold text-highlighted">
         Identities
       </h1>
+      <SettingsTabs class="ml-auto" />
     </header>
 
     <main class="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 p-4 sm:p-6">

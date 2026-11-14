@@ -334,47 +334,5 @@ export class JmapClient {
   }
 }
 
-// Login endpoints of robinmail (not JMAP).
-
-export interface Account {
-  accountId: Id
-  username: string
-}
-
-export class LoginError extends Error {
-  constructor(public status: number, message: string, public retryAfter = 0) {
-    super(message)
-    this.name = 'LoginError'
-  }
-}
-
-export async function login(username: string, password: string, f: typeof fetch = fetch): Promise<Account> {
-  const res = await f('/auth/login', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  })
-  if (!res.ok) {
-    let message = `HTTP ${res.status}`
-    try {
-      message = ((await res.json()) as { error?: string }).error ?? message
-    } catch {
-      // not JSON: keep the status
-    }
-    throw new LoginError(res.status, message, Number(res.headers.get('Retry-After') ?? 0))
-  }
-  return (await res.json()) as Account
-}
-
-export async function logout(f: typeof fetch = fetch): Promise<void> {
-  await f('/auth/logout', { method: 'POST', credentials: 'same-origin' })
-}
-
-// currentAccount answers who the cookie belongs to, or null.
-export async function currentAccount(f: typeof fetch = fetch): Promise<Account | null> {
-  const res = await f('/auth/session', { credentials: 'same-origin' })
-  if (res.status === 401) return null
-  if (!res.ok) throw new HttpError(res.status, `session: HTTP ${res.status}`)
-  return (await res.json()) as Account
-}
+// The login endpoints of robinmail are not JMAP: they are in ../auth/api.
+export type { Account } from '../auth/api'

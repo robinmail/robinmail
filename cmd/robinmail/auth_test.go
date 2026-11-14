@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mikepage/robinmail/internal/oidc/oidctest"
 	"github.com/mikepage/robinmail/internal/queue"
 	"github.com/mikepage/robinmail/internal/totp"
 )
@@ -492,5 +493,76 @@ func TestRequireAppPasswords(t *testing.T) {
 	web.post("POST", "/auth/app-passwords", `{"name":"Client","password":"correct horse"}`, &app)
 	if _, got := imapLogin(t, "app", a.imapTLS, anna, app.Secret); !strings.HasPrefix(got, "OK") {
 		t.Errorf("IMAP with an app password: %s", got)
+	}
+}
+
+// TestOIDCLoginEndToEnd logs a browser in through an OpenID provider: the
+// fake one of internal/oidc/oidctest, over HTTP, with the server as
+// "serve" runs it and its config naming the provider. The session the
+// callback on node A makes is good on node B.
+func TestOIDCLoginEndToEnd(t *testing.T) {
+	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
+	if base == "" {
+		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
+	}
+	op := oidctest.New()
+	defer op.Close()
+	a, b := twoAuthNodes(t, base, "oidc", fmt.Sprintf(`"auth":{"oidc":[{"name":"test","label":"Test provider","issuer":%q,
+		"client_id":%q,"client_secret":%q}]},`, op.Issuer, op.ClientID, op.ClientSecret))
+	anna := a.user("anna")
+	op.Lock()
+	op.User = map[string]any{"sub": "anna-at-the-provider", "email": anna, "email_verified": true}
+	op.Unlock()
+
+	browser := newJMAPClient(t, "http://"+a.web)
+	var cfg struct {
+		Providers []struct{ Name, Label string }
+	}
+	if status := browser.post("GET", "/auth/config", "", &cfg); status != 200 || len(cfg.Providers) != 1 || cfg.Providers[0].Label != "Test provider" {
+		t.Fatalf("config: %d %+v", status, cfg)
+	}
+	// The browser follows the redirects: to the provider, and back to the
+	// callback, which answers with the page that goes on to the webmail.
+	resp, page := browser.do("GET", "/auth/oidc/test/start", "", nil)
+	if resp.StatusCode != 200 || resp.Request.URL.Path != "/auth/oidc/test/callback" || !strings.Contains(string(page), `content="0;url=/"`) {
+		t.Fatalf("the login ended at %s with %d: %s", resp.Request.URL, resp.StatusCode, page)
+	}
+	op.Lock()
+	sent := op.LastAuth
+	op.Unlock()
+	if sent.Get("code_challenge_method") != "S256" || sent.Get("redirect_uri") != "http://"+a.web+"/auth/oidc/test/callback" {
+		t.Errorf("authorization request: %v", sent)
+	}
+	var who struct{ Username, Method string }
+	if status := browser.post("GET", "http://"+b.web+"/auth/session", "", &who); status != 200 || who.Username != anna || who.Method != "oidc:test" {
+		t.Fatalf("the session on node B: %d %+v", status, who)
+	}
+	if status := browser.post("POST", "http://"+b.web+"/jmap/api", `{"using":[],"methodCalls":[]}`, nil); status != 200 {
+		t.Errorf("JMAP on node B with the session of the provider's login: %d", status)
+	}
+
+	// Somebody the provider knows and robinmail does not gets no session.
+	op.Lock()
+	op.User = map[string]any{"sub": "stranger", "email": "stranger@" + a.domain, "email_verified": true}
+	op.Unlock()
+	stranger := newJMAPClient(t, "http://"+a.web)
+	if _, page := stranger.do("GET", "/auth/oidc/test/start", "", nil); !strings.Contains(string(page), "/login?error=oidc_no_account") {
+		t.Errorf("a login without an account: %s", page)
+	}
+	if status := stranger.post("GET", "/auth/session", "", nil); status != 401 {
+		t.Errorf("session of the stranger: %d", status)
+	}
+	// And the address of an account under another subject does not either.
+	op.Lock()
+	op.User = map[string]any{"sub": "somebody-else", "email": anna, "email_verified": true}
+	op.Unlock()
+	if _, page := newJMAPClient(t, "http://"+a.web).do("GET", "/auth/oidc/test/start", "", nil); !strings.Contains(string(page), "/login?error=oidc_no_account") {
+		t.Errorf("the address under another subject: %s", page)
+	}
+	audit := a.ok("", "audit", "all", "20")
+	a.expect(audit, `login\s+`+anna+`\s+127\.0\.0\.1\s+web: oidc:test`, `oidc-refused\s+stranger@`, `oidc-refused\s+`+anna+`\s+127\.0\.0\.1\s+test: the account is linked to another subject`)
+	a.expect(a.ok("", "user", "oidc-unlink", anna), `forgot 1 provider subjects`)
+	if _, page := newJMAPClient(t, "http://"+a.web).do("GET", "/auth/oidc/test/start", "", nil); !strings.Contains(string(page), `content="0;url=/"`) {
+		t.Errorf("after oidc-unlink the new subject should be taken: %s", page)
 	}
 }

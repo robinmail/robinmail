@@ -4,7 +4,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { auth, compose, loadAccount, store } from '../app'
-import { logout } from '../jmap/client'
+import { logout } from '../auth/api'
 import { Push } from '../jmap/push'
 import { actions, selection, useMailView } from '../lib/mailView'
 import ThreadView from '../components/ThreadView.vue'
@@ -253,6 +253,9 @@ const shortcuts = [
           </UPopover>
           <UTooltip text="Identities and signatures">
             <UButton icon="i-lucide-settings" color="neutral" variant="ghost" size="sm" aria-label="Identities and signatures" :to="{ name: 'settings' }" />
+          </UTooltip>
+          <UTooltip text="Password and security">
+            <UButton icon="i-lucide-shield-check" color="neutral" variant="ghost" size="sm" aria-label="Password and security" :to="{ name: 'security' }" />
           </UTooltip>
           <UColorModeButton color="neutral" variant="ghost" size="sm" />
           <UTooltip text="Log out">

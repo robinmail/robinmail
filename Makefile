@@ -4,6 +4,7 @@
 #   make web        only the webmail: web/dist, copied to internal/web/dist
 #   make test       go vet, the Go tests, type check and unit tests of web/
 #   make e2e        the browser test against ./robinmail and the dev instance
+#   make keycloak-test  the browser test of the OpenID Connect login against a Keycloak container
 #   make dev        a development instance with live reload on :5173
 #   make cluster-test   the cluster tests on three rqlite and three robinmail nodes in Docker
 #   make lab-test       the interoperability tests in Docker: Postfix, Exim and OpenSMTPD over SMTP,
@@ -32,7 +33,9 @@
 # needs rqlite from contrib/compose, as above.
 #
 # make e2e uses the same instance, but the webmail inside ./robinmail on
-# http://127.0.0.1:8080. The first time: cd web && npx playwright install chromium
+# http://127.0.0.1:8080, with a config of its own (dev/robinmail.e2e.json)
+# that adds an OpenID provider: a fake one, started with the tests, that
+# logs the dev user in without asking. The first time: cd web && npx playwright install chromium
 # It takes about three minutes: the tests that send mail wait for the
 # server's undo time and its queue. Mail goes between the two users of the
 # instance (dev@ and other@robinmail.test); one test sends to an outside
@@ -44,7 +47,7 @@ GO ?= go
 NPM ?= npm
 WEB_SRC := $(shell find web/src web/public web/index.html web/package.json web/package-lock.json web/vite.config.ts web/tsconfig.json -type f 2>/dev/null)
 
-.PHONY: all build web test test-go test-web e2e dev clean cluster-test lab-test
+.PHONY: all build web test test-go test-web e2e dev clean cluster-test lab-test keycloak-test
 
 all: build
 
@@ -77,9 +80,19 @@ test-web: web/node_modules
 	cd web && $(NPM) run typecheck && $(NPM) test
 
 e2e: build
-	contrib/dev/seed.sh
-	@./robinmail -config dev/robinmail.json serve & pid=$$!; trap 'kill $$pid' EXIT; sleep 1; \
-		cd web && ROBINMAIL_E2E_URL=http://127.0.0.1:8080 npx playwright test
+	contrib/dev/e2e.sh
+
+# Logs a user in through the webmail with a real OpenID provider: starts
+# the Keycloak of contrib/compose/keycloak.yaml (a 500 MB image the first
+# time), waits until its realm answers, runs the browser test that uses it
+# and removes the container again, also when the test failed. KEEP=1
+# leaves it running. Nothing else needs Keycloak; "make e2e" runs that
+# test too when the container happens to be up, and skips it when not.
+keycloak-test: build
+	docker compose -f contrib/compose/keycloak.yaml up -d
+	@contrib/compose/keycloak-wait.sh || { docker compose -f contrib/compose/keycloak.yaml down; exit 1; }
+	@contrib/dev/e2e.sh keycloak; s=$$?; \
+		[ -n "$(KEEP)" ] || docker compose -f contrib/compose/keycloak.yaml down; exit $$s
 
 dev: web/node_modules
 	contrib/dev/seed.sh

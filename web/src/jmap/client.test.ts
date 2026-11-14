@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { HttpError, JmapClient, MethodError, USING, localPath, login, currentAccount } from './client'
+import { HttpError, JmapClient, MethodError, USING, localPath } from './client'
 import { FakeServer } from '../test/fake'
 
 function setup() {
@@ -152,26 +152,6 @@ describe('keepalive', () => {
     write.call('Email/set', { destroy: [e.id] })
     await write.send()
     expect(seen).toEqual([false, true])
-  })
-})
-
-describe('login endpoints', () => {
-  it('login posts JSON and returns the account; errors carry status and text', async () => {
-    const calls: [string, RequestInit | undefined][] = []
-    const ok: typeof fetch = async (u, i) => (calls.push([String(u), i]), Response.json({ accountId: 'a', username: 'u@x' }))
-    expect(await login('u@x', 'pw', ok)).toEqual({ accountId: 'a', username: 'u@x' })
-    expect(calls[0]![0]).toBe('/auth/login')
-    expect(calls[0]![1]).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'application/json' } })
-    expect(JSON.parse(String(calls[0]![1]!.body))).toEqual({ username: 'u@x', password: 'pw' })
-
-    const limited: typeof fetch = async () =>
-      Response.json({ error: 'too many failed logins; try again later' }, { status: 429, headers: { 'Retry-After': '120' } })
-    await expect(login('u@x', 'pw', limited)).rejects.toMatchObject({ status: 429, retryAfter: 120, message: 'too many failed logins; try again later' })
-  })
-
-  it('currentAccount is null without a session', async () => {
-    expect(await currentAccount(async () => Response.json({ error: 'not logged in' }, { status: 401 }))).toBeNull()
-    expect(await currentAccount(async () => Response.json({ accountId: 'a', username: 'u@x' }))).toEqual({ accountId: 'a', username: 'u@x' })
   })
 })
 

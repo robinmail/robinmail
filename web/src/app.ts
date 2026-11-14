@@ -3,7 +3,8 @@
 // cookie, which scripts cannot read.
 
 import { reactive } from 'vue'
-import { JmapClient, type Account } from './jmap/client'
+import type { Account } from './auth/api'
+import { JmapClient } from './jmap/client'
 import { ComposeStore } from './store/compose'
 import { MailStore } from './store/mail'
 
@@ -11,6 +12,8 @@ export const auth = reactive({
   // Whether /auth/session was asked yet.
   checked: false,
   account: null as Account | null,
+  // A login in this browser gave its password and still owes its code.
+  waiting: false,
 })
 
 export const client = new JmapClient()
