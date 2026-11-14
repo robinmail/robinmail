@@ -16,3 +16,11 @@ export const auth = reactive({
 export const client = new JmapClient()
 export const store = new MailStore(client)
 export const compose = new ComposeStore(client, store)
+
+// loadAccount fetches what every screen behind the login needs: the
+// mailboxes, then the identities. Composers left from before a new login
+// are saved by it.
+export async function loadAccount(): Promise<void> {
+  if (!store.state.ready) await store.load()
+  await compose.init()
+}

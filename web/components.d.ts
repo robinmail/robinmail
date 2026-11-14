@@ -11,11 +11,15 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AddressInput: typeof import('./src/components/AddressInput.vue')['default']
+    ComposerDock: typeof import('./src/components/ComposerDock.vue')['default']
+    ComposerPanel: typeof import('./src/components/ComposerPanel.vue')['default']
     FilterBox: typeof import('./src/components/FilterBox.vue')['default']
     MailboxNav: typeof import('./src/components/MailboxNav.vue')['default']
     MessageBody: typeof import('./src/components/MessageBody.vue')['default']
     MessageList: typeof import('./src/components/MessageList.vue')['default']
     MoveMenu: typeof import('./src/components/MoveMenu.vue')['default']
+    RichEditor: typeof import('./src/components/RichEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     ThreadView: typeof import('./src/components/ThreadView.vue')['default']
@@ -38,9 +42,11 @@ declare module 'vue' {
     UKbd: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Kbd.vue')['default']
     UModal: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Modal.vue')['default']
     UPopover: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Popover.vue')['default']
+    UProgress: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Progress.vue')['default']
     USelect: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Select.vue')['default']
     USeparator: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Separator.vue')['default']
     USkeleton: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Skeleton.vue')['default']
+    UTextarea: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Textarea.vue')['default']
     UTooltip: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Tooltip.vue')['default']
   }
 }

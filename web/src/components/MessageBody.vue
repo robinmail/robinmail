@@ -19,6 +19,22 @@ const text = computed(() => {
     .map((v) => v.value)
     .join('\n')
 })
+// The text with its links: web addresses open in a new tab, mail
+// addresses in the composer (the app catches mailto: links). The pieces
+// are text nodes and anchors made by the template, never markup.
+const linked = computed(() => {
+  const out: { text: string; href?: string }[] = []
+  const re = /\bhttps?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g
+  const t = text.value
+  let at = 0
+  for (let m = re.exec(t); m; m = re.exec(t)) {
+    if (m.index > at) out.push({ text: t.slice(at, m.index) })
+    out.push({ text: m[0], href: m[0].includes('://') ? m[0] : `mailto:${m[0]}` })
+    at = m.index + m[0].length
+  }
+  if (at < t.length) out.push({ text: t.slice(at) })
+  return out
+})
 const truncated = computed(() => Object.values(props.email.bodyValues ?? {}).some((v) => v.isTruncated))
 
 // Remote images: left out until the reader asks, per message.
@@ -54,7 +70,10 @@ const attachments = computed(() => (props.email.attachments ?? []).filter((a) =>
         class="h-[65vh] min-h-80 w-full rounded-md border border-default bg-white"
       />
     </template>
-    <pre v-else class="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-default" data-testid="text-view">{{ text || '(This message has no text.)' }}</pre>
+    <pre v-else class="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-default" data-testid="text-view"><template v-if="!text">(This message has no text.)</template><template v-for="(p, i) in linked" :key="i"><a
+      v-if="p.href" :href="p.href" :target="p.href.startsWith('mailto:') ? undefined : '_blank'" rel="noopener noreferrer"
+      class="text-primary underline underline-offset-2"
+    >{{ p.text }}</a><template v-else>{{ p.text }}</template></template></pre>
     <p v-if="truncated && !html" class="text-xs text-dimmed">
       This message is too long to show in full.
     </p>

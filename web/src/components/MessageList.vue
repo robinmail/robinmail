@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { store } from '../app'
+import { compose, store } from '../app'
 import { shortDate, fullDate } from '../lib/format'
 import { actions, selection, useMailView, type Row } from '../lib/mailView'
 import type { ListSpec } from '../store/mail'
@@ -52,6 +52,14 @@ watch(sentinel, (el, old) => {
   if (old) observer?.unobserve(old)
   if (el) observer?.observe(el)
 })
+
+// In Drafts a row that is one draft opens in the composer, not as a thread.
+function openRow(e: MouseEvent, row: Row) {
+  if (mailbox.value?.role !== 'drafts' || row.emails.length !== 1 || !row.email.keywords.$draft) return
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+  e.preventDefault()
+  compose.openDraft(row.id).catch((err: unknown) => store.onError(err instanceof Error ? err.message : String(err)))
+}
 
 const chips = computed(() => {
   const s = spec.value
@@ -156,7 +164,7 @@ const chips = computed(() => {
           <RouterLink
             :to="view.threadLocation(row.threadId)" :replace="!!threadId"
             class="min-w-0 flex-1 py-2.5 pl-1.5 pr-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
-            :aria-current="row.threadId === threadId ? 'true' : undefined"
+            :aria-current="row.threadId === threadId ? 'true' : undefined" @click.capture="openRow($event, row)"
           >
             <div class="flex items-baseline gap-2">
               <span class="truncate text-sm" :class="row.unread ? 'font-semibold text-highlighted' : 'text-toned'">{{ row.names }}</span>
@@ -169,6 +177,7 @@ const chips = computed(() => {
             <div class="flex items-center gap-1.5">
               <span v-if="row.unread" class="size-2 shrink-0 rounded-full bg-primary" role="img" aria-label="Unread" />
               <span class="truncate text-sm" :class="row.unread ? 'font-semibold text-highlighted' : 'text-default'">{{ row.email.subject || '(no subject)' }}</span>
+              <UIcon v-if="row.email.keywords.$answered" name="i-lucide-reply" class="size-3.5 shrink-0 text-dimmed" role="img" aria-label="Answered" />
               <UIcon v-if="row.attachment" name="i-lucide-paperclip" class="ml-auto size-3.5 shrink-0 text-dimmed" role="img" aria-label="Has attachment" />
             </div>
             <p class="truncate text-sm text-dimmed">

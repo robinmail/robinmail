@@ -129,7 +129,8 @@ export function useMailView() {
   }
 
   function threadLocation(thread: Id) {
-    return { name: 'mail', params: { mailbox: mailboxId.value, thread }, query: route.query }
+    // On the way to another page the route has no mailbox for a moment.
+    return { name: 'mail', params: { mailbox: mailboxId.value || null, thread }, query: route.query }
   }
   // Opening the first thread adds a history entry, so "back" returns to
   // the list; going from thread to thread replaces it.

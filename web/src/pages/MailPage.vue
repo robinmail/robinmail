@@ -3,7 +3,7 @@
 // narrow screen the mailboxes are a drawer and the thread replaces the list.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { auth, store } from '../app'
+import { auth, compose, loadAccount, store } from '../app'
 import { logout } from '../jmap/client'
 import { actions, selection, useMailView } from '../lib/mailView'
 import ThreadView from '../components/ThreadView.vue'
@@ -22,7 +22,7 @@ store.onError = (message) => toast.add({ title: message, color: 'error', icon: '
 async function load() {
   loadError.value = ''
   try {
-    await store.load()
+    await loadAccount()
   } catch (e) {
     if (auth.account) loadError.value = e instanceof Error ? e.message : String(e)
   }
@@ -60,12 +60,22 @@ function refresh(force = false) {
   if (!force && now - last < 2000) return
   last = now
   void store.refresh()
+  void compose.refreshSubmissions().catch(() => {})
 }
+// Right after a send things move fast: the undo time runs out, the queue
+// delivers, a bounce may come back. Look every three seconds until the
+// submissions are settled.
+let fast: ReturnType<typeof setInterval> | undefined
+watch(() => compose.unsettled() || compose.state.sent.length > 0, (busy) => {
+  clearInterval(fast)
+  fast = busy ? setInterval(() => (compose.unsettled() || compose.state.sent.length > 0 ? refresh(true) : clearInterval(fast)), 3000) : undefined
+})
 const onFocus = () => refresh()
 const onVisible = () => refresh()
 
 // Keyboard: j/k next and previous, u read/unread, s flag, # or Delete
-// delete, Escape back to the list, / the filter.
+// delete, Escape back to the list, / the filter, c a new message, and in
+// an open conversation r reply, a reply all, f forward.
 function onKey(e: KeyboardEvent) {
   if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
   const t = e.target as HTMLElement | null
@@ -102,6 +112,14 @@ function onKey(e: KeyboardEvent) {
     case '/':
       filterOpen.value = true
       break
+    case 'c':
+      compose.compose()
+      break
+    case 'r':
+    case 'a':
+    case 'f':
+      if (!threadId.value || !thread.value?.respond(e.key === 'r' ? 'reply' : e.key === 'a' ? 'replyAll' : 'forward')) return
+      break
     default:
       return
   }
@@ -109,7 +127,7 @@ function onKey(e: KeyboardEvent) {
 }
 
 onMounted(() => {
-  if (!store.state.ready) void load()
+  if (!store.state.ready || !compose.state.identitiesLoaded) void load()
   timer = setInterval(() => refresh(true), POLL_MS)
   window.addEventListener('focus', onFocus)
   window.addEventListener('online', onFocus)
@@ -118,6 +136,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   clearInterval(timer)
+  clearInterval(fast)
   window.removeEventListener('focus', onFocus)
   window.removeEventListener('online', onFocus)
   document.removeEventListener('visibilitychange', onVisible)
@@ -125,10 +144,19 @@ onBeforeUnmount(() => {
 })
 
 async function signOut() {
+  // What is being written goes to Drafts first. If that fails the user
+  // stays, with the composer saying why.
+  for (const c of [...compose.state.composers]) {
+    if (!(await compose.close(c))) {
+      c.minimized = false
+      return
+    }
+  }
   try {
     await logout()
   } finally {
     auth.account = null
+    compose.clear()
     store.reset()
     await router.replace({ name: 'login' })
   }
@@ -141,7 +169,9 @@ const title = computed(() => {
 })
 watch(title, (t) => (document.title = t), { immediate: true })
 
+const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl Enter'
 const shortcuts = [
+  ['C', 'New message'], ['R', 'Reply'], ['A', 'Reply all'], ['F', 'Forward'], [sendKey, 'Send'],
   ['J', 'Next conversation'], ['K', 'Previous conversation'], ['U', 'Mark read or unread'], ['S', 'Flag'],
   ['#', 'Delete'], ['/', 'Filter'], ['Esc', 'Back to the list'],
 ] as const
@@ -165,6 +195,10 @@ const shortcuts = [
         </RouterLink>
       </template>
 
+      <UButton
+        label="New message" icon="i-lucide-pen-line" block class="mb-3" data-testid="compose" :disabled="!compose.state.identitiesLoaded"
+        @click="compose.compose()"
+      />
       <MailboxNav v-if="store.state.ready" />
       <div v-else class="flex flex-col gap-2 px-1" aria-busy="true">
         <USkeleton v-for="n in 5" :key="n" class="h-7 w-full" />
@@ -186,6 +220,9 @@ const shortcuts = [
               </dl>
             </template>
           </UPopover>
+          <UTooltip text="Identities and signatures">
+            <UButton icon="i-lucide-settings" color="neutral" variant="ghost" size="sm" aria-label="Identities and signatures" :to="{ name: 'settings' }" />
+          </UTooltip>
           <UColorModeButton color="neutral" variant="ghost" size="sm" />
           <UTooltip text="Log out">
             <UButton icon="i-lucide-log-out" color="neutral" variant="ghost" size="sm" aria-label="Log out" data-testid="logout" @click="signOut" />
@@ -210,6 +247,12 @@ const shortcuts = [
             <UButton icon="i-lucide-refresh-cw" color="neutral" variant="ghost" aria-label="Check for new mail" @click="refresh(true)" />
           </UTooltip>
           <FilterBox v-model:open="filterOpen" />
+          <UTooltip text="New message" :kbds="['C']">
+            <UButton
+              icon="i-lucide-pen-line" aria-label="New message" class="lg:hidden" data-testid="compose-small" :disabled="!compose.state.identitiesLoaded"
+              @click="compose.compose()"
+            />
+          </UTooltip>
         </template>
       </UDashboardNavbar>
       <MessageList />

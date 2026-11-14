@@ -8,11 +8,13 @@ import { expect, type Page } from '@playwright/test'
 const root = fileURLToPath(new URL('../..', import.meta.url))
 
 export const USER = 'dev@robinmail.test'
+// The second user of the seed script: someone to send mail to.
+export const OTHER = 'other@robinmail.test'
 export const PASSWORD = process.env.ROBINMAIL_DEV_PASSWORD ?? 'robinmail-dev'
 
 // deliver stores a message in the dev account, as the seed script does.
-export function deliver(message: string, mailbox = 'inbox'): void {
-  execFileSync('dev/robinmail', ['-config', 'dev/robinmail.json', 'deliver', USER, mailbox], {
+export function deliver(message: string, mailbox = 'inbox', user = USER): void {
+  execFileSync('dev/robinmail', ['-config', 'dev/robinmail.json', 'deliver', user, mailbox], {
     cwd: root,
     input: message.replace(/\r?\n/g, '\r\n'),
   })
@@ -62,10 +64,10 @@ These are the notes.
 `
 }
 
-export async function login(page: Page): Promise<void> {
+export async function login(page: Page, user = USER): Promise<void> {
   await page.goto('/')
   await expect(page).toHaveURL(/\/login/)
-  await page.getByLabel('Email address').fill(USER)
+  await page.getByLabel('Email address').fill(user)
   await page.getByLabel('Password').fill(PASSWORD)
   await page.getByRole('button', { name: 'Log in' }).click()
   await expect(page).toHaveURL(/\/mail\/m\d+$/)
@@ -96,4 +98,40 @@ export async function destroyBySubject(page: Page, subject: string, unread: stri
       },
     })
   })
+}
+
+const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission']
+
+// jmap sends method calls with the page's session and returns the
+// arguments of each response. accountId is filled in.
+export async function jmap(page: Page, calls: [string, Record<string, unknown>][]): Promise<Record<string, any>[]> {
+  const session = await (await page.request.get('/.well-known/jmap')).json()
+  const accountId = session.primaryAccounts['urn:ietf:params:jmap:mail']
+  const res = await page.request.post('/jmap/api', {
+    data: { using: USING, methodCalls: calls.map(([name, args], i) => [name, { accountId, ...args }, `c${i}`]) },
+  })
+  return ((await res.json()).methodResponses as [string, Record<string, any>, string][]).map((r) => r[1])
+}
+
+// emailsBySubject lists the emails of the page's account whose subject contains the text.
+export async function emailsBySubject(page: Page, subject: string, properties = ['id', 'subject', 'keywords', 'mailboxIds', 'threadId']): Promise<Record<string, any>[]> {
+  const [, got] = await jmap(page, [
+    ['Email/query', { filter: { subject } }],
+    ['Email/get', { '#ids': { resultOf: 'c0', name: 'Email/query', path: '/ids' }, properties }],
+  ])
+  return got!.list
+}
+
+// cleanUp destroys the threads that have an email with the subject (a
+// bounce is in the thread of the message it is about, under another
+// subject), and the submissions of the account.
+export async function cleanUp(page: Page, subject: string): Promise<void> {
+  await jmap(page, [
+    ['Email/query', { filter: { subject } }],
+    ['Email/get', { '#ids': { resultOf: 'c0', name: 'Email/query', path: '/ids' }, properties: ['threadId'] }],
+    ['Thread/get', { '#ids': { resultOf: 'c1', name: 'Email/get', path: '/list/*/threadId' } }],
+    ['Email/set', { '#destroy': { resultOf: 'c2', name: 'Thread/get', path: '/list/*/emailIds' } }],
+    ['EmailSubmission/query', {}],
+    ['EmailSubmission/set', { '#destroy': { resultOf: 'c4', name: 'EmailSubmission/query', path: '/ids' } }],
+  ])
 }

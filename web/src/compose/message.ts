@@ -346,7 +346,8 @@ export function fromStored(
     to: email.to ?? [], cc: email.cc ?? [], bcc: email.bcc ?? [],
     subject: email.subject ?? '',
     rich,
-    text: rich ? '' : (textPart ? values[textPart.partId!]!.value.replace(/\r\n/g, '\n') : ''),
+    // A message ends with a line end, so a text that had none comes back with one.
+    text: rich ? '' : (textPart ? values[textPart.partId!]!.value.replace(/\r\n/g, '\n').replace(/\n$/, '') : ''),
     html,
     attachments: (email.attachments ?? []).filter((a) => a.blobId).map((a) => {
       const cid = a.cid || newCid()
