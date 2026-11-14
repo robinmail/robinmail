@@ -1,0 +1,241 @@
+package queue
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mikepage/robinmail/internal/store"
+)
+
+// MTA-STS (RFC 8461) lets a domain say that mail for it must go over TLS
+// to a server with a valid certificate. The policy is announced by a TXT
+// record and fetched over HTTPS; this file finds, fetches, parses and
+// caches it. DANE (RFC 7672), the other way to require TLS, is not
+// implemented: it needs a resolver that validates DNSSEC.
+
+// STS modes (RFC 8461 5).
+const (
+	stsEnforce = "enforce"
+	stsTesting = "testing"
+	stsNone    = "none"
+)
+
+const (
+	stsMaxPolicyBytes = 64 << 10 // RFC 8461 3.2 suggests this cap
+	stsMaxAge         = 31557600 // one year, the most max_age may be
+)
+
+// stsRecordID reads the TXT records at _mta-sts.<domain> and returns the
+// id of the policy (RFC 8461 3.1). Records that do not start with
+// "v=STSv1" are not ours; more than one that does means there is no
+// policy.
+func stsRecordID(records []string) (string, bool) {
+	id, found := "", 0
+	for _, rec := range records {
+		fields := strings.Split(rec, ";")
+		if strings.TrimSpace(fields[0]) != "v=STSv1" {
+			continue
+		}
+		found++
+		id = ""
+		for _, f := range fields[1:] {
+			k, v, ok := strings.Cut(strings.TrimSpace(f), "=")
+			if ok && k == "id" {
+				id = v
+			}
+		}
+	}
+	if found != 1 || id == "" || len(id) > 32 {
+		return "", false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return "", false
+		}
+	}
+	return id, true
+}
+
+// parseSTSPolicy reads a policy file (RFC 8461 3.2): "key: value" lines
+// that end in CRLF or LF. version, mode and max_age are required, and at
+// least one mx unless the mode is none. Unknown keys are ignored.
+func parseSTSPolicy(body []byte) (mode string, mx []string, maxAge time.Duration, err error) {
+	version, age := "", int64(-1)
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			return "", nil, 0, fmt.Errorf("mta-sts: not a key: value line: %q", line)
+		}
+		v = strings.TrimSpace(v)
+		switch strings.TrimSpace(k) {
+		case "version":
+			version = v
+		case "mode":
+			mode = v
+		case "max_age":
+			n, perr := strconv.ParseInt(v, 10, 64)
+			if perr != nil || n < 0 {
+				return "", nil, 0, errors.New("mta-sts: max_age is not a number")
+			}
+			age = min(n, stsMaxAge)
+		case "mx":
+			v = strings.ToLower(v)
+			if v == "" || len(mx) >= 100 {
+				return "", nil, 0, errors.New("mta-sts: bad mx")
+			}
+			mx = append(mx, v)
+		}
+	}
+	switch {
+	case version != "STSv1":
+		return "", nil, 0, errors.New("mta-sts: version is not STSv1")
+	case mode != stsEnforce && mode != stsTesting && mode != stsNone:
+		return "", nil, 0, errors.New("mta-sts: unknown mode")
+	case age < 0:
+		return "", nil, 0, errors.New("mta-sts: no max_age")
+	case len(mx) == 0 && mode != stsNone:
+		return "", nil, 0, errors.New("mta-sts: no mx")
+	}
+	return mode, mx, time.Duration(age) * time.Second, nil
+}
+
+// stsMatch reports whether a host is one the policy names (RFC 8461 4.1).
+// A pattern "*.example.com" matches a host with exactly one more label.
+func stsMatch(patterns []string, host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, p := range patterns {
+		p = strings.ToLower(strings.TrimSuffix(p, "."))
+		if p == host {
+			return true
+		}
+		if suffix, ok := strings.CutPrefix(p, "*"); ok && strings.HasPrefix(suffix, ".") && strings.HasSuffix(host, suffix) {
+			if label := host[:len(host)-len(suffix)]; label != "" && !strings.Contains(label, ".") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// fetchSTSPolicy gets the policy file of a domain (RFC 8461 3.3): over
+// HTTPS from mta-sts.<domain>, with a certificate valid for that name,
+// status 200, type text/plain, and no redirect followed.
+func (w *Worker) fetchSTSPolicy(ctx context.Context, domain string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://mta-sts."+domain+"/.well-known/mta-sts.txt", nil)
+	if err != nil {
+		return nil, err
+	}
+	hc := w.HTTP
+	if hc == nil {
+		hc = defaultSTSClient
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("mta-sts: HTTP status %d", resp.StatusCode)
+	}
+	if mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err != nil || mt != "text/plain" {
+		return nil, errors.New("mta-sts: the policy is not text/plain")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, stsMaxPolicyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > stsMaxPolicyBytes {
+		return nil, errors.New("mta-sts: the policy is too large")
+	}
+	return body, nil
+}
+
+var defaultSTSClient = &http.Client{
+	Timeout: time.Minute,
+	// "HTTP 3xx redirects MUST NOT be followed" (RFC 8461 3.3).
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// policy returns the MTA-STS policy to apply to a domain, or nil for none.
+//
+// The TXT record is looked up for every delivery; its id says whether the
+// cached policy is still the current one. A new id, or no cached policy,
+// means a fetch. When the record or the fetch fails, a cached policy that
+// has not expired keeps applying (RFC 8461 3.3, 5.1): otherwise an
+// attacker who can break DNS or HTTPS for a moment could switch the
+// protection off. The cache is a table in rqlite, so all nodes share it.
+func (w *Worker) policy(ctx context.Context, domain string) *store.STSPolicy {
+	now := w.now()
+	cached, have, err := w.Store.STSPolicy(ctx, domain)
+	if err != nil {
+		w.log().Warn("mta-sts: reading the cache failed", "domain", domain, "err", err)
+		have = false
+	}
+	fresh := have && now.Before(cached.ExpiresAt)
+	use := func() *store.STSPolicy {
+		if !fresh || cached.Mode == stsNone {
+			return nil
+		}
+		return &cached
+	}
+	records, err := w.resolver().LookupTXT(ctx, "_mta-sts."+domain)
+	if err != nil && !notFound(err) {
+		w.log().Warn("mta-sts: TXT lookup failed", "domain", domain, "err", err)
+		return use()
+	}
+	id, ok := stsRecordID(records)
+	if !ok {
+		return use()
+	}
+	if fresh && cached.ID == id {
+		return use()
+	}
+	body, err := w.fetchSTSPolicy(ctx, domain)
+	if err != nil {
+		w.log().Warn("mta-sts: fetching the policy failed", "domain", domain, "err", err)
+		return use()
+	}
+	mode, mx, maxAge, err := parseSTSPolicy(body)
+	if err != nil {
+		w.log().Warn("mta-sts: the policy is not valid", "domain", domain, "err", err)
+		return use()
+	}
+	cached = store.STSPolicy{Domain: domain, ID: id, Mode: mode, MX: mx, FetchedAt: now, ExpiresAt: now.Add(maxAge)}
+	fresh = maxAge > 0
+	if err := w.Store.SaveSTSPolicy(ctx, cached); err != nil {
+		w.log().Warn("mta-sts: caching the policy failed", "domain", domain, "err", err)
+	}
+	w.log().Info("mta-sts: policy fetched", "domain", domain, "mode", mode, "mx", strings.Join(mx, ","), "max_age", maxAge)
+	return use()
+}
+
+// verifyPeer checks the certificate a server showed against the host name
+// we connected to, as MTA-STS wants it (RFC 8461 4.2): a chain to a trusted
+// root, not expired, and the host among its DNS names.
+func verifyPeer(st *tls.ConnectionState, host string, roots *x509.CertPool, now time.Time) error {
+	if st == nil || len(st.PeerCertificates) == 0 {
+		return errors.New("the server showed no certificate")
+	}
+	opts := x509.VerifyOptions{DNSName: host, Roots: roots, Intermediates: x509.NewCertPool(), CurrentTime: now}
+	for _, c := range st.PeerCertificates[1:] {
+		opts.Intermediates.AddCert(c)
+	}
+	_, err := st.PeerCertificates[0].Verify(opts)
+	return err
+}
