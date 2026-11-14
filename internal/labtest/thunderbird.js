@@ -413,3 +413,56 @@ function setSubject(w, subject) {
 function arrived(p, id, ms) {
   return until("the message " + id + " in " + p, ms, () => [...folder(p).messages].some(h => h.messageId == id));
 }
+
+// ---- account setup ----
+
+// findConfig runs what the account setup dialog runs once a person has
+// typed an address: the lookups of FindConfig.parallelAutoDiscovery (a
+// file on disk, the provider's autoconfig host, Mozilla's database, the
+// MX, Exchange). It returns the configuration found, or null.
+async function findConfig(email) {
+  const { FindConfig } = ChromeUtils.importESModule("resource:///modules/accountcreation/FindConfig.sys.mjs");
+  const domain = email.split("@")[1];
+  const gen = FindConfig.parallelAutoDiscovery(domain, email, new AbortController().signal);
+  for (;;) {
+    const step = await gen.next();
+    if (step.done) {
+      return step.value;
+    }
+    // A redirect to another host for Exchange: not followed.
+    await gen.next(false);
+  }
+}
+
+// fromProvider is the one lookup of those that asks the mail provider:
+// https://autoconfig.<domain>/mail/config-v1.1.xml?emailaddress=... and
+// https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml.
+async function fromProvider(email) {
+  const { FetchConfig } = ChromeUtils.importESModule("resource:///modules/accountcreation/FetchConfig.sys.mjs");
+  return FetchConfig.fromISP(email.split("@")[1], email, new AbortController().signal);
+}
+
+// describeConfig is what a found configuration says, for the test.
+function describeConfig(c) {
+  const one = s => ({ type: s.type, hostname: s.hostname, port: s.port, socketType: s.socketType, auth: s.auth, username: s.username });
+  return c && { source: c.source, incoming: one(c.incoming), outgoing: one(c.outgoing),
+    incomingAlternatives: c.incomingAlternatives.map(one), outgoingAlternatives: c.outgoingAlternatives.map(one) };
+}
+
+// setUp makes the account of an address the way the dialog does after
+// "Continue": find the configuration, fill in the address and password,
+// log in to the incoming server to check them (ConfigVerifier), and create
+// the account. It returns the configuration that was used.
+async function setUp(email, password, realname) {
+  const { AccountConfig } = ChromeUtils.importESModule("resource:///modules/accountcreation/AccountConfig.sys.mjs");
+  const { ConfigVerifier } = ChromeUtils.importESModule("resource:///modules/accountcreation/ConfigVerifier.sys.mjs");
+  const { CreateInBackend } = ChromeUtils.importESModule("resource:///modules/accountcreation/CreateInBackend.sys.mjs");
+  const config = await findConfig(email);
+  if (!config) {
+    throw new Error("no configuration found for " + email);
+  }
+  AccountConfig.replaceVariables(config, realname, email, password);
+  const verified = await new ConfigVerifier(msgWindow, new AbortController().signal).verifyConfig(config, false);
+  const made = await CreateInBackend.createAccountInBackend(verified);
+  return { config: describeConfig(verified), account: made.incomingServer.username + " on " + made.incomingServer.hostname + ":" + made.incomingServer.port };
+}

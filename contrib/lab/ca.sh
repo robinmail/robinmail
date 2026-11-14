@@ -25,7 +25,15 @@ fi
 # leaf <file name> <DNS name>...
 leaf() {
 	name=$1; shift
-	[ -f "$S/$name.crt" ] && return
+	# A certificate that is there stays, unless a name was added since.
+	if [ -f "$S/$name.crt" ]; then
+		have=$(openssl x509 -in "$S/$name.crt" -noout -ext subjectAltName 2>/dev/null || true)
+		missing=
+		for d in "$@"; do
+			case "$have," in *"DNS:$d,"*) ;; *) missing=1 ;; esac
+		done
+		[ -z "$missing" ] && return
+	fi
 	san=
 	for d in "$@"; do san="$san${san:+,}DNS:$d"; done
 	openssl req -new $EC -subj "/CN=$1" -keyout "$S/$name.key" -out "$S/$name.csr" 2>/dev/null
@@ -35,7 +43,8 @@ leaf() {
 	rm -f "$S/$name.csr" "$S/$name.ext"
 }
 
-leaf mx.robin.test mx.robin.test
+# robinmail also answers as the autoconfig host of its domain.
+leaf mx.robin.test mx.robin.test autoconfig.robin.test
 leaf mx.postfix.test mx.postfix.test
 leaf mx.exim.test mx.exim.test
 leaf mx.opensmtpd.test mx.opensmtpd.test

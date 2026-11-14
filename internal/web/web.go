@@ -104,6 +104,9 @@ type Server struct {
 	// server answers under (mta-sts.<domain>, autoconfig.<domain>), or
 	// nil for a name that is not ours.
 	Hosts func(host string) http.Handler
+	// Clients, when set, are the settings mail programs are given
+	// (clients.go).
+	Clients *MailClients
 	// SendAs, when set, lists the alias addresses an account may send as
 	// (store.SendAddresses), for the identities page.
 	SendAs func(ctx context.Context, address string) ([]string, error)
@@ -255,6 +258,8 @@ func (s *Server) Handler() http.Handler {
 	auth("POST /auth/totp/disable", s.authed(s.totpDisable))
 	auth("POST /auth/totp/recovery-codes", s.authed(s.totpRecoveryCodes))
 	auth("GET /auth/addresses", s.authed(s.addresses))
+	auth("GET /auth/mail-settings", s.authed(s.mailSettings))
+	auth("GET /auth/mobileconfig", s.authed(s.mobileConfig))
 	auth("GET /auth/sessions", s.authed(s.sessions))
 	auth("DELETE /auth/sessions/{id}", s.authed(s.revokeSession))
 	auth("POST /auth/sessions/revoke-others", s.authed(s.revokeOtherSessions))
@@ -279,7 +284,18 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/jmap/", s.jmap)
 	mux.HandleFunc("/.well-known/jmap", s.jmap)
-	mux.HandleFunc("/", s.serveStatic)
+	// What mail programs fetch to configure themselves: public, and
+	// without the checks of /auth (they are not browsers).
+	mux.HandleFunc("/mail/config-v1.1.xml", s.autoconfig)
+	mux.HandleFunc("/.well-known/autoconfig/mail/config-v1.1.xml", s.autoconfig)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Outlook writes the path with capitals of its own choosing.
+		if strings.EqualFold(r.URL.Path, "/autodiscover/autodiscover.xml") {
+			s.autodiscover(w, r)
+			return
+		}
+		s.serveStatic(w, r)
+	})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.securityHeaders(w, r)

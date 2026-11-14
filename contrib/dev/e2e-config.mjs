@@ -16,15 +16,16 @@ const cfg = JSON.parse(readFileSync('dev/robinmail.json', 'utf8'))
 // ROBINMAIL_E2E_PORT moves the instance off the development ports, for
 // when a development server is already running there: the web listener
 // goes to that port, SMTP to the one after it, and the IMAP and
-// submission listeners are left out.
+// submission listeners to the four from ten after it (8090 is the fake
+// provider's).
 const port = Number(process.env.ROBINMAIL_E2E_PORT ?? 8080)
 if (port !== 8080) {
   cfg.web = { ...cfg.web, http_listen: `127.0.0.1:${port}` }
   cfg.smtp = { ...cfg.smtp, listen: `127.0.0.1:${port + 1}` }
-  // The mail client listeners belong to the server that is already
-  // running; the browser tests do not use them.
-  delete cfg.imap
-  delete cfg.submission
+  // The browser tests do not connect to these; the page that shows a
+  // user the settings of a mail program reads them from the config.
+  cfg.imap = { ...cfg.imap, listen_tls: `127.0.0.1:${port + 10}`, listen: `127.0.0.1:${port + 11}` }
+  cfg.submission = { ...cfg.submission, listen_tls: `127.0.0.1:${port + 12}`, listen: `127.0.0.1:${port + 13}` }
 }
 const oidc = [
   { name: 'test', label: 'Test provider', issuer: 'http://127.0.0.1:8090', client_id: 'robinmail', client_secret: 'test-secret-of-the-fake-provider' },

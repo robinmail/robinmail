@@ -1,7 +1,7 @@
 ; Every name of the lab. The network is 10.77.25.0/24 (compose.yaml).
 $ORIGIN test.
 $TTL 5
-@       IN SOA dns.lab.test. hostmaster.lab.test. 1 3600 600 86400 5
+@       IN SOA dns.lab.test. hostmaster.lab.test. 2 3600 600 86400 5
 @       IN NS  dns.lab.test.
 
 ; Infrastructure
@@ -16,6 +16,8 @@ robin           IN TXT "v=spf1 mx -all"
 mx.robin        IN A   10.77.25.10
 _mta-sts.robin  IN TXT "v=STSv1; id=lab1"
 mta-sts.robin   IN A   10.77.25.3
+; What Thunderbird asks to set up an account from an address alone.
+autoconfig.robin    IN A   10.77.25.10
 
 ; Postfix: postfix.test refuses unknown users at RCPT, late.postfix.test
 ; takes everything and bounces. MTA-STS: enforce.

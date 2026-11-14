@@ -15,6 +15,7 @@ const appPasswords = ref<api.AppPassword[]>([])
 const passwordOpensMail = ref(true)
 const totp = ref({ enabled: false, recoveryCodes: 0 })
 const sessions = ref<api.WebSession[]>([])
+const mailSettings = ref<api.MailSettings | null>(null)
 const loaded = ref(false)
 const loadError = ref('')
 
@@ -39,6 +40,8 @@ async function load() {
     totp.value = t
     sessions.value = s
     loaded.value = true
+    // What a mail program needs. The page works without it.
+    mailSettings.value = await api.mailSettings().catch(() => null)
   } catch (e) {
     if (!gone(e)) loadError.value = api.explain(e)
   }
@@ -305,6 +308,55 @@ function methodText(m: string): string {
           </ul>
           <div>
             <UButton label="New app password" icon="i-lucide-plus" color="neutral" variant="subtle" data-testid="new-app-password" @click="show({ kind: 'new-app' })" />
+          </div>
+        </section>
+
+        <!-- Setting up a mail program -->
+        <section
+          v-if="mailSettings && (mailSettings.imap.length || mailSettings.smtp.length)"
+          aria-labelledby="h-mail-apps" class="flex flex-col gap-3" data-testid="section-mail-apps"
+        >
+          <h2 id="h-mail-apps" class="text-base font-semibold text-highlighted">
+            Set up a mail program
+          </h2>
+          <p class="text-sm text-muted">
+            Thunderbird and many other programs find these settings themselves from your address.
+            Log in with your address and {{ passwordOpensMail && hasPassword ? 'your password or an app password' : 'an app password' }}.
+          </p>
+          <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg border border-default p-3 text-sm" data-testid="mail-settings">
+            <dt class="text-muted">
+              User name
+            </dt>
+            <dd class="select-all break-all font-mono text-highlighted">
+              {{ mailSettings.username }}
+            </dd>
+            <template v-for="m in mailSettings.imap" :key="`imap-${m.port}`">
+              <dt class="text-muted">
+                Incoming (IMAP)
+              </dt>
+              <dd class="break-all font-mono text-highlighted" data-testid="mail-settings-imap">
+                {{ m.host }}, port {{ m.port }}, {{ m.security }}
+              </dd>
+            </template>
+            <template v-for="m in mailSettings.smtp" :key="`smtp-${m.port}`">
+              <dt class="text-muted">
+                Outgoing (SMTP)
+              </dt>
+              <dd class="break-all font-mono text-highlighted" data-testid="mail-settings-smtp">
+                {{ m.host }}, port {{ m.port }}, {{ m.security }}
+              </dd>
+            </template>
+          </dl>
+          <div v-if="mailSettings.profile" class="flex flex-col gap-2">
+            <div>
+              <UButton
+                to="/auth/mobileconfig" external download="mail.mobileconfig" label="Profile for iPhone, iPad and Mac"
+                icon="i-lucide-download" color="neutral" variant="subtle" data-testid="mobileconfig"
+              />
+            </div>
+            <p class="text-sm text-muted">
+              The profile adds this account to the Mail app. It is not signed, so the device shows it as “Unsigned”, and it holds no password: the device asks for one.
+            </p>
           </div>
         </section>
 

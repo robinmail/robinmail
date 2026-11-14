@@ -226,3 +226,25 @@ export function explain(e: unknown): string {
 export async function addresses(f: Fetch = fetch): Promise<string[]> {
   return (await request<{ addresses: string[] }>(f, 'GET', '/auth/addresses')).addresses
 }
+
+// MailServer is one way a mail program reaches the server.
+export interface MailServer {
+  host: string
+  port: number
+  // "TLS" from the first byte, or "STARTTLS".
+  security: string
+}
+
+// MailSettings is what a user types into a mail program that does not
+// find the settings itself.
+export interface MailSettings {
+  username: string
+  imap: MailServer[]
+  smtp: MailServer[]
+  // Whether /auth/mobileconfig has a profile for Apple devices.
+  profile: boolean
+}
+
+export function mailSettings(f: Fetch = fetch): Promise<MailSettings> {
+  return request(f, 'GET', '/auth/mail-settings')
+}

@@ -1941,7 +1941,7 @@ Built as follows:
 
 Built in this order, each item committed with its tests: 1 full-text
 search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas (done), 6 MTA-STS
-serving and TLS-RPT (done), 7 autoconfig, 8 operations, 9 README, 10 lab and
+serving and TLS-RPT (done), 7 autoconfig (done), 8 operations, 9 README, 10 lab and
 cluster cases.
 
 Built as follows:
@@ -2449,6 +2449,59 @@ Built as follows:
     exchange one report a day about the previous day's report; it does
     not grow. A failed MTA-STS check also holds back a report (RFC 8460
     5.3 would have it delivered regardless).
+
+- **Client autoconfig.** Three ways for a mail program to find the
+  servers, all from the hostname and the listeners of the config
+  (`internal/web/clients.go`): IMAP and submission, implicit TLS before
+  STARTTLS (RFC 8314 3), the address as user name, the password itself
+  inside TLS. A server without an IMAP or without a submission listener
+  serves none of them.
+  - **Thunderbird** (Mozilla's `config-v1.1.xml`, also read by K-9,
+    Evolution and others): `https://autoconfig.<domain>/mail/config-v1.1.xml`
+    for every domain in `domain` (the same mechanism as the MTA-STS
+    host: that file and nothing else under the name, certificate by
+    ACME or to be covered by the operator's), and under the hostname at
+    that path and at `/.well-known/autoconfig/mail/config-v1.1.xml` for
+    the domain of the `emailaddress` parameter. One `incomingServer` and
+    one `outgoingServer` per listener, user name `%EMAILADDRESS%`.
+  - **Outlook** (Autodiscover in its plain XML form, "POX"): `POST
+    /autodiscover/autodiscover.xml` under the hostname, any
+    capitalisation, found through the SRV record `_autodiscover._tcp`
+    that `robinmail dns` prints. The answer has `AccountType` `email`
+    with an IMAP and an SMTP protocol. It was cheap (about 80 lines) and
+    is tested against the documented request and response only: **no
+    Outlook has ever asked it**, and current Outlook versions prefer
+    Microsoft's own cloud lookup. There is no `autodiscover.<domain>`
+    host.
+  - **Apple** (configuration profile): `GET /auth/mobileconfig` for the
+    logged-in user, offered on the Security page next to the settings
+    to type by hand (`GET /auth/mail-settings`). One
+    `com.apple.mail.managed` payload, IMAP and SMTP, no password in it.
+    **Not signed**: iOS and macOS install it and show "Unsigned".
+    Signing is left out: it means a signing key next to the server, and
+    the profile holds nothing secret. The UUIDs are derived from host
+    and address, so installing it again replaces the account.
+  - The two public endpoints answer the same for every address of a
+    domain of ours, existing or not, and nothing for other domains.
+  - **Tests.** `internal/web`: the three formats parsed back and compared
+    field by field against what their makers document; the paths, the
+    404s, the error form of Autodiscover; the request parser is fuzzed.
+    `TestAutoconfigServed` (`cmd/robinmail`): the file under
+    `autoconfig.<domain>` and the hostname of a running server, with the
+    ports of its config. **`TestThunderbirdAutoconfig` (lab):
+    Thunderbird 153 sets up an account from an address and a password
+    alone**: its own account setup code finds `autoconfig.robin.test`,
+    reads IMAP 993 and SMTP 465 with TLS (143 and 587 as alternatives),
+    logs in to check and creates the account. Playwright
+    (`e2e/mailapps.spec.ts`): the settings on the Security page and the
+    profile download.
+  - **Not handled.** No plain-HTTP autoconfig (Thunderbird falls back to
+    it; the web listener is HTTPS only). No DNS-based discovery beyond
+    printing the SRV records. No OAuth in any of the three: they name
+    password login, which with two-step login on means an app password;
+    the profile and the files cannot say that, the Security page does.
+    Ports are those of the listeners: a server behind a port forward
+    that changes them announces the wrong ones.
 
 ## Open questions
 

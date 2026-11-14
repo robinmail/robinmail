@@ -43,8 +43,8 @@ func New(c config.TLS, hostname, dataDir string, also func(ctx context.Context, 
 				}
 				return fmt.Errorf("tls: %q is not a name of this server", name)
 			},
-			Cache:      autocert.DirCache(filepath.Join(dataDir, "acme")),
-			Email:      c.ACMEEmail,
+			Cache: autocert.DirCache(filepath.Join(dataDir, "acme")),
+			Email: c.ACMEEmail,
 		}
 		tc := m.TLSConfig()
 		tc.MinVersion = tls.VersionTLS12

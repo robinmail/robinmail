@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/mikepage/robinmail/internal/config"
+	"github.com/mikepage/robinmail/internal/web"
 )
 
 // Besides its hostname the server answers under names that belong to its
@@ -125,5 +127,21 @@ func extraHosts(cfg *config.Config, domains *ownDomains, autoconfig func(domain 
 			return autoconfig(d)
 		}
 		return nil
+	}
+}
+
+// mailClients are the settings mail programs are given (autoconfig,
+// autodiscover, the Apple profile): the hostname and the ports of the
+// listeners in the config.
+func mailClients(cfg *config.Config, domains *ownDomains) *web.MailClients {
+	port := func(listen string) int {
+		n, _ := strconv.Atoi(listenPort(listen))
+		return n
+	}
+	return &web.MailClients{
+		Host:  cfg.Hostname,
+		IMAPS: port(cfg.IMAP.ListenTLS), IMAP: port(cfg.IMAP.Listen),
+		Submissions: port(cfg.Submission.ListenTLS), Submission: port(cfg.Submission.Listen),
+		Domain: domains.has,
 	}
 }

@@ -143,6 +143,7 @@ func (a *app) serve(stop func()) error {
 
 	// The web side: HTTPS for real use, plain HTTP on localhost for
 	// development and tests. Both serve the same handler.
+	clients := mailClients(a.cfg, domainNames)
 	site := &web.Server{
 		Hostname:            a.cfg.Hostname,
 		Accounts:            a.store,
@@ -151,7 +152,8 @@ func (a *app) serve(stop func()) error {
 		AuthChanges:         authHub,
 		RequireAppPasswords: a.cfg.Auth.RequireAppPasswords,
 		SendAs:              a.store.SendAddresses,
-		Hosts:               extraHosts(a.cfg, domainNames, nil),
+		Clients:             clients,
+		Hosts:               extraHosts(a.cfg, domainNames, clients.AutoconfigHost),
 		JMAP: &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store),
 			SendAs: a.store.SendAddresses, Push: hub, Closing: a.ctx.Done()},
 		Static:     webStatic,
