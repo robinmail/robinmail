@@ -441,27 +441,28 @@ func formatSet(nums []uint32) string {
 // formatPairs writes the two sets of COPYUID (RFC 4315 3): the UIDs
 // copied, and the UIDs they got, in the same order.
 func formatPairs(pairs []UIDPair) (from, to string) {
-	var fb, tb strings.Builder
-	put := func(b *strings.Builder, lo, hi uint32) {
-		if b.Len() > 0 {
-			b.WriteByte(',')
+	// Each side is written on its own, runs as ranges, in the order of
+	// the pairs: the n-th UID of one set belongs to the n-th of the other.
+	side := func(get func(UIDPair) uint32) string {
+		var b strings.Builder
+		for i := 0; i < len(pairs); {
+			j := i
+			for j+1 < len(pairs) && get(pairs[j+1]) == get(pairs[j])+1 {
+				j++
+			}
+			if b.Len() > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(strconv.FormatUint(uint64(get(pairs[i])), 10))
+			if j > i {
+				b.WriteByte(':')
+				b.WriteString(strconv.FormatUint(uint64(get(pairs[j])), 10))
+			}
+			i = j + 1
 		}
-		b.WriteString(strconv.FormatUint(uint64(lo), 10))
-		if hi != lo {
-			b.WriteByte(':')
-			b.WriteString(strconv.FormatUint(uint64(hi), 10))
-		}
+		return b.String()
 	}
-	for i := 0; i < len(pairs); {
-		j := i
-		for j+1 < len(pairs) && pairs[j+1].From == pairs[j].From+1 && pairs[j+1].To == pairs[j].To+1 {
-			j++
-		}
-		put(&fb, pairs[i].From, pairs[j].From)
-		put(&tb, pairs[i].To, pairs[j].To)
-		i = j + 1
-	}
-	return fb.String(), tb.String()
+	return side(func(p UIDPair) uint32 { return p.From }), side(func(p UIDPair) uint32 { return p.To })
 }
 
 func (c *conn) cmdSelect(tag string, p *parser) (reply, error)  { return c.selectMailbox(p, false) }

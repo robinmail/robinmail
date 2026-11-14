@@ -299,6 +299,8 @@ func (s *searcher) match(k *searchKey, i int) (bool, error) {
 	case "ALL":
 		return true, nil
 	case "SEQ":
+		// A number above the count names no message here; it is not an
+		// error as in FETCH (the example of RFC 4731 3.1 searches 1:5000).
 		if k.set.Saved {
 			for _, u := range s.c.saved {
 				if u == m.uid {
@@ -497,25 +499,6 @@ func (c *conn) cmdSearch(tag string, p *parser, uid bool) (reply, error) {
 		c.condstore = true
 	}
 	s := c.sel
-	// A message number above the count is an error in a search key too.
-	var rangeErr error
-	prog.walk(func(k *searchKey) {
-		if k.op != "SEQ" || k.set.Saved {
-			return
-		}
-		for _, r := range k.set.Ranges {
-			if (r.Lo != star && int(r.Lo) > len(s.msgs)) || (r.Hi != star && int(r.Hi) > len(s.msgs)) {
-				rangeErr = bad("a message number in the search is above the %d messages of the mailbox", len(s.msgs))
-			}
-		}
-	})
-	if rangeErr != nil {
-		if opts["SAVE"] {
-			c.saved, c.savedValid = nil, true
-		}
-		return reply{}, rangeErr
-	}
-
 	sr := &searcher{c: c}
 	if needSummary && len(s.msgs) > 0 {
 		ids := make([]int64, 0, len(s.msgs))

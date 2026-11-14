@@ -117,5 +117,11 @@ func decodeUTF7(s string) (string, error) {
 		}
 		afterShift = true
 	}
-	return b.String(), nil
+	// One spelling per name: what was read must be what would be written.
+	// This also refuses what the base64 decoder lets pass (line breaks
+	// inside a shift, unpaired surrogates).
+	if out := b.String(); encodeUTF7(out) == s {
+		return out, nil
+	}
+	return "", errUTF7
 }

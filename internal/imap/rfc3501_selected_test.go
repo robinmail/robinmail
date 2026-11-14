@@ -94,7 +94,7 @@ func TestRFC3501Search(t *testing.T) {
 		// The Date field of message 5 says the 5th, its internal date the 6th.
 		{"SENTBEFORE 3-Feb-1994", "1 2"}, {"SENTON 5-Feb-1994", ""}, {"SENTON 6-Feb-1994", "5"}, {"SENTSINCE 4-Feb-1994", "4 5"},
 		{"LARGER 1000", "4"}, {"SMALLER 1000", "1 2 3 5"},
-		{"1:2", "1 2"}, {"2,4:*", "2 4 5"}, {"*", "5"}, {"UID 3:*", "3 4 5"}, {"UID 7:*", "5"},
+		{"1:2", "1 2"}, {"9", ""}, {"4:5000", "4 5"}, {"2,4:*", "2 4 5"}, {"*", "5"}, {"UID 3:*", "3 4 5"}, {"UID 7:*", "5"},
 		{"NOT FLAGGED", "4 5"}, {"NOT NOT SEEN", "1 4"},
 		{"OR SEEN DRAFT", "1 4 5"}, {"OR FROM smith OR TO list SUBJECT lunch", "1 2 3 4"},
 		{"(FLAGGED UNSEEN)", "2 3"}, {"FLAGGED (OR SEEN ANSWERED)", "1 3"}, {"NOT (FLAGGED SEEN)", "2 3 4 5"},
@@ -117,7 +117,6 @@ func TestRFC3501Search(t *testing.T) {
 		{"OR SEEN", "BAD a space is missing"},
 		{"(SEEN", `BAD ")" is missing`},
 		{"0", "BAD 0 is not a message number"},
-		{"9", "BAD a message number in the search is above the 5 messages of the mailbox"},
 		{strings.Repeat("NOT ", 40) + "SEEN", "BAD the search is nested too deep"},
 	} {
 		c.expect("SEARCH "+tc.keys, tc.want)
