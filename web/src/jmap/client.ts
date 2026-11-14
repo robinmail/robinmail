@@ -2,6 +2,7 @@
 // result references, and the state string of every data type. It holds no
 // credentials: the browser sends the session cookie by itself.
 
+import { eventSourcePath } from './push'
 import type { Id, Invocation, MethodName, Methods, ResultReference, Session } from './types'
 
 export const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission']
@@ -282,6 +283,12 @@ export class JmapClient {
       .replace('{blobId}', encodeURIComponent(blobId))
       .replace('{name}', encodeURIComponent(name || 'download'))
       .replace('{type}', encodeURIComponent(type || 'application/octet-stream'))
+  }
+
+  // eventSourcePath is where push connects (RFC 8620 7.3), or null without
+  // a session.
+  eventSourcePath(): string | null {
+    return this.session ? eventSourcePath(this.session.eventSourceUrl) : null
   }
 
   // viewUrl is robinmail's sanitised HTML view of a message, for a

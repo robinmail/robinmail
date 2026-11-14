@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { auth, compose, loadAccount, store } from '../app'
 import { logout } from '../jmap/client'
+import { Push } from '../jmap/push'
 import { actions, selection, useMailView } from '../lib/mailView'
 import ThreadView from '../components/ThreadView.vue'
 
@@ -49,13 +50,21 @@ watch(() => store.state.mailboxes[mailboxId.value], (m) => {
   if (store.state.ready && !m && mailboxId.value) void router.replace({ name: 'mail' })
 })
 
-// Push does not exist yet (phase 6): ask for changes every half minute
-// while the page is visible, and when the user comes back to it.
+// Changes come in over push (the event source of jmap/push.ts): the server
+// says that something changed and the page fetches it. The timer is the
+// fallback: while push is not connected it asks every half minute, as it
+// did before there was push. Coming back to the page asks too.
 const POLL_MS = 30_000
+const push = new Push({
+  url: () => store.client.eventSourcePath(),
+  onChange: () => store.state.ready && refresh(true, true),
+})
 let timer: ReturnType<typeof setInterval> | undefined
 let last = 0
-function refresh(force = false) {
-  if (document.visibilityState !== 'visible') return
+function refresh(force = false, hidden = false) {
+  // A hidden page does not ask on its own, but it does follow push: one
+  // request per change, and the title shows the new unread count.
+  if (!hidden && document.visibilityState !== 'visible') return
   const now = Date.now()
   if (!force && now - last < 2000) return
   last = now
@@ -128,13 +137,15 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(() => {
   if (!store.state.ready || !compose.state.identitiesLoaded) void load()
-  timer = setInterval(() => refresh(true), POLL_MS)
+  timer = setInterval(() => push.connected || refresh(true), POLL_MS)
+  push.start()
   window.addEventListener('focus', onFocus)
   window.addEventListener('online', onFocus)
   document.addEventListener('visibilitychange', onVisible)
   window.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => {
+  push.stop()
   clearInterval(timer)
   clearInterval(fast)
   window.removeEventListener('focus', onFocus)

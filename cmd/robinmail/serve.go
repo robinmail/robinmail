@@ -119,9 +119,9 @@ func (a *app) serve(stop func()) error {
 	// The web side: HTTPS for real use, plain HTTP on localhost for
 	// development and tests. Both serve the same handler.
 	site := &web.Server{
-		Hostname:   a.cfg.Hostname,
-		Accounts:   a.store,
-		Limits:     a.store,
+		Hostname: a.cfg.Hostname,
+		Accounts: a.store,
+		Limits:   a.store,
 		JMAP: &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store),
 			Push: hub, Closing: a.ctx.Done()},
 		Static:     webStatic,
