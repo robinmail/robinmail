@@ -2,6 +2,8 @@ package blob
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,8 +34,30 @@ type SweepResult struct {
 }
 
 // claimPrefix marks a file a sweep has taken out of its place and is about
-// to remove.
+// to remove. The full name is ".sweep-<sha256>.<random>": every claim has a
+// name of its own, so a sweep can only ever remove the file it renamed
+// itself. With one shared name per blob, a second sweep working from an
+// older directory listing could rename a file that a delivery had just
+// written onto the first sweep's claim, and the first sweep, which had
+// already decided about the old file, removed the new one.
 const claimPrefix = ".sweep-"
+
+// claimName returns a new claim name for the blob.
+func claimName(sum string) string {
+	var b [8]byte
+	rand.Read(b[:])
+	return claimPrefix + sum + "." + hex.EncodeToString(b[:])
+}
+
+// claimedSum returns the blob a claim file belongs to.
+func claimedSum(name string) (string, bool) {
+	rest := strings.TrimPrefix(name, claimPrefix)
+	sum, _, ok := strings.Cut(rest, ".")
+	if !ok {
+		sum = rest // a claim from before claims had names of their own
+	}
+	return sum, sum != ""
+}
 
 // Sweep removes the blob files that no email refers to and that were
 // written before the given time, and temporary files of that age that a
@@ -56,7 +80,8 @@ const claimPrefix = ".sweep-"
 //     unless a new file is already there.
 //
 // It is safe to run on several nodes, each on its own disk, and to run
-// twice at once on one disk: a claim succeeds once.
+// twice at once on one disk: a claim succeeds once, and every claim has a
+// name of its own.
 func (l *Local) Sweep(ctx context.Context, before time.Time, refs References) (SweepResult, error) {
 	var res SweepResult
 	accounts, err := os.ReadDir(l.dir)
@@ -106,7 +131,10 @@ func (l *Local) Sweep(ctx context.Context, before time.Time, refs References) (S
 					continue
 				case strings.HasPrefix(name, claimPrefix):
 					// A sweep died between its claim and its decision.
-					sum := strings.TrimPrefix(name, claimPrefix)
+					sum, ok := claimedSum(name)
+					if !ok {
+						continue
+					}
 					if _, _, err := SplitKey(Key(account, sum)); err != nil {
 						continue
 					}
@@ -126,7 +154,13 @@ func (l *Local) Sweep(ctx context.Context, before time.Time, refs References) (S
 				if inUse[name] {
 					continue
 				}
-				claim := filepath.Join(dir, claimPrefix+name)
+				// The time in the listing may be stale. Look again right
+				// before the claim, so a file a delivery just wrote is
+				// not taken out of its place at all.
+				if now, err := os.Stat(path); err != nil || !now.ModTime().Before(before) {
+					continue
+				}
+				claim := filepath.Join(dir, claimName(name))
 				if err := os.Rename(path, claim); err != nil {
 					continue // another sweep has it, or it is gone
 				}
