@@ -32,15 +32,15 @@ func random(t testing.TB, n int) []byte {
 func TestSplitKey(t *testing.T) {
 	sum := sha([]byte("x"))
 	for _, k := range []string{Key("acct", sum), Key("mit6k7r3v6xjkz3y", sum), Key("A-b_9", sum)} {
-		if _, _, err := splitKey(k); err != nil {
-			t.Errorf("splitKey(%q): %v", k, err)
+		if _, _, err := SplitKey(k); err != nil {
+			t.Errorf("SplitKey(%q): %v", k, err)
 		}
 	}
 	for _, k := range []string{"", sum, "/" + sum, "acct/", "acct/" + sum[:63], "acct/" + sum + "0", "acct/" + strings.ToUpper(sum),
 		"../" + sum, "a/b/" + sum, "a.b/" + sum, "a b/" + sum, "acct/../" + sum[:61], "acct/" + sum[:62] + "/.",
 		strings.Repeat("a", 65) + "/" + sum, "é/" + sum, "a\x00/" + sum} {
-		if _, _, err := splitKey(k); err == nil {
-			t.Errorf("splitKey(%q) accepted", k)
+		if _, _, err := SplitKey(k); err == nil {
+			t.Errorf("SplitKey(%q) accepted", k)
 		}
 	}
 }

@@ -36,10 +36,15 @@ type Store interface {
 // hex.
 func Key(accountID, sha256hex string) string { return accountID + "/" + sha256hex }
 
-// splitKey takes a key apart and checks both halves: an account id of 1 to
+// Verifier decides whether an encrypted file that came from another node is
+// the blob its key names. It reads r to the end. The store has one that
+// decrypts the file and compares the hash of the plaintext with the name.
+type Verifier func(ctx context.Context, key string, r io.Reader) error
+
+// SplitKey takes a key apart and checks both halves: an account id of 1 to
 // 64 letters, digits, "-" or "_", and 64 lowercase hex digits. The local
 // backend builds a path from them, so nothing else may get through.
-func splitKey(key string) (account, sum string, err error) {
+func SplitKey(key string) (account, sum string, err error) {
 	account, sum, ok := strings.Cut(key, "/")
 	if !ok || account == "" || len(account) > 64 || len(sum) != 64 {
 		return "", "", fmt.Errorf("blob: invalid key %q", key)

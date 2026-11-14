@@ -71,7 +71,7 @@ func (l *Local) Sweep(ctx context.Context, before time.Time, refs References) (S
 			continue
 		}
 		account := a.Name()
-		if _, _, err := splitKey(Key(account, strings.Repeat("0", 64))); err != nil {
+		if _, _, err := SplitKey(Key(account, strings.Repeat("0", 64))); err != nil {
 			continue // not a directory of ours
 		}
 		var inUse map[string]bool // loaded when the first old file shows up
@@ -107,7 +107,7 @@ func (l *Local) Sweep(ctx context.Context, before time.Time, refs References) (S
 				case strings.HasPrefix(name, claimPrefix):
 					// A sweep died between its claim and its decision.
 					sum := strings.TrimPrefix(name, claimPrefix)
-					if _, _, err := splitKey(Key(account, sum)); err != nil {
+					if _, _, err := SplitKey(Key(account, sum)); err != nil {
 						continue
 					}
 					if err := l.settle(ctx, refs, account, sum, path, filepath.Join(dir, sum), before, &res); err != nil {
@@ -115,7 +115,7 @@ func (l *Local) Sweep(ctx context.Context, before time.Time, refs References) (S
 					}
 					continue
 				}
-				if _, _, err := splitKey(Key(account, name)); err != nil || name[:2] != sh.Name() {
+				if _, _, err := SplitKey(Key(account, name)); err != nil || name[:2] != sh.Name() {
 					continue
 				}
 				if inUse == nil {
