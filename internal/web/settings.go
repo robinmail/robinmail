@@ -240,7 +240,11 @@ func (s *Server) createAppPassword(w http.ResponseWriter, r *http.Request, u use
 		s.unavailable(w, "storing the app password", err)
 		return
 	}
-	s.event(r.Context(), EventAppPasswordCreated, u.acct, u.acct.Address, clientIP(r), strings.Join(append([]string{name + ":"}, req.Scopes...), " "))
+	for_ := "all protocols"
+	if len(scopes) > 0 {
+		for_ = strings.Join(scopes, ", ")
+	}
+	s.event(r.Context(), EventAppPasswordCreated, u.acct, u.acct.Address, clientIP(r), name+" (for "+for_+")")
 	v := appPasswordView(store.AppPassword{ID: id, Name: name, Scopes: scopes, CreatedAt: s.Now()})
 	v.Secret = secret
 	writeJSON(w, http.StatusCreated, v)

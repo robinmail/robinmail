@@ -45,6 +45,14 @@ commands:
   domain remove <domain>                       stop accepting mail for a domain without users
   user add <address>                           create a user (password from the prompt or stdin)
   user list                                    list users
+  user password <address>                      set a new password (prompt or stdin); ends the user's sessions
+  user totp-disable <address>                  turn TOTP off for a user who lost the authenticator
+  user app-passwords <address>                 list a user's app passwords
+  user app-password-revoke <address> <id>      revoke one; its open IMAP sessions end
+  user sessions <address>                      list a user's web sessions
+  user session-revoke <address> <id|all>       end one web session, or all
+  user oidc-unlink <address>                   forget the user's subject at the OIDC providers
+  audit [address|all] [count]                  show the newest auth events (default: all, 50)
   mailbox list <address>                       list a user's mailboxes
   mailbox create <address> <path>              create a mailbox
   mailbox rename <address> <mailbox> <name>    rename a mailbox
@@ -58,7 +66,7 @@ commands:
   flag <address> <email> <keyword>...          set keywords such as $seen; -keyword removes one
   rm <address> <email>                         destroy an email
   changes <address> [state]                    show what changed since a state (default: 0)
-  trim                                         remove change log, delivery keys and sessions past their time
+  trim                                         remove change log, delivery keys, sessions and auth events past their time
   sweep                                        remove this node's blob files that no email refers to
   repair                                       fetch the blobs this node lacks from the other nodes
   node list                                    list the nodes of the cluster
@@ -139,6 +147,22 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return a.userAdd(args[1])
 	case cmd == "user" && n == 1 && args[0] == "list":
 		return a.userList()
+	case cmd == "user" && n == 2 && args[0] == "password":
+		return a.userPassword(args[1])
+	case cmd == "user" && n == 2 && args[0] == "totp-disable":
+		return a.userTOTPDisable(args[1])
+	case cmd == "user" && n == 2 && args[0] == "app-passwords":
+		return a.userAppPasswords(args[1])
+	case cmd == "user" && n == 3 && args[0] == "app-password-revoke":
+		return a.userAppPasswordRevoke(args[1], args[2])
+	case cmd == "user" && n == 2 && args[0] == "sessions":
+		return a.userSessions(args[1])
+	case cmd == "user" && n == 3 && args[0] == "session-revoke":
+		return a.userSessionRevoke(args[1], args[2])
+	case cmd == "user" && n == 2 && args[0] == "oidc-unlink":
+		return a.userOIDCUnlink(args[1])
+	case cmd == "audit" && n <= 2:
+		return a.audit(optional(args, 0, "all"), optional(args, 1, "50"))
 	case cmd == "mailbox" && n == 2 && args[0] == "list":
 		return a.mailboxList(args[1])
 	case cmd == "mailbox" && n == 3 && args[0] == "create":
