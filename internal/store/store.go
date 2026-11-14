@@ -277,6 +277,11 @@ func (b *batch) change(typ, sel string, kv ...any) {
 //	RegisterNode, Heartbeat, RemoveNode
 //	                       again: set a row to given values
 //	AddLoginFailure        not again: it counts
+//	CreateSieveScript, UpdateSieveScript, ActivateSieveScript,
+//	DestroySieveScript     not again: counters, modseq, and guards
+//	VacationOnce           not again: its answer is whether this run took
+//	                       the turn; a second run would say no
+//	TrimVacationSent       again: a delete by condition
 //	AddAlias               again: INSERT OR IGNORE of given rows
 //	RemoveAlias            not again: its answer is whether this run removed
 //	Forward, Submit        again: a random key in the row (and the caller's

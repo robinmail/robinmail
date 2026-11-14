@@ -327,11 +327,12 @@ func TestBounceToRewrittenSender(t *testing.T) {
 			t.Errorf("Rcpt(%s): %v", to, err)
 		}
 	}
-	old := *d
-	old.SRS = &srs.Rewriter{Key: d.SRS.Key, Now: func() time.Time { return d.Now().Add(srs.MaxAge + 48*time.Hour) }}
-	if err := old.Rcpt(ctx, e, rewritten); code(err) != 550 {
+	now := d.SRS
+	d.SRS = &srs.Rewriter{Key: now.Key, Now: func() time.Time { return d.Now().Add(srs.MaxAge + 48*time.Hour) }}
+	if err := d.Rcpt(ctx, e, rewritten); code(err) != 550 {
 		t.Errorf("an expired rewritten address: %v", err)
 	}
+	d.SRS = now
 
 	e.Rcpts = []string{rewritten}
 	bounce := "From: MAILER-DAEMON@elsewhere.example\r\nSubject: Undelivered\r\n\r\nYour message could not be delivered.\r\n"

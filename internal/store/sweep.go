@@ -21,8 +21,8 @@ const BlobGrace = 24 * time.Hour
 // ErrNoSweep is returned by SweepBlobs when the blob store cannot be swept.
 var ErrNoSweep = errors.New("store: this blob store cannot be swept")
 
-// SweepBlobs removes the blob files on this node that no email, upload or queued
-// submission refers to
+// SweepBlobs removes the blob files on this node that no email, upload, queued
+// submission or Sieve script refers to
 // and that were written before the given time. Email/set destroy and
 // DestroyEmail leave the file, since another email of the account may
 // share it; this is what removes it in the end. See blob.Local.Sweep for
@@ -46,7 +46,8 @@ type blobRefs struct{ s *Store }
 func (r blobRefs) AccountBlobs(ctx context.Context, account string) (map[string]bool, error) {
 	res, err := r.s.query(ctx, account, q(`SELECT blob FROM email WHERE account_id = :a
 		UNION SELECT blob FROM upload WHERE account_id = :a
-		UNION SELECT blob FROM submission WHERE account_id = :a AND blob <> ''`))
+		UNION SELECT blob FROM submission WHERE account_id = :a AND blob <> ''
+		UNION SELECT blob FROM sieve_script WHERE account_id = :a`))
 	if err != nil {
 		return nil, err
 	}
@@ -63,8 +64,9 @@ func (r blobRefs) Referenced(ctx context.Context, account, sum string) (bool, er
 	res, err := r.s.db.Query(ctx, rqlite.Strong,
 		rqlite.Stmt(`SELECT 1 FROM email WHERE account_id = ? AND blob = ?
 			UNION ALL SELECT 1 FROM upload WHERE account_id = ? AND blob = ?
-			UNION ALL SELECT 1 FROM submission WHERE account_id = ? AND blob = ? LIMIT 1`,
-			account, sum, account, sum, account, sum))
+			UNION ALL SELECT 1 FROM submission WHERE account_id = ? AND blob = ?
+			UNION ALL SELECT 1 FROM sieve_script WHERE account_id = ? AND blob = ? LIMIT 1`,
+			account, sum, account, sum, account, sum, account, sum))
 	if err != nil {
 		return false, err
 	}

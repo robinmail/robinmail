@@ -792,6 +792,9 @@ func (a *app) trim() error {
 	if err != nil {
 		return err
 	}
+	if _, err := a.store.TrimVacationSent(a.ctx, now.Add(-store.VacationSentRetention)); err != nil {
+		return err
+	}
 	fmt.Fprintf(a.stdout, "removed %d change rows, %d delivery keys, %d sessions and %d auth events\n", changes, keys, sessions, events)
 	return nil
 }

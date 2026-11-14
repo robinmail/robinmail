@@ -117,6 +117,11 @@ func init() {
 		"EmailSubmission/query":        {CapSubmission, submissionQuery},
 		"EmailSubmission/queryChanges": {CapSubmission, submissionQueryChanges},
 		"EmailSubmission/set":          {CapSubmission, submissionSet},
+
+		"SieveScript/get":      {CapSieve, sieveScriptGet},
+		"SieveScript/set":      {CapSieve, sieveScriptSet},
+		"SieveScript/query":    {CapSieve, sieveScriptQuery},
+		"SieveScript/validate": {CapSieve, sieveScriptValidate},
 	}
 }
 
@@ -283,7 +288,7 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	using := map[string]bool{}
 	for _, capability := range *req.Using {
-		if capability != CapCore && capability != CapMail && capability != CapSubmission {
+		if !capabilities[capability] {
 			problem(w, http.StatusBadRequest, errUnknownCapability, "the server does not have the capability "+strconv.Quote(capability), nil)
 			return
 		}

@@ -32,6 +32,9 @@ type Changes struct {
 	// EmailSubmission and Identity changes (RFC 8621 6 and 7).
 	Submission ChangeSet
 	Identity   ChangeSet
+	// Other holds the changes of the remaining types by name:
+	// "SieveScript" (RFC 9661), and the types later phases add.
+	Other map[string]*ChangeSet
 }
 
 // Changes returns what changed after state since. An object created and
@@ -83,7 +86,13 @@ func (s *Store) Changes(ctx context.Context, account string, since int64) (Chang
 		case "Identity":
 			set = &c.Identity
 		default:
-			return Changes{}, fmt.Errorf("store: unknown change type %q", k.typ)
+			if c.Other == nil {
+				c.Other = map[string]*ChangeSet{}
+			}
+			if c.Other[k.typ] == nil {
+				c.Other[k.typ] = &ChangeSet{}
+			}
+			set = c.Other[k.typ]
 		}
 		sp := seen[k]
 		switch {
@@ -96,7 +105,11 @@ func (s *Store) Changes(ctx context.Context, account string, since int64) (Chang
 			set.Updated = append(set.Updated, k.id)
 		}
 	}
-	for _, set := range []*ChangeSet{&c.Email, &c.Mailbox, &c.Thread, &c.Submission, &c.Identity} {
+	sets := []*ChangeSet{&c.Email, &c.Mailbox, &c.Thread, &c.Submission, &c.Identity}
+	for _, set := range c.Other {
+		sets = append(sets, set)
+	}
+	for _, set := range sets {
 		for _, list := range [][]int64{set.Created, set.Updated, set.Destroyed} {
 			sort.Slice(list, func(i, j int) bool { return list[i] < list[j] })
 		}

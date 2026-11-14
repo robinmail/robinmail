@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 9
+const schemaVersion = 10
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -46,7 +46,8 @@ var schema = []string{
 		uidvalidity     INTEGER NOT NULL DEFAULT 0,
 		auth_seq        INTEGER NOT NULL DEFAULT 0,
 		password_changed_at INTEGER NOT NULL DEFAULT 0,
-		seq            INTEGER NOT NULL DEFAULT 0
+		seq            INTEGER NOT NULL DEFAULT 0,
+		next_sieve     INTEGER NOT NULL DEFAULT 1
 	) WITHOUT ROWID`,
 	sqlAccountSeq,
 
@@ -158,6 +159,7 @@ var schema = []string{
 	sqlLoginFailureTable,
 	sqlEmailFTS, sqlEmailFTSDelete,
 	sqlAliasTable, sqlAliasDomain, sqlAliasTarget,
+	sqlSieveTable, sqlSieveActive, sqlVacationSentTable, sqlVacationSentAt,
 
 	`INSERT INTO schema_version (version) SELECT ` + fmt.Sprint(schemaVersion) + ` WHERE NOT EXISTS (SELECT 1 FROM schema_version)`,
 }
@@ -223,6 +225,11 @@ var migrations = map[int64][]string{
 	},
 	// 9: aliases.
 	8: {sqlAliasTable, sqlAliasDomain, sqlAliasTarget},
+	// 10: Sieve scripts, and what vacation replies went to whom.
+	9: {
+		`ALTER TABLE account ADD COLUMN next_sieve INTEGER NOT NULL DEFAULT 1`,
+		sqlSieveTable, sqlSieveActive, sqlVacationSentTable, sqlVacationSentAt,
+	},
 }
 
 const (
@@ -259,6 +266,33 @@ const (
 	) WITHOUT ROWID`
 	sqlAliasDomain = `CREATE INDEX IF NOT EXISTS alias_domain ON alias (domain, wildcard)`
 	sqlAliasTarget = `CREATE INDEX IF NOT EXISTS alias_target ON alias (target)`
+
+	// Sieve scripts (RFC 9661). blob is the script, a blob of the account.
+	// At most one script of an account has active = 1.
+	sqlSieveTable = `CREATE TABLE IF NOT EXISTS sieve_script (
+		account_id TEXT NOT NULL,
+		id         INTEGER NOT NULL,
+		name       TEXT NOT NULL,
+		blob       TEXT NOT NULL,
+		size       INTEGER NOT NULL,
+		active     INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		modseq     INTEGER NOT NULL,
+		PRIMARY KEY (account_id, id),
+		UNIQUE (account_id, name)
+	) WITHOUT ROWID`
+	sqlSieveActive = `CREATE UNIQUE INDEX IF NOT EXISTS sieve_active ON sieve_script (account_id) WHERE active = 1`
+
+	// Automatic replies that went out (RFC 5230 4.2): key is a hash of the
+	// reply and of whom it was for; at is when. A reply with the same key
+	// is not sent again within its period.
+	sqlVacationSentTable = `CREATE TABLE IF NOT EXISTS vacation_sent (
+		account_id TEXT NOT NULL,
+		key        TEXT NOT NULL,
+		at         INTEGER NOT NULL,
+		PRIMARY KEY (account_id, key)
+	) WITHOUT ROWID`
+	sqlVacationSentAt = `CREATE INDEX IF NOT EXISTS vacation_sent_at ON vacation_sent (at)`
 
 	// A web login. token_hash is the SHA-256 of the token in the cookie, so
 	// a copy of this table logs nobody in. id is what the user's list of

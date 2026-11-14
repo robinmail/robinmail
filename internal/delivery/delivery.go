@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -49,8 +48,17 @@ type Deliverer struct {
 	Aliases  AliasStore
 	Forwards Forwarder
 	SRS      *srs.Rewriter
-	Resolver Resolver         // nil uses net.DefaultResolver
-	Now      func() time.Time // for tests
+	// Filters runs the Sieve script of an account on its mail; nil runs
+	// none. AutoReply queues an automatic reply of an account (a vacation
+	// reply) to one address, with the null reverse-path; nil sends none.
+	// SendAs lists the alias addresses of an account, which count as the
+	// recipient's own when deciding whether a message names them.
+	Filters   FilterStore
+	AutoReply func(ctx context.Context, account store.Account, rcpt string, raw []byte) error
+	SendAs    func(ctx context.Context, accountAddress string) ([]string, error)
+	scripts   scriptCache
+	Resolver  Resolver         // nil uses net.DefaultResolver
+	Now       func() time.Time // for tests
 }
 
 func (d *Deliverer) now() time.Time {
@@ -155,7 +163,8 @@ func deliveryKey(from string, msg []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Deliver scans the message and stores one copy per account.
+// Deliver scans the message, runs the filter of each account it is for and
+// does what those decide: by default one copy per account.
 func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte) error {
 	now := d.now
 	qid := queueID()
@@ -234,49 +243,8 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 	top := []field{{name: "Return-Path", raw: []byte("Return-Path: <" + oneLine(env.From) + ">\r\n")}, trace}
 	out := joinHeader(append(append(top, added...), fields...), rest)
 
-	// Mail that looks like spam is filed under Junk here and not sent on:
-	// the next server would hold it against this one. When forwarding is
-	// all the message was for, the sender is told.
-	forwards := to.forwards
-	if role == store.RoleJunk && len(forwards) > 0 {
-		var keep []forward
-		for _, f := range forwards {
-			if f.bounce {
-				keep = append(keep, f)
-			}
-		}
-		if len(keep) == 0 && len(accounts) == 0 {
-			log.Info("rejected: spam for an alias that only forwards")
-			return errSpamFwd
-		}
-		log.Info("not forwarding spam", "forwards", len(forwards)-len(keep))
-		forwards = keep
-	}
-
-	for _, a := range accounts {
-		// The store falls back to the inbox when the account has no mailbox
-		// with the role.
-		e, err := d.Store.Deliver(ctx, a.ID, store.Message{Raw: out, Key: key, Role: role, ReceivedAt: now()})
-		if errors.Is(err, store.ErrDuplicate) {
-			// A retry of a delivery that failed for another recipient.
-			log.Info("already delivered", "to", a.Address)
-			continue
-		}
-		if err != nil {
-			// The sender retries the whole message. Accounts that have it
-			// already recognise the delivery key and store nothing.
-			log.Error("store failed", "to", a.Address, "err", err)
-			return errTempFail
-		}
-		log.Info("delivered", "to", a.Address, "email", store.EmailID(e.ID), "role", role, "size", len(out))
-	}
-	// A forward leaves with our trace line and without a Return-Path: that
-	// is for whoever delivers it finally.
-	if err := d.sendOn(ctx, key, env.From, forwards, append(append([]field{trace}, added...), fields...), rest); err != nil {
-		return err
-	}
-	d.noteDSN(ctx, env.From, accounts, out)
-	return nil
+	return d.finish(ctx, &incoming{key: key, from: env.From, to: to, role: role, final: out,
+		relay: append(append([]field{trace}, added...), fields...), rest: rest, log: log})
 }
 
 // verdict turns a reject, soft reject or greylist into an SMTP error.

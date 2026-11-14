@@ -81,6 +81,10 @@ type Refusal struct {
 
 func (r *Refusal) Error() string { return r.Kind + ": " + r.Msg }
 
+// ProtocolAuto is the Protocol of a message the server wrote for an
+// account: an automatic reply.
+const ProtocolAuto = "auto"
+
 // Outgoing is a message a user wants sent.
 type Outgoing struct {
 	Account store.Account
@@ -186,10 +190,14 @@ func normalizeLines(raw []byte) []byte {
 func submitReceived(host, qid string, o Outgoing, t time.Time) []byte {
 	var b strings.Builder
 	b.WriteString("Received: by " + host + " (robinmail)")
-	if o.Protocol != "" && o.Protocol != "JMAP" {
-		b.WriteString(" with " + o.Protocol)
-	} else {
+	switch o.Protocol {
+	case "", "JMAP":
 		b.WriteString(" (JMAP)")
+	case ProtocolAuto:
+		// Written by the server itself: a vacation reply.
+		b.WriteString(" (automatic reply)")
+	default:
+		b.WriteString(" with " + o.Protocol)
 	}
 	b.WriteString(" id " + qid)
 	if o.TLS != nil {
@@ -494,21 +502,11 @@ func (d *Deliverer) Local(ctx context.Context, from, to string, msg []byte) erro
 	top := []field{{name: "Return-Path", raw: []byte("Return-Path: <" + oneLine(from) + ">\r\n")}}
 	out := joinHeader(append(top, fields...), rest)
 	key := "local:" + deliveryKey(from, msg)
-	for _, acct := range routed.accounts {
-		_, err := d.Store.Deliver(ctx, acct.ID, store.Message{Raw: out, Key: key, Role: store.RoleInbox, ReceivedAt: d.now()})
-		if err != nil && !errors.Is(err, store.ErrDuplicate) {
-			d.log().Error("local delivery failed", "to", acct.Address, "err", err)
-			return errTempFail
-		}
-		d.log().Info("delivered locally", "from", clean(from), "to", acct.Address)
-	}
-	// The recipient was an alias that leads elsewhere, or a rewritten
-	// sender address that a bounce of our own queue is going back to.
-	if err := d.sendOn(ctx, key, from, routed.forwards, fields, rest); err != nil {
-		return err
-	}
-	d.noteDSN(ctx, from, routed.accounts, out)
-	return nil
+	// The recipient may be an alias that leads elsewhere, or a rewritten
+	// sender address that a bounce of our own queue is going back to; an
+	// account's filter runs as for mail from outside.
+	return d.finish(ctx, &incoming{key: key, from: from, to: routed, role: store.RoleInbox, final: out,
+		relay: fields, rest: rest, log: d.log().With("from", clean(from), "local", true)})
 }
 
 // DSNStore records what delivery status notifications say about mail an

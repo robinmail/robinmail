@@ -61,6 +61,11 @@ type routes struct {
 	accounts []store.Account
 	forwards []forward
 	seen     map[string]bool
+	// rcpt is, per account id, the recipient address that led to it
+	// first: the envelope recipient of that account's filter.
+	rcpt map[string]string
+	// cur is the recipient being routed.
+	cur string
 }
 
 func (r *routes) account(a store.Account) {
@@ -70,6 +75,10 @@ func (r *routes) account(a store.Account) {
 	if !r.seen["a:"+a.ID] {
 		r.seen["a:"+a.ID] = true
 		r.accounts = append(r.accounts, a)
+		if r.rcpt == nil {
+			r.rcpt = map[string]string{}
+		}
+		r.rcpt[a.ID] = r.cur
 	}
 }
 
@@ -91,6 +100,7 @@ func (r *routes) forward(f forward) {
 // tag, the best pattern). An alias's targets at our own domains are looked
 // up the same way; the others are forwards.
 func (d *Deliverer) route(ctx context.Context, from, to string, into *routes) error {
+	into.cur = to
 	domains, err := d.acceptedDomains(ctx)
 	if err != nil {
 		d.log().Error("domain lookup failed", "err", err)

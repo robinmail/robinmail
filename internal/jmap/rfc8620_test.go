@@ -508,20 +508,29 @@ func TestRFC8620Session(t *testing.T) {
 		// RFC 8621 1.3.1: the value of the mail capability in the session
 		// is an empty object; the account has the details.
 		same(t, "mail capability", at(t, s, "/capabilities/urn:ietf:params:jmap:mail"), `{}`)
-		same(t, "account", at(t, s, "/accounts/a1b2c3"), `{
-			"name": "user@example.test", "isPersonal": true, "isReadOnly": false,
-			"accountCapabilities": {
-				"urn:ietf:params:jmap:core": {},
-				"urn:ietf:params:jmap:mail": {
-					"maxMailboxesPerEmail": null, "maxMailboxDepth": 10, "maxSizeMailboxName": 255,
-					"maxSizeAttachmentsPerEmail": 50000000,
-					"emailQuerySortOptions": ["receivedAt", "sentAt", "size", "from", "to", "subject", "hasKeyword"],
-					"mayCreateTopLevelMailbox": true},
-				"urn:ietf:params:jmap:submission": {"maxDelayedSend": 0, "submissionExtensions": {}}}}`)
+		// The account, and the capabilities of RFC 8620 and RFC 8621 in it.
+		// Other capabilities (Sieve, and what later phases add) have their
+		// own tests.
+		acct := at(t, s, "/accounts/a1b2c3").(map[string]any)
+		same(t, "account", []any{acct["name"], acct["isPersonal"], acct["isReadOnly"]}, `["user@example.test", true, false]`)
+		caps := "/accounts/a1b2c3/accountCapabilities/"
+		same(t, "core in the account", at(t, s, caps+"urn:ietf:params:jmap:core"), `{}`)
+		same(t, "mail in the account", at(t, s, caps+"urn:ietf:params:jmap:mail"), `{
+			"maxMailboxesPerEmail": null, "maxMailboxDepth": 10, "maxSizeMailboxName": 255,
+			"maxSizeAttachmentsPerEmail": 50000000,
+			"emailQuerySortOptions": ["receivedAt", "sentAt", "size", "from", "to", "subject", "hasKeyword"],
+			"mayCreateTopLevelMailbox": true}`)
+		same(t, "submission in the account", at(t, s, caps+"urn:ietf:params:jmap:submission"), `{"maxDelayedSend": 0, "submissionExtensions": {}}`)
 		// RFC 8621 1.3.2: the submission capability is an empty object too.
 		same(t, "submission capability", at(t, s, "/capabilities/urn:ietf:params:jmap:submission"), `{}`)
-		same(t, "primaryAccounts", s["primaryAccounts"], `{"urn:ietf:params:jmap:core": "a1b2c3", "urn:ietf:params:jmap:mail": "a1b2c3",
-			"urn:ietf:params:jmap:submission": "a1b2c3"}`)
+		// Every capability of the session has a primary account, and the
+		// account has an object for it.
+		for name := range s["capabilities"].(map[string]any) {
+			same(t, "primaryAccounts "+name, at(t, s, "/primaryAccounts/"+name), `"a1b2c3"`)
+			if _, ok := acct["accountCapabilities"].(map[string]any)[name]; !ok {
+				t.Errorf("the account has no %s", name)
+			}
+		}
 		same(t, "username", s["username"], `"user@example.test"`)
 		same(t, "apiUrl", s["apiUrl"], `"https://mail.example.test/jmap/api"`)
 		for name, vars := range map[string][]string{
@@ -585,7 +594,8 @@ func TestHandlerRouting(t *testing.T) {
 	want := []string{"Core/echo", "Email/changes", "Email/copy", "Email/get", "Email/import", "Email/parse", "Email/query",
 		"Email/queryChanges", "Email/set", "EmailSubmission/changes", "EmailSubmission/get", "EmailSubmission/query",
 		"EmailSubmission/queryChanges", "EmailSubmission/set", "Identity/changes", "Identity/get", "Identity/set",
-		"Mailbox/changes", "Mailbox/get", "Mailbox/query", "Mailbox/queryChanges", "Mailbox/set", "SearchSnippet/get", "Thread/changes", "Thread/get"}
+		"Mailbox/changes", "Mailbox/get", "Mailbox/query", "Mailbox/queryChanges", "Mailbox/set", "SearchSnippet/get", "SieveScript/get", "SieveScript/query", "SieveScript/set",
+		"SieveScript/validate", "Thread/changes", "Thread/get"}
 	if got := Methods(); !reflect.DeepEqual(got, want) {
 		t.Errorf("methods: %v", got)
 	}

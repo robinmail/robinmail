@@ -94,6 +94,14 @@ func (a *app) serve(stop func()) error {
 	} else {
 		log.Warn("no rspamd url configured: incoming mail is delivered unscanned, outgoing mail is sent without a DKIM signature")
 	}
+	// Filters: the Sieve script of an account runs on its mail, after
+	// Rspamd. A vacation reply goes out like mail of the account, scanned
+	// and signed, with the null reverse-path.
+	d.Filters, d.SendAs = a.store, a.store.SendAddresses
+	d.AutoReply = func(ctx context.Context, acct store.Account, rcpt string, raw []byte) error {
+		_, err := sender.Submit(ctx, delivery.Outgoing{Account: acct, From: "", Rcpts: []string{rcpt}, Raw: raw, Protocol: delivery.ProtocolAuto})
+		return err
+	}
 	domains, err := a.store.Domains(a.ctx)
 	if err != nil {
 		return err
@@ -512,6 +520,11 @@ func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger, auditReten
 	}
 	if _, err := st.TrimSTSPolicies(ctx, now.Add(-24*time.Hour)); err != nil {
 		log.Error("trimming MTA-STS policies failed", "err", err)
+		return
+	}
+	// Longer than the longest period of "once per sender".
+	if _, err := st.TrimVacationSent(ctx, now.Add(-store.VacationSentRetention)); err != nil {
+		log.Error("trimming the record of automatic replies failed", "err", err)
 		return
 	}
 	log.Info("trimmed", "changes", changes, "delivery_keys", keys, "sessions", sessions, "uploads", uploads, "submissions", subs)
