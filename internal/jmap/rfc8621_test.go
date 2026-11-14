@@ -895,7 +895,7 @@ func TestRFC8621EmailSet(t *testing.T) {
 	// What is refused, per email, while the others in the call go through.
 	before := e.state()
 	got = e.one("Email/set", `{"accountId": "$A",
-		"create": {"draft": {"mailboxIds": {"m2": true}, "subject": "hi"}},
+		"create": {"draft": {"subject": "hi"}},
 		"update": {
 			"`+eid(e3)+`": {"keywords/$seen": true},
 			"e998": {"keywords/$seen": true},
@@ -904,8 +904,10 @@ func TestRFC8621EmailSet(t *testing.T) {
 			"`+eid(e2)+`": {"mailboxIds/m4": null}},
 		"destroy": ["e997"]}`)
 	same(t, "updated", got["updated"], `{"`+eid(e3)+`": null}`)
-	// "forbidden": creating emails comes with submission.
-	same(t, "create", at(t, got, "/notCreated/draft/type"), `"forbidden"`)
+	// An email has to be in a mailbox (RFC 8621 4.6); creating is tested
+	// in rfc8621_create_test.go.
+	same(t, "create", at(t, got, "/notCreated/draft"), `{"type": "invalidProperties",
+		"description": "an email must be in at least one mailbox", "properties": ["mailboxIds"]}`)
 	same(t, "unknown ids", []any{at(t, got, "/notUpdated/e998/type"), at(t, got, "/notUpdated/nonsense/type"), at(t, got, "/notDestroyed/e997/type")},
 		`["notFound", "notFound", "notFound"]`)
 	// "invalidProperties ... properties: lists all the properties that were invalid."

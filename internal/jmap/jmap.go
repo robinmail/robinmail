@@ -6,10 +6,10 @@
 // What exists: the session resource, the API endpoint with result
 // references and creation ids, Core/echo, Mailbox/get, /changes, /query,
 // /queryChanges and /set, Thread/get and /changes, Email/get, /changes,
-// /query, /queryChanges and /set (keywords, mailboxIds and destroy), blob
-// download, and a sanitised HTML view of an email that is not part of JMAP.
-// Email/set create, Email/import, /copy and /parse, SearchSnippet, upload,
-// submission and push are not here yet.
+// /query, /queryChanges, /set, /import, /copy and /parse, Identity/get,
+// /changes and /set, EmailSubmission/get, /changes, /query, /queryChanges
+// and /set, blob upload and download, and a sanitised HTML view of an email
+// that is not part of JMAP. SearchSnippet and push are not here yet.
 package jmap
 
 import (
@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/mikepage/robinmail/internal/store"
 )
@@ -29,6 +30,8 @@ import (
 const (
 	CapCore = "urn:ietf:params:jmap:core"
 	CapMail = "urn:ietf:params:jmap:mail"
+	// CapSubmission has Identity and EmailSubmission (RFC 8621 1.3.2).
+	CapSubmission = "urn:ietf:params:jmap:submission"
 )
 
 // Store is what the handler needs from storage. *store.Store has it.
@@ -48,6 +51,39 @@ type Store interface {
 	DestroyEmailIf(ctx context.Context, account string, id, ifState int64) (int64, error)
 	Raw(ctx context.Context, account string, id int64) ([]byte, store.Email, error)
 	OpenBlob(ctx context.Context, account, blobID string) (io.ReadCloser, int64, error)
+
+	// Deliver stores a new email: Email/set create, /import and /copy.
+	Deliver(ctx context.Context, account string, m store.Message) (store.Email, error)
+	Upload(ctx context.Context, account string, data []byte, typ string) (string, error)
+
+	Identities(ctx context.Context, account string) ([]store.Identity, error)
+	CreateIdentity(ctx context.Context, account string, i store.Identity, ifState int64) (store.Identity, int64, error)
+	UpdateIdentity(ctx context.Context, account string, id int64, u store.IdentityUpdate, ifState int64) (int64, error)
+	DestroyIdentity(ctx context.Context, account string, id, ifState int64) (int64, error)
+
+	Submissions(ctx context.Context, account string, ids []int64) ([]store.Submission, error)
+	CancelSubmission(ctx context.Context, account string, id, ifState int64) (int64, error)
+	DestroySubmission(ctx context.Context, account string, id, ifState int64) (int64, error)
+}
+
+// Outgoing is an Email a user submits for sending.
+type Outgoing struct {
+	EmailID    int64
+	IdentityID int64
+	MailFrom   string // empty is the null reverse-path
+	RcptTo     []string
+	Raw        []byte
+	IfInState  int64
+}
+
+// SendError is a refusal to send, in the words of RFC 8621 7.5: Type is
+// the SetError type.
+type SendError struct {
+	Type              string
+	Description       string
+	InvalidRecipients []string
+	MaxRecipients     int
+	MaxSize           int64
 }
 
 // User is who a request is from. A user has one account, their own.
@@ -113,12 +149,22 @@ const (
 type Handler struct {
 	Store  Store
 	Limits Limits
+	// Send takes an email for sending (EmailSubmission/set create): it
+	// checks the sender, has the message scanned and signed, and queues
+	// it. nil refuses every submission.
+	Send func(ctx context.Context, u User, o Outgoing) (store.Submission, *SendError, error)
+	// Hostname goes into the Message-ID of emails created here. Empty
+	// uses the domain of the user's address.
+	Hostname string
+	// Now is the clock (time.Now when nil).
+	Now func() time.Time
 
 	once     sync.Once
 	mux      *http.ServeMux
 	limits   Limits
 	mu       sync.Mutex
 	inFlight map[string]int // account id -> API requests being processed
+	uploads  map[string]int // account id -> uploads being received
 }
 
 func (h *Handler) init() {
@@ -138,13 +184,15 @@ func (h *Handler) init() {
 			}
 		}
 		h.inFlight = map[string]int{}
+		h.uploads = map[string]int{}
 		h.mux = http.NewServeMux()
 		h.mux.HandleFunc("GET /.well-known/jmap", h.serveSession)
 		h.mux.HandleFunc("GET /jmap/session", h.serveSession)
 		h.mux.HandleFunc("POST /jmap/api", h.serveAPI)
 		h.mux.HandleFunc("GET /jmap/download/{accountId}/{blobId}/{name}", h.serveDownload)
 		h.mux.HandleFunc("GET /jmap/view/{accountId}/{emailId}", h.serveView)
-		h.mux.HandleFunc("/jmap/upload/", h.serveNotYet)
+		h.mux.HandleFunc("POST /jmap/upload/{accountId}/{$}", h.serveUpload)
+		h.mux.HandleFunc("POST /jmap/upload/{accountId}", h.serveUpload)
 		h.mux.HandleFunc("/jmap/eventsource/", h.serveNotYet)
 	})
 }
@@ -193,7 +241,7 @@ func baseURL(r *http.Request) string {
 // sessionState changes when the session object would (RFC 8620 2). Ours
 // depends on the user and on the limits and capabilities of this build.
 func (h *Handler) sessionState(u User) string {
-	b, _ := json.Marshal([]any{u, h.limits, store.SortProperties, MaxMailboxDepth, "1"})
+	b, _ := json.Marshal([]any{u, h.limits, store.SortProperties, MaxMailboxDepth, "2"})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:8])
 }
@@ -223,7 +271,8 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 				"maxObjectsInSet":       l.MaxObjectsInSet,
 				"collationAlgorithms":   []string{"i;ascii-casemap"},
 			},
-			CapMail: map[string]any{},
+			CapMail:       map[string]any{},
+			CapSubmission: map[string]any{},
 		},
 		"accounts": map[string]any{
 			u.AccountID: map[string]any{
@@ -233,10 +282,13 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 				"accountCapabilities": map[string]any{
 					CapCore: map[string]any{},
 					CapMail: mail,
+					// No FUTURERELEASE: a submission waits a moment that
+					// the server sets, in which it can be cancelled.
+					CapSubmission: map[string]any{"maxDelayedSend": 0, "submissionExtensions": map[string]any{}},
 				},
 			},
 		},
-		"primaryAccounts": map[string]any{CapCore: u.AccountID, CapMail: u.AccountID},
+		"primaryAccounts": map[string]any{CapCore: u.AccountID, CapMail: u.AccountID, CapSubmission: u.AccountID},
 		"username":        u.Username,
 		"apiUrl":          base + "/jmap/api",
 		"downloadUrl":     base + "/jmap/download/{accountId}/{blobId}/{name}?type={type}",
@@ -246,10 +298,10 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// serveNotYet answers the endpoints the session has to name (RFC 8620 2)
-// but that later phases build: upload and push.
+// serveNotYet answers the endpoint the session has to name (RFC 8620 2)
+// but that a later phase builds: push.
 func (h *Handler) serveNotYet(w http.ResponseWriter, r *http.Request) {
-	problem(w, http.StatusNotImplemented, "about:blank", "this server does not have uploads and push yet", nil)
+	problem(w, http.StatusNotImplemented, "about:blank", "this server does not have push yet", nil)
 }
 
 // State strings are the account's modseq in decimal.
@@ -264,4 +316,11 @@ func parseState(s string) (int64, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+func (h *Handler) now() time.Time {
+	if h.Now != nil {
+		return h.Now()
+	}
+	return time.Now()
 }

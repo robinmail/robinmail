@@ -345,6 +345,8 @@ func emailGet(c *call, raw json.RawMessage) (any, *methodError) {
 		bodySpecs[p] = spec
 	}
 
+	view := messageView{specs: specs, bodyProps: bodyProps, bodySpecs: bodySpecs, text: args.FetchTextBodyValues,
+		html: args.FetchHTMLBodyValues, all: args.FetchAllBodyValues, maxBytes: args.MaxBodyValueBytes}
 	state, err := c.h.Store.State(c.ctx, args.AccountID)
 	if err != nil {
 		return nil, storeErr(err)
@@ -395,17 +397,6 @@ func emailGet(c *call, raw json.RawMessage) (any, *methodError) {
 			}
 		}
 		obj := map[string]any{"id": sid}
-		var text, html, attachments []*message.Part
-		if msg != nil {
-			text, html, attachments = msg.Bodies()
-		}
-		parts := func(list []*message.Part) []map[string]any {
-			out := make([]map[string]any, len(list))
-			for i, p := range list {
-				out[i] = partObject(p, e.Blob, bodyProps, bodySpecs, false)
-			}
-			return out
-		}
 		for _, p := range props {
 			switch p {
 			case "id":
@@ -433,48 +424,70 @@ func emailGet(c *call, raw json.RawMessage) (any, *methodError) {
 				obj[p] = e.HasAttachment
 			case "preview":
 				obj[p] = e.Preview
-			case "headers":
-				obj[p] = headersList(fields)
-			case "bodyStructure":
-				obj[p] = partObject(msg.Root, e.Blob, bodyProps, bodySpecs, true)
-			case "textBody":
-				obj[p] = parts(text)
-			case "htmlBody":
-				obj[p] = parts(html)
-			case "attachments":
-				obj[p] = parts(attachments)
-			case "bodyValues":
-				values := map[string]any{}
-				add := func(list []*message.Part) {
-					for _, part := range list {
-						if _, done := values[part.PartID]; done || !strings.HasPrefix(part.Type, "text/") {
-							continue
-						}
-						v, problem, truncated := part.BodyValue(int(min(args.MaxBodyValueBytes, 1<<30)))
-						values[part.PartID] = map[string]any{"value": v, "isEncodingProblem": problem, "isTruncated": truncated}
-					}
-				}
-				if args.FetchAllBodyValues {
-					add(msg.Leaves)
-				}
-				if args.FetchTextBodyValues {
-					add(text)
-				}
-				if args.FetchHTMLBodyValues {
-					add(html)
-				}
-				obj[p] = values
 			default:
-				if spec, ok := specs[p]; ok {
-					obj[p] = spec.value(fields)
-				} else {
-					obj[p] = headerProperty(fields, p)
-				}
+				obj[p] = view.prop(p, e.Blob, fields, msg)
 			}
 		}
 		list = append(list, obj)
 	}
 	return map[string]any{"accountId": args.AccountID, "state": stateString(state), "list": list, "notFound": notFound}, nil
+}
+
+// messageView is how the properties of an Email that come from its message
+// are to be shown: Email/get and Email/parse share it.
+type messageView struct {
+	specs           map[string]headerSpec
+	bodyProps       []string
+	bodySpecs       map[string]headerSpec
+	text, html, all bool // which body values to fetch
+	maxBytes        int64
+}
+
+// prop is the value of one header or body property. msg is nil when no
+// body property was asked for.
+func (v messageView) prop(p, blob string, fields []message.Header, msg *message.Message) any {
+	parts := func(list []*message.Part) []map[string]any {
+		out := make([]map[string]any, len(list))
+		for i, part := range list {
+			out[i] = partObject(part, blob, v.bodyProps, v.bodySpecs, false)
+		}
+		return out
+	}
+	switch p {
+	case "headers":
+		return headersList(fields)
+	case "bodyStructure":
+		return partObject(msg.Root, blob, v.bodyProps, v.bodySpecs, true)
+	case "textBody", "htmlBody", "attachments":
+		text, html, attachments := msg.Bodies()
+		return parts(map[string][]*message.Part{"textBody": text, "htmlBody": html, "attachments": attachments}[p])
+	case "bodyValues":
+		text, html, _ := msg.Bodies()
+		values := map[string]any{}
+		add := func(list []*message.Part) {
+			for _, part := range list {
+				if _, done := values[part.PartID]; done || !strings.HasPrefix(part.Type, "text/") {
+					continue
+				}
+				val, problem, truncated := part.BodyValue(int(min(v.maxBytes, 1<<30)))
+				values[part.PartID] = map[string]any{"value": val, "isEncodingProblem": problem, "isTruncated": truncated}
+			}
+		}
+		if v.all {
+			add(msg.Leaves)
+		}
+		if v.text {
+			add(text)
+		}
+		if v.html {
+			add(html)
+		}
+		return values
+	}
+	if spec, ok := v.specs[p]; ok {
+		return spec.value(fields)
+	}
+	return headerProperty(fields, p)
 }
 
 // Filter conditions of Email/query (RFC 8621 4.4.1) the server has, and
@@ -891,8 +904,8 @@ func (c *call) emailPatch(patch map[string]json.RawMessage) (store.Update, *setE
 	return u, nil
 }
 
-// emailSet is Email/set (RFC 8621 4.6): keywords, mailboxIds and destroy.
-// Creating an email arrives with submission in phase 5.
+// emailSet is Email/set (RFC 8621 4.6): create (create.go), update of
+// keywords and mailboxIds, and destroy.
 func emailSet(c *call, raw json.RawMessage) (any, *methodError) {
 	var args setArgs
 	if e := c.decodeArgs(raw, &args, &args.AccountID); e != nil {
@@ -905,8 +918,25 @@ func emailSet(c *call, raw json.RawMessage) (any, *methodError) {
 	st := c.h.Store
 	mismatch := mErr("stateMismatch", "the state is not the ifInState given")
 
+	creates := make([]string, 0, len(args.Create))
 	for cid := range args.Create {
-		run.notCreated[cid] = &setError{Type: "forbidden", Description: "this server cannot create emails yet"}
+		creates = append(creates, cid)
+	}
+	sort.Strings(creates)
+	for _, cid := range creates {
+		created, se, me := c.createEmail(run, args.Create[cid])
+		switch {
+		case me != nil:
+			return nil, me
+		case se != nil:
+			run.notCreated[cid] = se
+		default:
+			if run.created == nil {
+				run.created = map[string]any{}
+			}
+			run.created[cid] = created
+			c.created[cid] = created["id"].(string)
+		}
 	}
 
 	updates := make([]string, 0, len(args.Update))
@@ -915,7 +945,7 @@ func emailSet(c *call, raw json.RawMessage) (any, *methodError) {
 	}
 	sort.Strings(updates)
 	for _, sid := range updates {
-		id, ok := store.ParseEmailID(sid)
+		id, ok := c.emailRef(sid)
 		if !ok {
 			run.notUpdated[sid] = &setError{Type: "notFound"}
 			continue

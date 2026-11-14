@@ -75,6 +75,10 @@ type call struct {
 	using   map[string]bool
 	created map[string]string // creation id -> id, from the request and from /set calls so far
 	done    []invocation
+	// implied collects the responses of calls a method made itself, such
+	// as the Email/set of EmailSubmission/set's onSuccessUpdateEmail. They
+	// follow the method's own response.
+	implied []invocation
 }
 
 type method struct {
@@ -99,6 +103,18 @@ func init() {
 		"Email/query":          {CapMail, emailQuery},
 		"Email/queryChanges":   {CapMail, emailQueryChanges},
 		"Email/set":            {CapMail, emailSet},
+		"Email/import":         {CapMail, emailImport},
+		"Email/copy":           {CapMail, emailCopy},
+		"Email/parse":          {CapMail, emailParse},
+
+		"Identity/get":                 {CapSubmission, identityGet},
+		"Identity/changes":             {CapSubmission, identityChanges},
+		"Identity/set":                 {CapSubmission, identitySet},
+		"EmailSubmission/get":          {CapSubmission, submissionGet},
+		"EmailSubmission/changes":      {CapSubmission, submissionChanges},
+		"EmailSubmission/query":        {CapSubmission, submissionQuery},
+		"EmailSubmission/queryChanges": {CapSubmission, submissionQueryChanges},
+		"EmailSubmission/set":          {CapSubmission, submissionSet},
 	}
 }
 
@@ -203,7 +219,7 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	using := map[string]bool{}
 	for _, capability := range *req.Using {
-		if capability != CapCore && capability != CapMail {
+		if capability != CapCore && capability != CapMail && capability != CapSubmission {
 			problem(w, http.StatusBadRequest, errUnknownCapability, "the server does not have the capability "+strconv.Quote(capability), nil)
 			return
 		}
@@ -219,7 +235,13 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		c.created[k] = v
 	}
 	for _, p := range calls {
-		c.done = append(c.done, c.invoke(p.name, p.args, p.callID))
+		c.implied = nil
+		inv := c.invoke(p.name, p.args, p.callID)
+		c.done = append(c.done, inv)
+		for _, extra := range c.implied {
+			extra.callID = p.callID
+			c.done = append(c.done, extra)
+		}
 	}
 	resp := map[string]any{"methodResponses": c.done, "sessionState": h.sessionState(u)}
 	if req.CreatedIDs != nil {

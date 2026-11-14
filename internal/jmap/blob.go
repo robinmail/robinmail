@@ -1,6 +1,7 @@
 package jmap
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -21,11 +22,13 @@ const maxInlineImage = 2 << 20
 // inlineImageTypes are the image types the view embeds. No SVG.
 var inlineImageTypes = map[string]bool{"image/png": true, "image/gif": true, "image/jpeg": true, "image/webp": true, "image/bmp": true}
 
-// splitBlobID takes a blob id apart: the blob of a message, and for a body
-// part the part id after the dash.
+// splitBlobID takes a blob id apart: the blob of a message or an upload,
+// and after each dash the id of a part. "<blob>-3" is part 3 of the
+// message; "<blob>-3-2" is part 2 of the message that is attached as part
+// 3. part is everything after the first dash.
 func splitBlobID(id string) (blob, part string, ok bool) {
 	blob, part, _ = strings.Cut(id, "-")
-	if len(blob) != 64 || len(part) > 6 {
+	if len(blob) != 64 || len(part) > 3*7 {
 		return "", "", false
 	}
 	for i := 0; i < len(blob); i++ {
@@ -36,15 +39,38 @@ func splitBlobID(id string) (blob, part string, ok bool) {
 	return blob, part, true
 }
 
-// readBlob reads a whole message blob. Its size is bounded by what SMTP
-// accepted.
-func (h *Handler) readBlob(r *http.Request, account, blob string) ([]byte, error) {
-	rc, _, err := h.Store.OpenBlob(r.Context(), account, blob)
+// readBlob reads a whole blob. Its size is bounded by what SMTP and the
+// upload endpoint accept.
+func (h *Handler) readBlob(ctx context.Context, account, blob string) ([]byte, error) {
+	rc, _, err := h.Store.OpenBlob(ctx, account, blob)
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
 	return io.ReadAll(rc)
+}
+
+// blobData resolves any blob id of the account to its content: a message
+// or upload, or a body part inside one. store.ErrNoBlob if there is none.
+func (h *Handler) blobData(ctx context.Context, account, blobID string) ([]byte, error) {
+	blob, part, ok := splitBlobID(blobID)
+	if !ok {
+		return nil, store.ErrNoBlob
+	}
+	data, err := h.readBlob(ctx, account, blob)
+	if err != nil {
+		return nil, err
+	}
+	for part != "" {
+		var id string
+		id, part, _ = strings.Cut(part, "-")
+		p := message.Parse(data).Part(id)
+		if p == nil {
+			return nil, store.ErrNoBlob
+		}
+		data = p.Content()
+	}
+	return data, nil
 }
 
 // safeDownloadType accepts a "type/subtype" to send a download as, and
@@ -94,18 +120,13 @@ func (h *Handler) serveDownload(w http.ResponseWriter, r *http.Request) {
 		io.Copy(w, rc)
 		return
 	}
-	raw, err := h.readBlob(r, u.AccountID, blob)
+	data, err := h.blobData(r.Context(), u.AccountID, r.PathValue("blobId"))
 	if err != nil {
 		h.blobError(w, err)
 		return
 	}
-	p := message.Parse(raw).Part(part)
-	if p == nil {
-		h.blobError(w, store.ErrNoBlob)
-		return
-	}
-	hdr.Set("Content-Length", strconv.Itoa(len(p.Content())))
-	w.Write(p.Content())
+	hdr.Set("Content-Length", strconv.Itoa(len(data)))
+	w.Write(data)
 }
 
 func (h *Handler) blobError(w http.ResponseWriter, err error) {

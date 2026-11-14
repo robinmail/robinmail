@@ -545,6 +545,11 @@ type setError struct {
 	Type        string   `json:"type"`
 	Description string   `json:"description,omitempty"`
 	Properties  []string `json:"properties,omitempty"`
+	// What some types add (RFC 8621 4.6, 7.5).
+	NotFound          []string `json:"notFound,omitempty"`
+	InvalidRecipients []string `json:"invalidRecipients,omitempty"`
+	MaxRecipients     int      `json:"maxRecipients,omitempty"`
+	MaxSize           int64    `json:"maxSize,omitempty"`
 }
 
 func invalidProps(description string, props ...string) *setError {

@@ -430,8 +430,12 @@ func TestRFC8620Session(t *testing.T) {
 					"maxMailboxesPerEmail": null, "maxMailboxDepth": 10, "maxSizeMailboxName": 255,
 					"maxSizeAttachmentsPerEmail": 50000000,
 					"emailQuerySortOptions": ["receivedAt", "sentAt", "size", "from", "to", "subject", "hasKeyword"],
-					"mayCreateTopLevelMailbox": true}}}`)
-		same(t, "primaryAccounts", s["primaryAccounts"], `{"urn:ietf:params:jmap:core": "a1b2c3", "urn:ietf:params:jmap:mail": "a1b2c3"}`)
+					"mayCreateTopLevelMailbox": true},
+				"urn:ietf:params:jmap:submission": {"maxDelayedSend": 0, "submissionExtensions": {}}}}`)
+		// RFC 8621 1.3.2: the submission capability is an empty object too.
+		same(t, "submission capability", at(t, s, "/capabilities/urn:ietf:params:jmap:submission"), `{}`)
+		same(t, "primaryAccounts", s["primaryAccounts"], `{"urn:ietf:params:jmap:core": "a1b2c3", "urn:ietf:params:jmap:mail": "a1b2c3",
+			"urn:ietf:params:jmap:submission": "a1b2c3"}`)
 		same(t, "username", s["username"], `"user@example.test"`)
 		same(t, "apiUrl", s["apiUrl"], `"https://mail.example.test/jmap/api"`)
 		for name, vars := range map[string][]string{
@@ -479,7 +483,8 @@ func TestHandlerRouting(t *testing.T) {
 		{"GET", "/jmap/api", 405},
 		{"POST", "/jmap/session", 405},
 		{"GET", "/jmap/nothing", 404},
-		{"POST", "/jmap/upload/a1b2c3/", 501},
+		{"POST", "/jmap/upload/someone-else/", 404},
+		{"GET", "/jmap/upload/a1b2c3/", 405},
 		{"GET", "/jmap/eventsource/?types=*", 501},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, nil)
@@ -490,7 +495,9 @@ func TestHandlerRouting(t *testing.T) {
 			t.Errorf("%s %s: %d, want %d", tc.method, tc.path, rec.Code, tc.want)
 		}
 	}
-	want := []string{"Core/echo", "Email/changes", "Email/get", "Email/query", "Email/queryChanges", "Email/set",
+	want := []string{"Core/echo", "Email/changes", "Email/copy", "Email/get", "Email/import", "Email/parse", "Email/query",
+		"Email/queryChanges", "Email/set", "EmailSubmission/changes", "EmailSubmission/get", "EmailSubmission/query",
+		"EmailSubmission/queryChanges", "EmailSubmission/set", "Identity/changes", "Identity/get", "Identity/set",
 		"Mailbox/changes", "Mailbox/get", "Mailbox/query", "Mailbox/queryChanges", "Mailbox/set", "Thread/changes", "Thread/get"}
 	if got := Methods(); !reflect.DeepEqual(got, want) {
 		t.Errorf("methods: %v", got)
