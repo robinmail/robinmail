@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/mikepage/robinmail/internal/rqlite"
 )
 
 // Account is one mail user. ID is random and never changes, also if the
@@ -105,6 +107,29 @@ func (s *Store) State(ctx context.Context, account string) (int64, error) {
 		return 0, ErrNoAccount
 	}
 	return asInt(res[0].Values[0][0]), nil
+}
+
+// ModSeqs returns the current modseq of each of the given accounts; one
+// that does not exist is left out. It is what internal/notify polls to find
+// changes made on other nodes, and is read at level none: the rqlite node
+// that is asked answers from its own copy, without the leader. A copy that
+// is behind shows a change one poll later.
+func (s *Store) ModSeqs(ctx context.Context, accounts []string) (map[string]int64, error) {
+	out := map[string]int64{}
+	for start := 0; start < len(accounts); start += maxIDsPerRead {
+		chunk := accounts[start:min(start+maxIDsPerRead, len(accounts))]
+		vals, kv := values("i", chunk)
+		b := &batch{base: map[string]any{}}
+		b.add(`SELECT id, modseq FROM account WHERE id IN (VALUES `+vals+`)`, kv...)
+		res, err := s.db.Query(ctx, rqlite.None, b.stmts...)
+		if err != nil {
+			return nil, fmt.Errorf("store: %w", err)
+		}
+		for _, row := range res[0].Values {
+			out[asString(row[0])] = asInt(row[1])
+		}
+	}
+	return out, nil
 }
 
 // blobKey returns the key that encrypts the account's blobs. Keys never

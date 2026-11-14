@@ -77,6 +77,11 @@ type Store struct {
 	keys   sync.Map // account id -> []byte, the unwrapped blob key
 	// Now is the clock, replaceable in tests.
 	Now func() time.Time
+	// OnChange, when set, is called with the account after every write that
+	// moved an account's modseq. It is how this node's listeners (JMAP
+	// event streams, IMAP sessions) hear of a change at once; see
+	// internal/notify. Set it before the store is used.
+	OnChange func(account string)
 }
 
 // New returns a store. master wraps the keys that encrypt each account's
@@ -133,6 +138,8 @@ type batch struct {
 	// again marks a batch that may be sent a second time when rqlite did
 	// not say whether the first was applied. See run.
 	again bool
+	// bumped marks a batch that moves the account's modseq.
+	bumped bool
 }
 
 // idempotent marks the batch as safe to run twice. Call it only with a
@@ -198,6 +205,7 @@ func (b *batch) ifState(state int64) {
 
 // bump increments the account's modseq, plus the named counters.
 func (b *batch) bump(counters ...string) {
+	b.bumped = true
 	sql := `UPDATE account SET modseq = modseq + 1`
 	for _, c := range counters {
 		sql += `, ` + c + ` = ` + c + ` + 1`
@@ -252,6 +260,11 @@ func (s *Store) run(ctx context.Context, b *batch) ([]rqlite.Result, error) {
 	}
 	res, err := exec(ctx, b.stmts...)
 	if err == nil {
+		if b.bumped && s.OnChange != nil {
+			if account, _ := b.base["a"].(string); account != "" {
+				s.OnChange(account)
+			}
+		}
 		return res, nil
 	}
 	var e *rqlite.Error

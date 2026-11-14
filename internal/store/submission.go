@@ -397,6 +397,7 @@ func (s *Store) ClaimSubmission(ctx context.Context, ref SubmissionRef, token st
 	b.guard(ErrNotClaimed, `EXISTS (SELECT 1 FROM submission WHERE account_id = :a AND id = :id
 		AND queue = 'active' AND next_try <= :t AND claimed_until <= :t)`)
 	const first = sqlJMAPSubmission + ` AND undo = 'pending')`
+	b.bumped = true // when the condition holds; a wake-up for nothing is harmless
 	b.add(`UPDATE account SET modseq = modseq + 1 WHERE id = :a AND ` + first)
 	b.add(`INSERT OR IGNORE INTO changes (account_id, modseq, type, id, op, at)
 		SELECT :a, ` + sqlModseq + `, 'EmailSubmission', :id, 'updated', :now WHERE ` + first)
@@ -442,6 +443,7 @@ func (s *Store) SaveSubmission(ctx context.Context, sub Submission, token string
 	b.base["id"], b.base["token"] = sub.ID, token
 	b.guard(ErrNotClaimed, `EXISTS (SELECT 1 FROM submission WHERE account_id = :a AND id = :id AND claimed_by = :token)`)
 	const visible = sqlJMAPSubmission + `)`
+	b.bumped = true // as above
 	b.add(`UPDATE account SET modseq = modseq + 1 WHERE id = :a AND ` + visible)
 	b.add(`INSERT OR IGNORE INTO changes (account_id, modseq, type, id, op, at)
 		SELECT :a, ` + sqlModseq + `, 'EmailSubmission', :id, 'updated', :now WHERE ` + visible)
