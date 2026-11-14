@@ -31,6 +31,9 @@
 #
 # make e2e uses the same instance, but the webmail inside ./robinmail on
 # http://127.0.0.1:8080. The first time: cd web && npx playwright install chromium
+# It takes about three minutes: the tests that send mail wait for the
+# server's undo time and its queue. Mail goes between the two users of the
+# instance (dev@ and other@robinmail.test) and nowhere else.
 
 GO ?= go
 NPM ?= npm

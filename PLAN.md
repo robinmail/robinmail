@@ -649,14 +649,13 @@ Built as follows:
   - Clock differences between nodes: `received_at`, session expiry and the
     blob grace period use each node's own clock.
 
-### Phase 5: outbound, submission, compose — Go side done, webmail open
+### Phase 5: outbound, submission, compose — done
 
 - Submission on 465 and 587, outbound through Rspamd for DKIM, queue in
   `submission` (a node claims a row for a limited time), MX delivery with
   STARTTLS, MTA-STS, retries, bounces.
 - JMAP `Email/set` create, blob upload, `EmailSubmission/set`, `Identity/get`.
-- Webmail: compose, reply, forward, attachments, drafts. **Open**: a
-  session of its own, built on the JMAP methods listed below.
+- Webmail: compose, reply, forward, attachments, drafts.
 - Exit: send between two robinmail clusters; an unreachable host is retried
   and bounces; a killed node does not lose queued mail.
 
@@ -825,6 +824,10 @@ Built as follows (the Go side):
     reported to the sender.
   - `Build` added a line end to every part of a multipart, so a text body
     came back one line end longer than it was created with.
+  - A text attachment had its line ends made CRLF like a text body, so a
+    file uploaded with LF came back changed (the webmail's end-to-end
+    test). A part made from a blob is now written as base64 when its
+    line ends are not all CRLF (`BuildPart.Exact`).
 - **Deviations kept on purpose**, each with a test or a comment that says
   why: no FROM clause in the submission `Received` line; `Email/copy`
   within one account; `header:Content-*` properties on a body part are
@@ -854,6 +857,139 @@ Built as follows (the Go side):
     for some of its recipients the sender gets `451`, not a notification.
   - No relay limit per IP or per connection beyond the SMTP server's own,
     and no limit on the size of the queue.
+
+Built as follows (the webmail in `web/`):
+
+- **Where things are.** `src/compose` is the logic without requests or
+  DOM: addresses, `mailto:`, HTML to text and back as strings, subjects,
+  threading headers, reply recipients, quoting, the `Email/set` create
+  object. `src/store/compose.ts` holds the open composers, their drafts
+  on the server, uploads, send and undo, identities and submissions.
+  Screens: `ComposerDock`, `ComposerPanel`, `AddressInput`, `RichEditor`,
+  `pages/SettingsPage.vue`. No new dependency.
+- **Composer.** A panel at the bottom right over the mail view; several
+  can be open or minimised, as many next to each other as fit, and the
+  ones opened longest ago are minimised when one more opens. Under 640
+  pixels an open composer covers the screen. From shows when there is
+  more than one identity. To, Cc and Bcc are chips; typed or pasted text
+  is read as a list (commas, semicolons, line ends, `Name <address>`,
+  quoted names); what is not an address stays in the field, marked, and
+  stops a send. A message without a subject asks once.
+- **Body.** Plain text is the default; the choice of the last composer
+  is kept in `localStorage`. Rich text is an editor of our own on
+  `contenteditable`, not a dependency: bold, italic, lists, quote, link
+  and inline images are what `document.execCommand` does in every
+  browser, the editor around it is about 200 lines, and a library would
+  be several packages and more script than the rest of the composer for
+  the same six buttons. What matters for safety is the same either way
+  and is ours: HTML crosses into and out of the page only through
+  `compose/richdom.ts`, which parses it in a document of its own and
+  makes the allowed elements anew (`p`, `div`, `br`, `b`, `i`, `u`, lists,
+  `blockquote`, `pre`, `a` with an `http`, `https` or `mailto` address,
+  `img` only for a `cid:` that is an attachment of the draft). Pasted and
+  dropped content comes in as plain text. A rich message is sent as
+  `text/plain` (a rendering of the HTML: quotes with `> `, list marks,
+  link addresses) plus `text/html`.
+- **Attachments.** File picker, drag and drop, paste. Uploads go through
+  `XMLHttpRequest`, the only way to see progress; each can be cancelled
+  or tried again; a file over the session's `maxSizeUpload` is refused
+  before any byte is sent. A pasted image in rich text is inline: shown
+  from the download URL, sent as `cid:`. Every attachment gets a
+  Content-ID, also the ordinary ones: after each save the composer reads
+  the new Email's attachments back and follows them by that id to their
+  new blob ids (`<blob of the draft>-<part>`), because what they pointed
+  at goes away (the replaced draft at once, an upload after a day).
+- **Drafts.** A change is saved 1.5 seconds after the last one, as an
+  `Email/set` with a create in Drafts (`$draft`, `$seen`) and the destroy
+  of the draft before. A save that fails keeps the composer and says so;
+  it is tried again after 10 seconds, or after the next login when the
+  answer was 401 (the composers are in memory and outlive the session;
+  another user's login drops them). When the create is refused but the
+  destroy went through, the composer knows it has no draft on the
+  server. Closing saves first and stays open if that fails; a composer
+  nobody typed in leaves nothing. The tab asks before closing with
+  something unsaved and saves when it is hidden. A draft opens from the
+  Drafts mailbox (a row that is one draft opens the composer, not the
+  thread) and from a thread. A saved draft says what it answers in
+  `X-Robinmail-Draft: reply|forward <email id>`, so a draft opened later
+  still marks the original; the message that is sent does not have it.
+- **Reply and forward.** `In-Reply-To` and `References` by RFC 5322
+  3.6.4. One `Re:` or `Fwd:`, whatever was there (`RE: Re[2]:`). A reply
+  goes to `Reply-To` or else `From`; reply all adds the other recipients
+  as Cc; our own addresses (every identity) are left out unless nobody
+  else is left; a reply to our own message goes to its recipients. The
+  identity is the one the message was sent to. The original is quoted
+  from its text body; for mail that only has HTML from a text rendering
+  of it, made on strings. In a rich reply the quote is escaped text in a
+  `blockquote`. Forward carries the attachments by the blob ids of the
+  original's parts; "forward as attachment" attaches the whole message
+  as `message/rfc822`.
+- **Send.** One request: `Email/set` create (and destroy of the saved
+  draft), `EmailSubmission/set` with `onSuccessUpdateEmail` (Drafts to
+  Sent, `$draft` off), and for a reply or forward a third call that sets
+  `$answered` or `$forwarded` on the original. `onSuccessUpdateEmail`
+  can only change the message that was sent (RFC 8621 7.5), and the
+  third call must not run when the send failed, so it takes its
+  `destroy` argument from `/created/send/dsnBlobIds` of the submission:
+  an empty list after a send, a reference that does not resolve
+  otherwise, which makes the server refuse the call. A refused send
+  leaves the message as the draft and shows why (`forbiddenFrom`,
+  `tooManyRecipients`, `invalidRecipients`, `forbiddenToSend` with the
+  server's reason, `tooLarge`, `noRecipients`). When no answer comes the
+  composer says it is not known whether the message went.
+- **Undo.** After a send a notice offers "Undo" until `sendAt`. It sets
+  `undoStatus` to `canceled`, moves the message back to Drafts with
+  `$draft`, takes the keyword off the original if the send put it there,
+  and opens the composer again. Too late is said as such.
+- **Delivery status.** A message in Sent shows a line per recipient:
+  sending (still in the undo time), queued with the last reply, sent
+  (`unknown` in JMAP: another server took it), delivered (a mailbox on
+  this server), failed with the SMTP reply. The submissions of a thread
+  are asked for once (`EmailSubmission/query` by email id) and then
+  follow `EmailSubmission/changes`, every 3 seconds for two minutes
+  after a send and with every refresh after that.
+- **Identities** (`/settings`): the account's address, and `+tag`
+  addresses with name, reply-to and a text signature, through
+  `Identity/set`. The signature goes under a new message after `-- `
+  and above a quote, and is swapped when From changes, if it is still as
+  it was put. An identity's `bcc` is filled in; `htmlSignature` is not
+  used.
+- **Keys and links.** `c` new message, `r` reply, `a` reply all, `f`
+  forward, Ctrl or Cmd with Enter sends. Any `mailto:` link in the app
+  opens the composer with its addresses, subject and body (RFC 6068);
+  mail addresses and web addresses in a text body are links.
+- **JMAP client.** `using` has `urn:ietf:params:jmap:submission`. A
+  `/set` that created something no longer moves the held state on: what
+  it made reaches the store through `/changes`.
+- **Tests.** Vitest (109 new, 171 in all): address parsing, `mailto:`,
+  HTML to text, subjects, threading headers, reply recipients, quoting,
+  the create object, and the store against the in-memory server (the
+  save sequence, a failed save, a 401, uploads, the send request with
+  its result reference, a refused send, undo, delivery status,
+  identities). Playwright (`e2e/compose.spec.ts`, 8 tests) against the
+  real binary, between `dev@` and `other@robinmail.test` of `seed.sh`:
+  send with an attachment and see it arrive byte for byte, reply and see
+  the thread with both messages and `$answered`, a draft over a reload,
+  undo and nothing arrives, a message to an unknown local user with
+  `550 5.1.1` as failed status and the bounce in the thread, rich text
+  with a pasted image arriving as HTML with the image inline, reply all,
+  forward both ways, `mailto:`, an identity with its signature, an
+  expired session with a composer open, phone width. One domain is
+  enough for all of it; two servers stay with `TestSendBetweenTwoServers`
+  and `send-demo.sh`. `e2e/compose-shots.spec.ts` takes the screenshots.
+- **The tests found and fixed**: the text attachment that came back with
+  other line ends (Go, above); the notice with "Undo" never showed,
+  because the composer that should announce the send was gone by then;
+  a stored single-part text gains a line end, which a reopened draft now
+  drops.
+- **Not built.** No address book or completion of addresses. No
+  formatting beyond the six buttons (no fonts, colours, tables). An
+  HTML signature. Scheduling a send. A read receipt. A draft is not
+  kept in the browser: text typed in the last 1.5 seconds before a
+  crash is lost (the tab asks before a normal close). On a phone there
+  is no button for a new message while a thread is open. A `mailto:`
+  link inside an HTML message is in the sandboxed frame and opens the
+  system's mail program, not the composer. Only Chromium was run.
 
 ### Phase 6: push and IMAP
 
@@ -967,10 +1103,27 @@ Built as follows (the Go side):
   not tried.
 - `undo_seconds` is a server setting (10). The webmail cannot ask for a
   longer or shorter hold per message; FUTURERELEASE (`HOLDFOR`) would be
-  the standard way.
+  the standard way. The end-to-end tests wait it out on every send.
 - `deliveryStatus` says `unknown` for mail another server accepted, as RFC
-  8621 defines it. A user will read that as "sent"; the webmail has to
-  word it.
+  8621 defines it. The webmail words it as "Sent".
+- Marking the original `$answered` only when the send worked needs a
+  third call guarded by a result reference into the created submission
+  (phase 5, webmail). It works on any server that follows RFC 8620 3.7,
+  but it is a trick. The plain way is a second request after the send,
+  which a closed tab can lose; a server extension would be cleaner.
+- Every autosave of a draft is a new Email: a new id, a new Message-ID,
+  two state changes, and a row in Drafts that is replaced while it is
+  looked at. Immutable Emails leave no other way in JMAP; a longer
+  pause between saves is the only knob.
+- When the answer to a send is lost the webmail cannot tell whether the
+  message went, and sending again may send it twice. A creation id the
+  server remembers for a while would make a repeat safe.
+- The rich text editor stands on `document.execCommand`, which browsers
+  mark as obsolete and still all implement. If one drops it, the editor
+  needs its own handling of selections, or a library after all.
+- A `mailto:` link in an HTML message opens the system's mail program.
+  The view could rewrite such links to a page of the webmail, which the
+  frame may open as a popup.
 - The queue asks rqlite for due rows every 5 seconds on every node, also
   when it is empty. A submission could wake the local worker at once; the
   5 seconds are what a send waits today at most.
