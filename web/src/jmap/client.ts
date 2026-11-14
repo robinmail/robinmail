@@ -4,7 +4,7 @@
 
 import type { Id, Invocation, MethodName, Methods, ResultReference, Session } from './types'
 
-export const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail']
+export const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission']
 
 // HttpError is a response that is not JMAP: 401 without a session, 5xx.
 export class HttpError extends Error {
@@ -96,8 +96,47 @@ export class Batch {
   }
 }
 
+export interface Upload {
+  blobId: Id
+  type: string
+  size: number
+}
+
+export interface UploadOptions {
+  // Told how far the upload is, from 0 to 1.
+  onProgress?: (fraction: number) => void
+  signal?: AbortSignal
+}
+
+// Uploader sends a file to a path and resolves to the HTTP status and the
+// body of the answer. The browser's one is XMLHttpRequest, the only way a
+// page learns how far an upload is.
+export type Uploader = (path: string, file: Blob, type: string, opts: UploadOptions) => Promise<{ status: number; body: string }>
+
+export const xhrUploader: Uploader = (path, file, type, opts) =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('Content-Type', type)
+    xhr.setRequestHeader('Accept', 'application/json')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) opts.onProgress?.(e.loaded / e.total)
+    }
+    xhr.onload = () => resolve({ status: xhr.status, body: xhr.responseText })
+    xhr.onerror = () => reject(new Error('The connection was lost during the upload.'))
+    xhr.onabort = () => reject(new DOMException('The upload was cancelled.', 'AbortError'))
+    if (opts.signal?.aborted) {
+      reject(new DOMException('The upload was cancelled.', 'AbortError'))
+      return
+    }
+    opts.signal?.addEventListener('abort', () => xhr.abort())
+    xhr.send(file)
+  })
+
 export interface ClientOptions {
   fetch?: typeof fetch
+  uploader?: Uploader
   // Called when the server answers 401: the session cookie is gone or expired.
   onUnauthorized?: () => void
 }
@@ -115,11 +154,13 @@ export class JmapClient {
   // The last known state string per data type ("Email", "Mailbox", "Thread").
   readonly states: Record<string, string> = {}
   private fetch: typeof fetch
+  private uploader: Uploader
   // Called when the server answers 401: the session is gone or expired.
   onUnauthorized: () => void
 
   constructor(opts: ClientOptions = {}) {
     this.fetch = opts.fetch ?? ((input, init) => fetch(input, init))
+    this.uploader = opts.uploader ?? xhrUploader
     this.onUnauthorized = opts.onUnauthorized ?? (() => {})
   }
 
@@ -190,14 +231,47 @@ export class JmapClient {
   // state stays, and the next /changes reports what we missed along with
   // what we did. The state of a /get or /changes is not taken here: it only
   // counts once the caller has merged the data (see setState).
+  //
+  // A /set that created something does not move the state either: what it
+  // made is not in the store yet, and /changes is how it gets there.
   private noteState([name, args]: Invocation): void {
     const [type, method] = name.split('/') as [string, string | undefined]
     if (method !== 'set' || typeof args.newState !== 'string') return
+    if (args.created && Object.keys(args.created).length > 0) return
     if (args.oldState === this.states[type]) this.states[type] = args.newState
   }
 
   setState(type: string, state: string): void {
     this.states[type] = state
+  }
+
+  // maxSizeUpload is the largest file the server takes (RFC 8620 2).
+  get maxSizeUpload(): number {
+    const core = this.session?.capabilities['urn:ietf:params:jmap:core'] as { maxSizeUpload?: number } | undefined
+    return core?.maxSizeUpload ?? 0
+  }
+
+  // upload stores a file as a blob (RFC 8620 6.1) and answers its id.
+  async upload(file: Blob, type: string, opts: UploadOptions = {}): Promise<Upload> {
+    if (!this.session) await this.loadSession()
+    const path = localPath(this.session!.uploadUrl).replace('{accountId}', encodeURIComponent(this.accountId))
+    const res = await this.uploader(path, file, type || 'application/octet-stream', opts)
+    if (res.status === 401) {
+      this.reset()
+      this.onUnauthorized()
+      throw new HttpError(401, 'not logged in')
+    }
+    if (res.status < 200 || res.status > 299) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const p = JSON.parse(res.body) as { detail?: string }
+        if (p.detail) detail = p.detail
+      } catch {
+        // not a problem document: keep the status
+      }
+      throw new HttpError(res.status, res.status === 413 ? 'The file is larger than the server accepts.' : detail)
+    }
+    return JSON.parse(res.body) as Upload
   }
 
   // downloadUrl fills the session's download template (RFC 8620 6.2).

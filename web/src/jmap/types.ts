@@ -88,10 +88,69 @@ export interface Email {
   bcc?: EmailAddress[] | null
   replyTo?: EmailAddress[] | null
   sentAt?: string | null
+  messageId?: string[] | null
+  inReplyTo?: string[] | null
+  references?: string[] | null
   textBody?: BodyPart[]
   htmlBody?: BodyPart[]
   attachments?: BodyPart[]
   bodyValues?: Record<string, BodyValue>
+}
+
+// What Email/set takes for a new Email (RFC 8621 4.6), as far as the
+// composer uses it. A body part has a partId (its text is in bodyValues)
+// or a blobId (an upload, or a part of another message).
+export interface NewBodyPart {
+  partId?: string
+  blobId?: Id
+  type: string
+  name?: string | null
+  disposition?: string | null
+  cid?: string | null
+}
+export interface EmailCreate {
+  mailboxIds: Record<Id, true>
+  keywords: Record<string, true>
+  from: EmailAddress[]
+  to?: EmailAddress[]
+  cc?: EmailAddress[]
+  bcc?: EmailAddress[]
+  replyTo?: EmailAddress[]
+  subject: string
+  inReplyTo?: string[]
+  references?: string[]
+  textBody: NewBodyPart[]
+  htmlBody?: NewBodyPart[]
+  attachments?: NewBodyPart[]
+  bodyValues: Record<string, { value: string }>
+  [header: `header:${string}`]: string
+}
+
+export interface Identity {
+  id: Id
+  name: string
+  email: string
+  replyTo: EmailAddress[] | null
+  bcc: EmailAddress[] | null
+  textSignature: string
+  htmlSignature: string
+  mayDelete: boolean
+}
+
+export interface DeliveryStatus {
+  smtpReply: string
+  delivered: 'queued' | 'yes' | 'no' | 'unknown'
+  displayed: 'unknown' | 'yes'
+}
+
+export interface EmailSubmission {
+  id: Id
+  identityId: Id
+  emailId: Id
+  threadId: Id
+  sendAt: string
+  undoStatus: 'pending' | 'final' | 'canceled'
+  deliveryStatus: Record<string, DeliveryStatus> | null
 }
 
 export interface Thread {
@@ -121,6 +180,11 @@ export interface SetError {
   type: string
   description?: string | null
   properties?: string[]
+  // EmailSubmission/set (RFC 8621 7.5).
+  invalidRecipients?: string[]
+  maxRecipients?: number
+  maxSize?: number
+  notFound?: Id[]
 }
 
 // Arguments and responses per method. "#name" arguments (result
@@ -212,6 +276,25 @@ export interface Methods {
     args: { filter?: Filter | null; sort?: Comparator[] | null; sinceQueryState: string; maxChanges?: number; collapseThreads?: boolean; calculateTotal?: boolean }
     response: QueryChangesResponse
   }
-  'Email/set': { args: SetArgs<Email>; response: SetResponse<Email> }
+  'Email/set': {
+    args: Omit<SetArgs<Email>, 'create'> & { create?: Record<string, EmailCreate> }
+    response: SetResponse<Email>
+  }
+  'Identity/get': { args: GetArgs; response: GetResponse<Identity> }
+  'Identity/set': { args: SetArgs<Identity>; response: SetResponse<Identity> }
+  'EmailSubmission/get': { args: GetArgs; response: GetResponse<EmailSubmission> }
+  'EmailSubmission/changes': { args: ChangesArgs; response: ChangesResponse }
+  'EmailSubmission/query': {
+    args: { filter?: { emailIds?: Id[]; threadIds?: Id[]; undoStatus?: string } | null; sort?: Comparator[] | null; limit?: number }
+    response: QueryResponse
+  }
+  'EmailSubmission/set': {
+    args: Omit<SetArgs<EmailSubmission>, 'create'> & {
+      create?: Record<string, { identityId: Id; emailId: Id }>
+      onSuccessUpdateEmail?: Record<string, Record<string, unknown>> | null
+      onSuccessDestroyEmail?: string[] | null
+    }
+    response: SetResponse<EmailSubmission>
+  }
 }
 export type MethodName = keyof Methods

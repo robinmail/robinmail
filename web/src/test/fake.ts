@@ -2,13 +2,14 @@
 // behaviour as the client relies on. One modseq is the state of every
 // type, as on the real server.
 
-import type { Email, Filter, FilterCondition, Id, Invocation, Mailbox } from '../jmap/types'
+import type { Uploader } from '../jmap/client'
+import type { Email, EmailSubmission, Filter, FilterCondition, Id, Identity, Invocation, Mailbox, SetError } from '../jmap/types'
 
 type Args = Record<string, any>
 
 interface Change {
   modseq: number
-  type: 'Email' | 'Mailbox' | 'Thread'
+  type: 'Email' | 'Mailbox' | 'Thread' | 'EmailSubmission' | 'Identity'
   id: Id
   op: 'created' | 'updated' | 'destroyed'
 }
@@ -31,13 +32,36 @@ export class FakeServer {
   // Held requests wait until release() is called.
   private gate: Promise<void> | null = null
   private open: (() => void) | null = null
+  // What Email/set create was given, by the id of the Email it made.
+  created = new Map<Id, Args>()
+  // Blob ids that exist: uploads, messages and their parts.
+  blobs = new Set<Id>()
+  identities = new Map<Id, Identity>()
+  submissions = new Map<Id, EmailSubmission>()
+  // Set to refuse the next Email/set create or EmailSubmission/set create.
+  failCreate: SetError | null = null
+  failSend: SetError | null = null
+  // Set to answer uploads with this HTTP status.
+  uploadStatus = 0
+  maxSizeUpload = 50_000_000
+  uploads: { type: string; size: number }[] = []
   private nextEmail = 1
   private nextMailbox = 1
+  private nextBlob = 1
+  private nextSubmission = 1
+  private nextIdentity = 2
+  // "#creation id" to id, within one request.
+  private creations = new Map<string, Id>()
+  // Responses a call adds after its own (an implied call).
+  private implied: [string, Args][] = []
 
   constructor() {
     for (const role of ['inbox', 'drafts', 'sent', 'junk', 'trash']) {
       this.addMailbox(role[0]!.toUpperCase() + role.slice(1), null, role)
     }
+    this.identities.set('i1', {
+      id: 'i1', name: '', email: 'dev@robinmail.test', replyTo: null, bcc: null, textSignature: '', htmlSignature: '', mayDelete: false,
+    })
     this.log = []
   }
 
@@ -71,7 +95,7 @@ export class FakeServer {
   }
 
   // deliver stores a new email, as a delivery from outside does.
-  deliver(e: { mailbox?: Id; thread?: Id; subject?: string; from?: string; seen?: boolean; receivedAt?: string } = {}): Email {
+  deliver(e: { mailbox?: Id; thread?: Id; subject?: string; from?: string; seen?: boolean; receivedAt?: string } & Omit<Partial<Email>, 'from' | 'subject' | 'receivedAt'> = {}): Email {
     const id = `e${this.nextEmail++}`
     const threadId = e.thread ?? `t${id.slice(1)}`
     const isNewThread = ![...this.emails.values()].some((x) => x.threadId === threadId)
@@ -89,7 +113,15 @@ export class FakeServer {
       from: [{ name: null, email: e.from ?? 'a@example.com' }],
       to: [{ name: null, email: 'dev@robinmail.test' }],
       subject: e.subject ?? `Subject ${id}`,
+      messageId: [`${id}@fake`],
+      ...(e.to ? { to: e.to } : {}),
+      ...(e.cc ? { cc: e.cc } : {}),
+      ...(e.keywords ? { keywords: e.keywords } : {}),
+      ...(e.mailboxIds ? { mailboxIds: e.mailboxIds } : {}),
+      ...(e.inReplyTo ? { inReplyTo: e.inReplyTo } : {}),
+      ...(e.references ? { references: e.references } : {}),
     }
+    this.blobs.add(email.blobId)
     this.emails.set(id, email)
     this.note('Email', id, 'created')
     this.note('Thread', threadId, isNewThread ? 'created' : 'updated')
@@ -137,6 +169,19 @@ export class FakeServer {
     }
   }
 
+  // uploader stands in for the browser's upload (see JmapClient).
+  uploader: Uploader = async (path, file, type, opts) => {
+    if (this.gate) await this.gate
+    if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError')
+    if (this.uploadStatus) return { status: this.uploadStatus, body: '{}' }
+    if (path !== `/jmap/upload/${this.accountId}/`) return { status: 404, body: '' }
+    opts.onProgress?.(1)
+    const blobId = `upload${this.nextBlob++}`
+    this.blobs.add(blobId)
+    this.uploads.push({ type, size: file.size })
+    return { status: 201, body: JSON.stringify({ accountId: this.accountId, blobId, type, size: file.size }) }
+  }
+
   // fetch stands in for the browser's fetch.
   fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const path = String(input)
@@ -147,10 +192,10 @@ export class FakeServer {
         username: 'dev@robinmail.test',
         apiUrl: 'http://mail.example/jmap/api',
         downloadUrl: 'http://mail.example/jmap/download/{accountId}/{blobId}/{name}?type={type}',
-        uploadUrl: '',
+        uploadUrl: 'http://mail.example/jmap/upload/{accountId}/',
         eventSourceUrl: '',
         state: 's',
-        capabilities: {},
+        capabilities: { 'urn:ietf:params:jmap:core': { maxSizeUpload: this.maxSizeUpload } },
         accounts: { [this.accountId]: { name: 'dev', isPersonal: true, isReadOnly: false, accountCapabilities: {} } },
         primaryAccounts: { 'urn:ietf:params:jmap:mail': this.accountId },
       })
@@ -159,6 +204,7 @@ export class FakeServer {
     const body = JSON.parse(String(init?.body)) as { methodCalls: Invocation[] }
     this.requests.push(body.methodCalls)
     const responses: Invocation[] = []
+    this.creations.clear()
     for (const [name, rawArgs, callId] of body.methodCalls) {
       let out: [string, Args]
       try {
@@ -169,6 +215,7 @@ export class FakeServer {
         out = ['error', { type: e.type }]
       }
       responses.push([out[0], out[1], callId])
+      for (const extra of this.implied.splice(0)) responses.push([extra[0], extra[1], callId])
     }
     return Response.json({ methodResponses: responses, sessionState: 's' })
   }
@@ -276,14 +323,33 @@ export class FakeServer {
         const props: string[] | null = args.properties ?? null
         const list = ids.filter((id) => this.emails.has(id)).map((id) => {
           const e = structuredClone(this.emails.get(id)!) as unknown as Record<string, unknown>
-          if (props?.includes('bodyValues')) {
+          const made = this.created.get(id)
+          if (made && (!props || props.some((p) => ['bodyValues', 'attachments', 'textBody', 'htmlBody'].includes(p)))) {
+            // As the server builds it: the text, the HTML, then the attachments.
+            const part = (n: number, type: string) => ({ partId: String(n), blobId: `${e.blobId}-${n}`, size: 1, name: null, type, disposition: null, cid: null })
+            e.textBody = [part(1, 'text/plain')]
+            e.htmlBody = made.htmlBody ? [part(2, 'text/html')] : e.textBody
+            const first = made.htmlBody ? 3 : 2
+            e.attachments = ((made.attachments ?? []) as Args[]).map((a, i) => ({
+              partId: String(first + i), blobId: `${e.blobId}-${first + i}`, size: 10, name: a.name ?? null, type: a.type,
+              disposition: a.disposition ?? null, cid: a.cid ?? null,
+            }))
+            e.bodyValues = {
+              1: { value: made.bodyValues[made.textBody[0].partId].value, isEncodingProblem: false, isTruncated: false },
+              ...(made.htmlBody ? { 2: { value: made.bodyValues[made.htmlBody[0].partId].value, isEncodingProblem: false, isTruncated: false } } : {}),
+            }
+            for (const [k, v] of Object.entries(made)) if (k.startsWith('header:')) e[k] = v
+          } else if (props?.includes('bodyValues')) {
             e.textBody = [{ partId: '1', blobId: `${e.blobId}-1`, size: 4, name: null, type: 'text/plain', disposition: null, cid: null }]
             e.htmlBody = e.textBody
             e.attachments = []
             e.bodyValues = { 1: { value: `body of ${id}`, isEncodingProblem: false, isTruncated: false } }
           }
           if (!props) return e
-          return Object.fromEntries(Object.entries(e).filter(([k]) => k === 'id' || props.includes(k)))
+          return Object.fromEntries([
+            ...props.filter((p) => p.startsWith('header:')).map((p) => [p, null]),
+            ...Object.entries(e).filter(([k]) => k === 'id' || props.includes(k)),
+          ])
         })
         return [name, { accountId, state, list, notFound: ids.filter((id) => !this.emails.has(id)) }]
       }
@@ -319,7 +385,44 @@ export class FakeServer {
         const notUpdated: Args = {}
         const destroyed: Id[] = []
         const notDestroyed: Args = {}
-        for (const [id, patch] of Object.entries((args.update ?? {}) as Record<Id, Args>)) {
+        const created: Args = {}
+        const notCreated: Args = {}
+        for (const [cid, raw] of Object.entries((args.create ?? {}) as Record<string, Args>)) {
+          const lost = ((raw.attachments ?? []) as Args[]).map((a) => a.blobId as Id).filter((b) => !this.blobs.has(b))
+          if (this.failCreate) {
+            notCreated[cid] = this.failCreate
+            this.failCreate = null
+            continue
+          }
+          if (lost.length) {
+            notCreated[cid] = { type: 'blobNotFound', notFound: lost }
+            continue
+          }
+          const id = `e${this.nextEmail++}`
+          // A reply joins the thread of the message it answers.
+          const refs: string[] = [...(raw.inReplyTo ?? []), ...(raw.references ?? [])]
+          const parent = [...this.emails.values()].find((x) => (x.messageId ?? []).some((m) => refs.includes(m)))
+          const threadId = parent?.threadId ?? `t${id.slice(1)}`
+          this.bump()
+          const email: Email = {
+            id, blobId: `blob-${id}`, threadId, mailboxIds: { ...raw.mailboxIds }, keywords: { ...raw.keywords }, size: 100,
+            receivedAt: new Date(Date.UTC(2026, 0, 2, 0, 0, this.nextEmail)).toISOString(), hasAttachment: (raw.attachments ?? []).length > 0,
+            preview: String(raw.bodyValues?.[raw.textBody?.[0]?.partId]?.value ?? '').slice(0, 100),
+            from: raw.from ?? null, to: raw.to ?? null, cc: raw.cc ?? null, bcc: raw.bcc ?? null, subject: raw.subject ?? null,
+            messageId: [`${id}@fake`], inReplyTo: raw.inReplyTo ?? null, references: raw.references ?? null,
+          }
+          this.emails.set(id, email)
+          this.created.set(id, raw)
+          this.blobs.add(email.blobId)
+          ;((raw.attachments ?? []) as Args[]).forEach((_, i) => this.blobs.add(`${email.blobId}-${(raw.htmlBody ? 3 : 2) + i}`))
+          this.note('Email', id, 'created')
+          this.note('Thread', threadId, parent ? 'updated' : 'created')
+          for (const m of Object.keys(email.mailboxIds)) this.note('Mailbox', m, 'updated')
+          this.creations.set(cid, id)
+          created[cid] = { id, blobId: email.blobId, threadId, size: 100 }
+        }
+        for (const [key, patch] of Object.entries((args.update ?? {}) as Record<Id, Args>)) {
+          const id = key.startsWith('#') ? this.creations.get(key.slice(1)) ?? key : key
           const e = this.emails.get(id)
           if (!e) {
             notUpdated[id] = { type: 'notFound' }
@@ -345,12 +448,14 @@ export class FakeServer {
             notDestroyed[id] = { type: 'notFound' }
             continue
           }
+          const e = this.emails.get(id)!
+          for (const b of [...this.blobs]) if (b === e.blobId || b.startsWith(`${e.blobId}-`)) this.blobs.delete(b)
           this.destroyEmail(id)
           destroyed.push(id)
         }
         return [name, {
-          accountId, oldState: state, newState: String(this.modseq), created: null,
-          updated, destroyed, notCreated: null, notUpdated, notDestroyed,
+          accountId, oldState: state, newState: String(this.modseq), created: Object.keys(created).length ? created : null,
+          updated, destroyed, notCreated: Object.keys(notCreated).length ? notCreated : null, notUpdated, notDestroyed,
         }]
       }
       case 'Mailbox/set': {
@@ -395,6 +500,125 @@ export class FakeServer {
           accountId, oldState: state, newState: String(this.modseq),
           created, updated, destroyed, notCreated: null, notUpdated, notDestroyed,
         }]
+      }
+      case 'Identity/get': {
+        const ids: Id[] = args.ids ?? [...this.identities.keys()]
+        return [name, {
+          accountId, state, list: ids.filter((id) => this.identities.has(id)).map((id) => structuredClone(this.identities.get(id)!)),
+          notFound: ids.filter((id) => !this.identities.has(id)),
+        }]
+      }
+      case 'Identity/set': {
+        const created: Args = {}
+        const notCreated: Args = {}
+        const updated: Args = {}
+        const notUpdated: Args = {}
+        const destroyed: Id[] = []
+        const notDestroyed: Args = {}
+        for (const [cid, raw] of Object.entries((args.create ?? {}) as Record<string, Args>)) {
+          if (!/^dev(\+[^@]+)?@robinmail\.test$/.test(raw.email ?? '')) {
+            notCreated[cid] = { type: 'forbiddenFrom' }
+            continue
+          }
+          const id = `i${this.nextIdentity++}`
+          this.bump()
+          this.identities.set(id, { id, name: '', replyTo: null, bcc: null, textSignature: '', htmlSignature: '', mayDelete: true, ...raw } as Identity)
+          created[cid] = { id, mayDelete: true }
+        }
+        for (const [id, patch] of Object.entries((args.update ?? {}) as Record<Id, Args>)) {
+          const i = this.identities.get(id)
+          if (!i) notUpdated[id] = { type: 'notFound' }
+          else {
+            this.bump()
+            Object.assign(i, patch)
+            updated[id] = null
+          }
+        }
+        for (const id of (args.destroy ?? []) as Id[]) {
+          if (!this.identities.has(id)) notDestroyed[id] = { type: 'notFound' }
+          else if (id === 'i1') notDestroyed[id] = { type: 'forbidden' }
+          else {
+            this.bump()
+            this.identities.delete(id)
+            destroyed.push(id)
+          }
+        }
+        return [name, { accountId, oldState: state, newState: String(this.modseq), created, updated, destroyed, notCreated, notUpdated, notDestroyed }]
+      }
+      case 'EmailSubmission/get': {
+        const ids: Id[] = args.ids ?? [...this.submissions.keys()]
+        return [name, {
+          accountId, state, list: ids.filter((id) => this.submissions.has(id)).map((id) => structuredClone(this.submissions.get(id)!)),
+          notFound: ids.filter((id) => !this.submissions.has(id)),
+        }]
+      }
+      case 'EmailSubmission/changes':
+        return this.changes('EmailSubmission', args.sinceState)
+      case 'EmailSubmission/query': {
+        const want: Id[] | undefined = args.filter?.emailIds
+        const ids = [...this.submissions.values()].filter((s) => !want || want.includes(s.emailId)).map((s) => s.id)
+        return [name, { accountId, queryState: state, canCalculateChanges: false, position: 0, ids }]
+      }
+      case 'EmailSubmission/set': {
+        const created: Args = {}
+        const notCreated: Args = {}
+        const updated: Args = {}
+        const notUpdated: Args = {}
+        const emailOf = new Map<string, Id>()
+        for (const [cid, raw] of Object.entries((args.create ?? {}) as Record<string, Args>)) {
+          const ref = String(raw.emailId)
+          const emailId = ref.startsWith('#') ? this.creations.get(ref.slice(1)) : ref
+          const email = emailId ? this.emails.get(emailId) : undefined
+          if (!email || !this.identities.has(raw.identityId)) {
+            notCreated[cid] = { type: 'invalidProperties', properties: [email ? 'identityId' : 'emailId'] }
+            continue
+          }
+          if (this.failSend) {
+            notCreated[cid] = this.failSend
+            this.failSend = null
+            continue
+          }
+          const rcpts = [...(email.to ?? []), ...(email.cc ?? []), ...(email.bcc ?? [])].map((a) => a.email)
+          if (rcpts.length === 0) {
+            notCreated[cid] = { type: 'noRecipients' }
+            continue
+          }
+          const id = `s${this.nextSubmission++}`
+          this.bump()
+          const sub: EmailSubmission = {
+            id, identityId: raw.identityId, emailId: email.id, threadId: email.threadId, sendAt: new Date(Date.now() + 10_000).toISOString(),
+            undoStatus: 'pending', deliveryStatus: Object.fromEntries(rcpts.map((r) => [r, { smtpReply: '', delivered: 'queued', displayed: 'unknown' }])),
+          }
+          this.submissions.set(id, sub)
+          this.note('EmailSubmission', id, 'created')
+          emailOf.set(`#${cid}`, email.id)
+          created[cid] = { id, threadId: sub.threadId, sendAt: sub.sendAt, undoStatus: sub.undoStatus, deliveryStatus: sub.deliveryStatus, dsnBlobIds: [], mdnBlobIds: [] }
+        }
+        for (const [id, patch] of Object.entries((args.update ?? {}) as Record<Id, Args>)) {
+          const sub = this.submissions.get(id)
+          if (!sub) notUpdated[id] = { type: 'notFound' }
+          else if (patch.undoStatus !== 'canceled') notUpdated[id] = { type: 'invalidProperties' }
+          else if (sub.undoStatus !== 'pending') notUpdated[id] = { type: 'cannotUnsend' }
+          else {
+            this.bump()
+            sub.undoStatus = 'canceled'
+            this.note('EmailSubmission', id, 'updated')
+            updated[id] = null
+          }
+        }
+        const response: [string, Args] = [name, {
+          accountId, oldState: state, newState: String(this.modseq), created: Object.keys(created).length ? created : null,
+          updated, destroyed: [], notCreated: Object.keys(notCreated).length ? notCreated : null, notUpdated, notDestroyed: null,
+        }]
+        // onSuccess*: an Email/set of its own, answered after this call.
+        const update: Args = {}
+        for (const [key, patch] of Object.entries((args.onSuccessUpdateEmail ?? {}) as Record<string, Args>)) {
+          const emailId = emailOf.get(key)
+          if (emailId) update[emailId] = patch
+        }
+        const destroy = ((args.onSuccessDestroyEmail ?? []) as string[]).map((k) => emailOf.get(k)).filter((x): x is Id => !!x)
+        if (Object.keys(update).length || destroy.length) this.implied.push(this.method('Email/set', { update, destroy }))
+        return response
       }
     }
     throw new Fail('unknownMethod')

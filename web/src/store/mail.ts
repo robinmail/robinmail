@@ -14,8 +14,10 @@ export const PAGE = 30
 export const LIST_PROPS = [
   'id', 'blobId', 'threadId', 'mailboxIds', 'keywords', 'size', 'receivedAt', 'hasAttachment', 'preview', 'from', 'to', 'subject',
 ]
-export const BODY_PROPS = [...LIST_PROPS, 'cc', 'bcc', 'replyTo', 'sentAt', 'textBody', 'htmlBody', 'attachments', 'bodyValues']
-const BODY_PART_PROPS = ['partId', 'blobId', 'size', 'name', 'type', 'charset', 'disposition', 'cid']
+export const BODY_PROPS = [
+  ...LIST_PROPS, 'cc', 'bcc', 'replyTo', 'sentAt', 'messageId', 'inReplyTo', 'references', 'textBody', 'htmlBody', 'attachments', 'bodyValues',
+]
+export const BODY_PART_PROPS = ['partId', 'blobId', 'size', 'name', 'type', 'charset', 'disposition', 'cid']
 
 // ListSpec is what the route says about the message list.
 export interface ListSpec {

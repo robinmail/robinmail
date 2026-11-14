@@ -17,13 +17,16 @@
 # "make" and run ./robinmail with the same config (see the Makefile). Run it again any time: it rebuilds the binary and
 # leaves an existing user and their mail alone.
 #
-# The user is dev@robinmail.test. The password below is for this local
+# The user is dev@robinmail.test. A second one, other@robinmail.test, has
+# no mail: it is there to send mail to and to answer from (the end-to-end
+# test does). The password below, the same for both, is for this local
 # instance only; set ROBINMAIL_DEV_PASSWORD to use another.
 set -eu
 cd "$(dirname "$0")/../.."
 
 DIR=dev
 USER_ADDRESS=dev@robinmail.test
+OTHER_ADDRESS=other@robinmail.test
 PASSWORD=${ROBINMAIL_DEV_PASSWORD:-robinmail-dev}
 
 mkdir -p "$DIR"
@@ -33,6 +36,8 @@ robinmail() { "$DIR/robinmail" -config "$DIR/robinmail.json" "$@"; }
 
 [ -f "$DIR/master.key" ] || robinmail key generate
 robinmail domain list | grep -qx robinmail.test || robinmail domain add robinmail.test
+
+robinmail user list | grep -q "^$OTHER_ADDRESS" || printf '%s\n' "$PASSWORD" | robinmail user add "$OTHER_ADDRESS"
 
 if robinmail user list | grep -q "^$USER_ADDRESS"; then
 	echo "$USER_ADDRESS exists, leaving the mail as it is"

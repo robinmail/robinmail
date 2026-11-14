@@ -4,6 +4,7 @@
 
 import { reactive } from 'vue'
 import { JmapClient, type Account } from './jmap/client'
+import { ComposeStore } from './store/compose'
 import { MailStore } from './store/mail'
 
 export const auth = reactive({
@@ -14,3 +15,4 @@ export const auth = reactive({
 
 export const client = new JmapClient()
 export const store = new MailStore(client)
+export const compose = new ComposeStore(client, store)
