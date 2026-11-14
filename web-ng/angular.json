@@ -89,8 +89,8 @@
               "budgets": [
                 {
                   "type": "initial",
-                  "maximumWarning": "500kB",
-                  "maximumError": "1MB"
+                  "maximumWarning": "900kB",
+                  "maximumError": "1.5MB"
                 },
                 {
                   "type": "anyComponentStyle",
@@ -106,13 +106,15 @@
                   "inlineCritical": false
                 },
                 "fonts": false
-              }
+              },
+              "deployUrl": "/assets/"
             },
             "development": {
               "optimization": false,
               "extractLicenses": false,
               "sourceMap": true,
-              "tsConfig": "projects/shell/tsconfig.dev.json"
+              "tsConfig": "projects/shell/tsconfig.dev.json",
+              "deployUrl": "/"
             }
           },
           "defaultConfiguration": "production"

@@ -5,9 +5,10 @@
     "ng": "ng",
     "dev": "ng serve shell",
     "build:libs": "ng build jmap && ng build webmail",
-    "build": "npm run build:libs && ng build shell",
+    "build": "npm run build:libs && ng build shell && node scripts/layout.mjs",
     "typecheck": "ng build shell --configuration development --output-path out-tsc/dev",
-    "test": "ng test jmap --watch=false && ng test webmail --watch=false"
+    "test": "ng test jmap --watch=false && ng test webmail --watch=false",
+    "build:go": "node scripts/go-build.mjs"
   },
   "private": true,
   "packageManager": "npm@11.20.0",

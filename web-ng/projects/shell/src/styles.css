@@ -1,12 +1,4 @@
 @import "tailwindcss";
-@import "@angular/cdk/overlay-prebuilt.css";
-/* The screens live in the webmail library: its templates carry the classes. */
+@import "../../webmail/src/styles/webmail.css";
+/* The screens live in the webmail library: its sources carry the classes. */
 @source "../../webmail/src";
-
-@theme {
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-}
-
-html, body {
-  height: 100%;
-}

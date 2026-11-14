@@ -1,0 +1,108 @@
+/* The look of @robinmail/webmail: Tailwind with the colour names the
+   screens use (text-muted, bg-elevated, border-default, primary, error),
+   light and dark. The host application imports this file from its own
+   stylesheet and points Tailwind at the library's sources. */
+@import "@angular/cdk/overlay-prebuilt.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  --ui-primary: var(--color-orange-500);
+  --ui-error: var(--color-red-500);
+  --ui-warning: var(--color-yellow-500);
+  --ui-success: var(--color-green-600);
+  --ui-text-dimmed: var(--color-stone-400);
+  --ui-text-muted: var(--color-stone-500);
+  --ui-text-toned: var(--color-stone-600);
+  --ui-text: var(--color-stone-700);
+  --ui-text-highlighted: var(--color-stone-900);
+  --ui-text-inverted: var(--color-white);
+  --ui-bg: var(--color-white);
+  --ui-bg-muted: var(--color-stone-50);
+  --ui-bg-elevated: var(--color-stone-100);
+  --ui-bg-accented: var(--color-stone-200);
+  --ui-bg-inverted: var(--color-stone-900);
+  --ui-border: var(--color-stone-200);
+  --ui-border-accented: var(--color-stone-300);
+  --ui-header-height: 4rem;
+}
+
+.dark {
+  color-scheme: dark;
+  --ui-primary: var(--color-orange-400);
+  --ui-error: var(--color-red-400);
+  --ui-warning: var(--color-yellow-400);
+  --ui-success: var(--color-green-400);
+  --ui-text-dimmed: var(--color-stone-500);
+  --ui-text-muted: var(--color-stone-400);
+  --ui-text-toned: var(--color-stone-300);
+  --ui-text: var(--color-stone-200);
+  --ui-text-highlighted: var(--color-white);
+  --ui-text-inverted: var(--color-stone-900);
+  --ui-bg: var(--color-stone-900);
+  --ui-bg-muted: var(--color-stone-800);
+  --ui-bg-elevated: var(--color-stone-800);
+  --ui-bg-accented: var(--color-stone-700);
+  --ui-bg-inverted: var(--color-white);
+  --ui-border: var(--color-stone-800);
+  --ui-border-accented: var(--color-stone-700);
+}
+
+@theme inline {
+  --color-primary: var(--ui-primary);
+  --color-error: var(--ui-error);
+  --color-warning: var(--ui-warning);
+  --color-success: var(--ui-success);
+  --text-color-dimmed: var(--ui-text-dimmed);
+  --text-color-muted: var(--ui-text-muted);
+  --text-color-toned: var(--ui-text-toned);
+  --text-color-default: var(--ui-text);
+  --text-color-highlighted: var(--ui-text-highlighted);
+  --text-color-inverted: var(--ui-text-inverted);
+  --background-color-default: var(--ui-bg);
+  --background-color-muted: var(--ui-bg-muted);
+  --background-color-elevated: var(--ui-bg-elevated);
+  --background-color-accented: var(--ui-bg-accented);
+  --background-color-inverted: var(--ui-bg-inverted);
+  --border-color-default: var(--ui-border);
+  --border-color-accented: var(--ui-border-accented);
+  --ring-color-default: var(--ui-border);
+  --ring-color-accented: var(--ui-border-accented);
+  --outline-color-default: var(--ui-border);
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button:not(:disabled), [role="menuitem"], [role="menuitemcheckbox"], summary {
+  cursor: pointer;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--ui-primary);
+  width: 1rem;
+  height: 1rem;
+}
+
+/* The rich text editor and nothing else: Tailwind's reset takes the looks
+   of lists, quotes and links away. */
+.rich p, .rich div { margin: 0; }
+.rich p + p, .rich p + div, .rich div + p { margin-top: 0.6em; }
+.rich ul { list-style: disc; padding-left: 1.5em; margin: 0.4em 0; }
+.rich ol { list-style: decimal; padding-left: 1.5em; margin: 0.4em 0; }
+.rich blockquote { margin: 0.4em 0; padding-left: 0.75em; border-left: 2px solid var(--ui-border-accented); color: var(--ui-text-muted); }
+.rich a { color: var(--ui-primary); text-decoration: underline; }
+.rich img { max-width: 100%; height: auto; border-radius: 0.25rem; }
+.rich pre { white-space: pre-wrap; font-family: inherit; }
