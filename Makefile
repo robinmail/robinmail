@@ -6,6 +6,7 @@
 #   make e2e        the browser test against ./robinmail and the dev instance
 #   make dev        a development instance with live reload on :5173
 #   make cluster-test   the cluster tests on three rqlite and three robinmail nodes in Docker
+#   make lab-test       the interoperability tests against Postfix, Exim and OpenSMTPD in Docker
 #   make clean
 #
 # A plain "go build ./cmd/robinmail" needs no Node and no make: that binary
@@ -42,7 +43,7 @@ GO ?= go
 NPM ?= npm
 WEB_SRC := $(shell find web/src web/public web/index.html web/package.json web/package-lock.json web/vite.config.ts web/tsconfig.json -type f 2>/dev/null)
 
-.PHONY: all build web test test-go test-web e2e dev clean cluster-test
+.PHONY: all build web test test-go test-web e2e dev clean cluster-test lab-test
 
 all: build
 
@@ -92,6 +93,17 @@ cluster-test:
 	contrib/compose/cluster.sh up
 	@ROBINMAIL_TEST_CLUSTER=1 $(GO) test -count=1 -v -timeout 30m ./internal/clustertest; s=$$?; \
 		[ -n "$(KEEP)" ] || contrib/compose/cluster.sh down; exit $$s
+
+# Builds the images, starts the lab of contrib/lab/compose.yaml (robinmail
+# next to Postfix, Exim and OpenSMTPD, with a DNS and a certificate
+# authority of its own), runs the tests in internal/labtest and removes
+# the lab again, also when a test failed. About five minutes after the
+# first build. KEEP=1 leaves the lab running. Nothing leaves the lab's
+# network: its name server knows no name outside it.
+lab-test:
+	contrib/lab/lab.sh up
+	@ROBINMAIL_TEST_LAB=1 $(GO) test -count=1 -v -timeout 30m ./internal/labtest; s=$$?; \
+		[ -n "$(KEEP)" ] || contrib/lab/lab.sh down; exit $$s
 
 clean:
 	rm -rf robinmail web/dist internal/web/dist

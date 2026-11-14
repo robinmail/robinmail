@@ -3,11 +3,12 @@
 #
 #   LAB_HOST     the host name, which is also the name of its certificate
 #                in /lab/secrets [mx.postfix.test]
-#   LAB_DOMAINS  the domains it is the final destination for [postfix.test]
+#   LAB_DOMAINS  the domains it is the final destination for [postfix.test
+#                and under_score.postfix.test]
 #   LAB_TLS      "no" turns STARTTLS off on the listener
 set -eu
 HOST=${LAB_HOST:-mx.postfix.test}
-DOMAINS=${LAB_DOMAINS:-postfix.test}
+DOMAINS=${LAB_DOMAINS:-postfix.test, under_score.postfix.test}
 
 cp /lab/secrets/ca.crt /usr/local/share/ca-certificates/lab.crt
 update-ca-certificates >/dev/null 2>&1

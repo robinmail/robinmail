@@ -21,6 +21,7 @@
   "submission": {
     "listen": ":587",
     "listen_tls": ":465",
+    "max_recipients_per_hour": 100000,
     "undo_seconds": 0
   },
   "dev": {
