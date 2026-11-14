@@ -13,11 +13,18 @@
 #   docker compose -f contrib/compose/keycloak.yaml down
 #
 # The realm in keycloak/robinmail-realm.json has one client, "robinmail",
-# for the development instance on http://127.0.0.1:8080, and two users: one
+# for the development instance on http://127.0.0.1:8080 (or 8085, where
+# contrib/dev/e2e.sh can put it), and two users: one
 # with the address of that instance's user, dev@robinmail.test, and one
 # robinmail has no mailbox for. Client secret and passwords in that file
 # are for this container only, which listens on 127.0.0.1 and keeps
 # nothing: "down" removes it all.
+#
+# The users have fixed ids. An id is the "sub" of the ID token, which
+# robinmail records for an account at its first login through a provider
+# and holds later logins to: with ids that Keycloak makes up at every
+# import, the second container would be another person to robinmail, and
+# be refused, as it should.
 #
 # Keycloak runs in development mode over plain HTTP. robinmail accepts an
 # http issuer only on a loopback address, which this is.

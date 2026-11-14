@@ -8,8 +8,15 @@
 # Besides the server it starts the fake OpenID provider of
 # contrib/dev/oidc-provider, for the "Log in with" button, and stops both
 # when the tests are done. See e2e-config.mjs for the config it runs with.
+#
+# The server listens on 127.0.0.1:8080 like the development instance. When
+# one is running there already, ROBINMAIL_E2E_PORT=8085 puts this one on
+# another port (and its SMTP on the next); both then work on the same
+# database, as two nodes would.
 set -eu
 cd "$(dirname "$0")/../.."
+PORT=${ROBINMAIL_E2E_PORT:-8080}
+export ROBINMAIL_E2E_PORT="$PORT"
 
 contrib/dev/seed.sh
 go build -o dev/oidc-provider ./contrib/dev/oidc-provider
@@ -26,4 +33,4 @@ trap stop EXIT
 sleep 1
 
 cd web
-ROBINMAIL_E2E_URL=http://127.0.0.1:8080 npx playwright test "$@"
+ROBINMAIL_E2E_URL="http://127.0.0.1:$PORT" npx playwright test "$@"

@@ -18,6 +18,7 @@ test.beforeEach(async ({ request }) => {
 
 async function keycloakLogin(page: Page, username: string): Promise<void> {
   await page.goto('/')
+  const base = page.url()
   await expect(page).toHaveURL(/\/login/)
   await page.getByTestId('provider-keycloak').click()
   // Keycloak's own login page, on its own origin.
@@ -27,7 +28,7 @@ async function keycloakLogin(page: Page, username: string): Promise<void> {
   expect(url.searchParams.get('response_type')).toBe('code')
   expect(url.searchParams.get('code_challenge_method')).toBe('S256')
   expect(url.searchParams.get('scope')).toBe('openid email')
-  expect(url.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:8080/auth/oidc/keycloak/callback')
+  expect(url.searchParams.get('redirect_uri')).toBe(`${new URL(base).origin}/auth/oidc/keycloak/callback`)
   for (const p of ['state', 'nonce', 'code_challenge']) expect(url.searchParams.get(p)?.length).toBeGreaterThanOrEqual(43)
   await page.locator('#username').fill(username)
   await page.locator('#password').fill(KEYCLOAK_PASSWORD)
@@ -36,7 +37,7 @@ async function keycloakLogin(page: Page, username: string): Promise<void> {
 
 test('a Keycloak user logs in to the webmail', async ({ page }) => {
   await keycloakLogin(page, 'dev')
-  await expect(page).toHaveURL(/127\.0\.0\.1:8080\/mail\/m\d+$/)
+  await expect(page).toHaveURL(/127\.0\.0\.1:80\d\d\/mail\/m\d+$/)
   await expect(page.getByText(USER).first()).toBeVisible()
   const session = (await (await page.request.get('/auth/session')).json()) as { username: string; method: string }
   console.log(`logged in through Keycloak: ${JSON.stringify({ username: session.username, method: session.method })}`)
@@ -52,7 +53,7 @@ test('a Keycloak user logs in to the webmail', async ({ page }) => {
   await page.getByTestId('logout').click()
   await expect(page).toHaveURL(/\/login/)
   await page.getByTestId('provider-keycloak').click()
-  await expect(page).toHaveURL(/127\.0\.0\.1:8080\/mail\/m\d+$/)
+  await expect(page).toHaveURL(/127\.0\.0\.1:80\d\d\/mail\/m\d+$/)
 })
 
 test('a Keycloak user without a mailbox does not get in', async ({ page }) => {

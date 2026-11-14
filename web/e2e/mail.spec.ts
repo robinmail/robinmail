@@ -212,7 +212,8 @@ test('a session that ended returns to the login, and then to where it was', asyn
   await login(page)
   await expect(page.locator('[data-row]').first()).toBeVisible()
   // The server forgets the session (as after 30 days, or a logout elsewhere).
-  await context.request.post('/auth/logout')
+  // JSON, as everything under /auth that changes something has to be.
+  expect((await context.request.post('/auth/logout', { data: {} })).status()).toBe(204)
   await page.getByRole('button', { name: 'Check for new mail' }).click()
   await expect(page).toHaveURL(/\/login\?next=\/mail\/m\d+$/)
   await page.getByLabel('Email address').fill('dev@robinmail.test')

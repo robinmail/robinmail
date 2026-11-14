@@ -16,7 +16,7 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "redirectUris": ["http://127.0.0.1:8080/auth/oidc/keycloak/callback"],
+      "redirectUris": ["http://127.0.0.1:8080/auth/oidc/keycloak/callback", "http://127.0.0.1:8085/auth/oidc/keycloak/callback"],
       "webOrigins": [],
       "attributes": {
         "pkce.code.challenge.method": "S256"
@@ -25,6 +25,7 @@
   ],
   "users": [
     {
+      "id": "6f1f0c1e-7a54-4c1b-9c0a-0d5b6a7e8f01",
       "username": "dev",
       "email": "dev@robinmail.test",
       "emailVerified": true,
@@ -36,6 +37,7 @@
       ]
     },
     {
+      "id": "6f1f0c1e-7a54-4c1b-9c0a-0d5b6a7e8f02",
       "username": "stranger",
       "email": "stranger@robinmail.test",
       "emailVerified": true,

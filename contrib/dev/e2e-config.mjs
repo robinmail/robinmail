@@ -13,12 +13,21 @@ import { readFileSync, writeFileSync } from 'node:fs'
 
 const keycloak = 'http://127.0.0.1:8180/realms/robinmail'
 const cfg = JSON.parse(readFileSync('dev/robinmail.json', 'utf8'))
+// ROBINMAIL_E2E_PORT moves the instance off the development ports, for
+// when a development server is already running there: the web listener
+// goes to that port and SMTP to the one after it.
+const port = Number(process.env.ROBINMAIL_E2E_PORT ?? 8080)
+if (port !== 8080) {
+  cfg.web = { ...cfg.web, http_listen: `127.0.0.1:${port}` }
+  cfg.smtp = { ...cfg.smtp, listen: `127.0.0.1:${port + 1}` }
+}
 const oidc = [
   { name: 'test', label: 'Test provider', issuer: 'http://127.0.0.1:8090', client_id: 'robinmail', client_secret: 'test-secret-of-the-fake-provider' },
 ]
 try {
   const res = await fetch(`${keycloak}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(2000) })
-  if (res.ok && (await res.json()).issuer === keycloak) {
+  // The realm's client knows the redirect URI on ports 8080 and 8085.
+  if ((port === 8080 || port === 8085) && res.ok && (await res.json()).issuer === keycloak) {
     oidc.push({ name: 'keycloak', label: 'Keycloak', issuer: keycloak, client_id: 'robinmail', client_secret: 'robinmail-dev-keycloak-client-secret' })
   }
 } catch {

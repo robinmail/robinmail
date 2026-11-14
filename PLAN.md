@@ -1703,12 +1703,16 @@ Built as follows:
     and sessions with two browsers, two-step login set up by reading the
     QR code off the page, and the login through a provider. For that
     `contrib/dev/e2e.sh` starts `contrib/dev/oidc-provider`, the fake
-    provider on a fixed port.
+    provider on a fixed port. `ROBINMAIL_E2E_PORT` moves the tested
+    server off 8080 when a development server is running there.
   - `make keycloak-test`: Keycloak 26.8.2 from
     `contrib/compose/keycloak.yaml` with a realm that has the client and
     two users; a browser logs in through it into the webmail, and a user
     without a mailbox is turned away. Optional: the test skips itself
-    without the container. Both pass (2026-11-14).
+    without the container. Both pass (2026-11-14). The realm's users
+    have fixed ids: Keycloak otherwise makes new ones at every import,
+    and robinmail, which holds an account to the `sub` of its first
+    login, rightly refused the second container's user.
 - **Threats this covers.** A password guessed or phished: TOTP. A
   password stored in a mail client that leaks: it is an app password,
   for one device, with a scope, revocable without touching the others,
@@ -1978,4 +1982,8 @@ Built as follows:
   filter; with Sieve (phase 8) it should pass through the user's rules.
 - The tests of all packages share one rqlite database. Queue rows are now
   purged by the tests that make them, but a `serve` on the development
-  database still works whatever is queued there.
+  database still works whatever is queued there. Seen in phase 7: a
+  development server started during a full test run took the rows of
+  the queue tests ("2 of 12 arrived") in two runs of five. A database
+  for the tests apart from the development one, a third rqlite in the
+  compose file, would end that.
