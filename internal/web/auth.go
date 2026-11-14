@@ -379,12 +379,23 @@ func (s *Server) MailLogin(ctx context.Context, ip, scope, username, secret stri
 	s.init()
 	key, addr, isAddress := limiterKey(username)
 	byAddr, byIP := s.limitMail(key), s.limitIP(ip)
-	done, ok := s.turn(ctx, byIP, byAddr)
+	// A secret in the form of an app password is 160 random bits: it
+	// cannot be guessed, so the limit per address has nothing to protect
+	// there, and it would let anybody close the door for the mail
+	// clients of an address by sending ten wrong secrets for it. Such a
+	// login is limited per client address only. The account password,
+	// which people choose, stays limited per address too.
+	normalized, isApp := users.NormalizeAppPassword(secret)
+	limits := []limit{byIP, byAddr}
+	if isApp {
+		limits = limits[:1]
+	}
+	done, ok := s.turn(ctx, limits...)
 	if !ok {
 		return Credential{}, http.StatusServiceUnavailable, 0
 	}
 	defer done()
-	shared, wait, blocked := s.blocked(ctx, byIP, byAddr)
+	shared, wait, blocked := s.blocked(ctx, limits...)
 	if blocked {
 		return Credential{}, http.StatusTooManyRequests, wait
 	}
@@ -393,13 +404,13 @@ func (s *Server) MailLogin(ctx context.Context, ip, scope, username, secret stri
 		return Credential{}, status, 0
 	}
 	refuse := func(why string) (Credential, int, time.Duration) {
-		s.failed(ctx, byIP, byAddr)
+		s.failed(ctx, limits...)
 		s.event(ctx, EventLoginFailed, acct, key, ip, scope+": "+why)
 		s.Logger.Warn("login failed", "door", scope, "address", key, "ip", ip, "why", why)
 		return Credential{}, http.StatusUnauthorized, 0
 	}
 
-	if normalized, isApp := users.NormalizeAppPassword(secret); isApp {
+	if isApp {
 		// Also for an unknown account, whose id is empty and has none.
 		p, err := s.Accounts.AppPasswordByHash(ctx, acct.ID, users.HashAppPassword(normalized))
 		switch {
@@ -411,7 +422,6 @@ func (s *Server) MailLogin(ctx context.Context, ip, scope, username, secret stri
 		case !p.Allows(scope):
 			return refuse("app password " + strconv.Quote(p.Name) + " is not for this protocol")
 		}
-		s.cleared(ctx, shared, byAddr)
 		s.appPasswordUsed(ctx, acct, p, ip, scope)
 		return Credential{Account: acct, AppPassword: p.ID}, 0, 0
 	}

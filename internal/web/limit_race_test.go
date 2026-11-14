@@ -1,12 +1,16 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mikepage/robinmail/internal/store"
 )
 
 // The limit on wrong passwords for one address holds when the guesses
@@ -88,5 +92,50 @@ func TestLoginRateLimitCountsAnIPv6Prefix(t *testing.T) {
 	// Another /64 is another client.
 	if rec := st.login(tlsBase, "anna@example.test", "a guess", from("[2001:db8:1:3::1]:4000")); rec.Code != http.StatusUnauthorized {
 		t.Errorf("a guess from another /64: %d", rec.Code)
+	}
+}
+
+// Wrong secrets for an address, from anywhere, must not close the door
+// for the mail clients of its owner: an app password is 160 random bits,
+// which nobody guesses, so there is nothing for a limit per address to
+// protect, and a limit that also stops the right app password lets
+// anybody lock a user's phone out for as long as they like.
+func TestAppPasswordLoginIsNotLockedOutByOthers(t *testing.T) {
+	st := newSite(t)
+	const anna = "anna@example.test"
+	_, secret := st.appPassword(st.in(anna, "correct horse"), "correct horse", "Phone")
+	guess := func(ip, secret string) int {
+		_, status, _ := st.s.MailLogin(context.Background(), ip, store.ScopeIMAP, anna, secret)
+		return status
+	}
+	// Somebody else, from several addresses, with wrong secrets of both kinds.
+	for i := 0; i < 3*maxFailsPerAddr; i++ {
+		wrong := fmt.Sprint("a guess ", i)
+		if i%2 == 1 {
+			wrong = "abcd-efgh-ijkl-mnop-qrst-uvwx-yzab-" + fmt.Sprintf("%04d", i)[:4]
+			wrong = strings.NewReplacer("0", "a", "1", "b", "8", "c", "9", "d").Replace(wrong)
+		}
+		if status := guess(fmt.Sprintf("198.51.100.%d", i%7+1), wrong); status != http.StatusUnauthorized && status != http.StatusTooManyRequests {
+			t.Fatalf("guess %d: %d", i, status)
+		}
+	}
+	if status := guess("192.0.2.50", secret); status != 0 {
+		t.Errorf("anna's phone with its app password after the guesses of others: %d", status)
+	}
+	// The account password stays limited per address: it can be guessed.
+	if status := guess("192.0.2.51", "another guess"); status != http.StatusTooManyRequests {
+		t.Errorf("a password guess after %d failures: %d", 3*maxFailsPerAddr, status)
+	}
+	// And app-password-shaped guesses are limited per client address.
+	st2 := newSite(t)
+	n := 0
+	for i := 0; i < maxFailsPerIP+5; i++ {
+		w := strings.NewReplacer("0", "a", "1", "b", "8", "c", "9", "d").Replace(fmt.Sprintf("abcd-efgh-ijkl-mnop-qrst-uvwx-yzab-%04d", i))
+		if _, status, _ := st2.s.MailLogin(context.Background(), "203.0.113.9", store.ScopeIMAP, anna, w); status == http.StatusTooManyRequests {
+			n++
+		}
+	}
+	if n != 5 {
+		t.Errorf("%d of the app password guesses past the limit per address were refused, want 5", n)
 	}
 }
