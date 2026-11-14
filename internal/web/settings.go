@@ -63,6 +63,12 @@ func (s *Server) confirm(w http.ResponseWriter, r *http.Request, u user, passwor
 	}
 	ip := clientIP(r)
 	byAddr, byIP := s.limitWeb(u.acct.Address), s.limitIP(ip)
+	done, ok := s.turn(r.Context(), byIP, byAddr)
+	if !ok {
+		jsonError(w, http.StatusServiceUnavailable, "the server cannot check the password right now")
+		return false
+	}
+	defer done()
 	shared, wait, blocked := s.blocked(r.Context(), byIP, byAddr)
 	if blocked {
 		retryAfter(w, wait)
@@ -340,6 +346,12 @@ func (s *Server) totpConfirm(w http.ResponseWriter, r *http.Request, u user) {
 	}
 	ip := clientIP(r)
 	byCode, byIP := s.limitCode(u.acct.Address), s.limitIP(ip)
+	done, ok := s.turn(r.Context(), byIP, byCode)
+	if !ok {
+		refuseCode(w, http.StatusServiceUnavailable, 0)
+		return
+	}
+	defer done()
 	shared, wait, blocked := s.blocked(r.Context(), byIP, byCode)
 	if blocked {
 		refuseCode(w, http.StatusTooManyRequests, wait)

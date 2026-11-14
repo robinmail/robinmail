@@ -242,6 +242,11 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, acct store.
 // "recovery"), or the status to refuse with.
 func (s *Server) secondFactor(ctx context.Context, acct store.Account, ip, code, recovery string) (used string, status int, wait time.Duration) {
 	byCode, byIP := s.limitCode(acct.Address), s.limitIP(ip)
+	done, ok := s.turn(ctx, byIP, byCode)
+	if !ok {
+		return "", http.StatusServiceUnavailable, 0
+	}
+	defer done()
 	shared, wait, blocked := s.blocked(ctx, byIP, byCode)
 	if blocked {
 		return "", http.StatusTooManyRequests, wait

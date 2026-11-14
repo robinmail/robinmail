@@ -173,6 +173,81 @@ func (s *Server) blocked(ctx context.Context, limits ...limit) (map[string]store
 	return fails, 0, false
 }
 
+// turn makes the attempts under the same limits take turns: the caller
+// holds the keys from asking blocked until it has counted its failure.
+// Without it a burst of guesses that arrive together would all be let in,
+// because none of them has failed yet when the others ask. The limits are
+// always given with the IP first, so two callers never wait for each
+// other. ok is false if the request went away while waiting.
+func (s *Server) turn(ctx context.Context, limits ...limit) (done func(), ok bool) {
+	held := make([]string, 0, len(limits))
+	done = func() {
+		for i := len(held) - 1; i >= 0; i-- {
+			s.turns.unlock(held[i])
+		}
+	}
+	for _, l := range limits {
+		if !s.turns.lock(ctx, l.shared) {
+			done()
+			return func() {}, false
+		}
+		held = append(held, l.shared)
+	}
+	return done, true
+}
+
+// keyLocks is a lock per key. An entry exists while somebody holds or
+// waits for its key.
+type keyLocks struct {
+	mu sync.Mutex
+	m  map[string]*keyLock
+}
+
+type keyLock struct {
+	held chan struct{}
+	refs int
+}
+
+func (k *keyLocks) lock(ctx context.Context, key string) bool {
+	k.mu.Lock()
+	if k.m == nil {
+		k.m = map[string]*keyLock{}
+	}
+	l := k.m[key]
+	if l == nil {
+		l = &keyLock{held: make(chan struct{}, 1)}
+		k.m[key] = l
+	}
+	l.refs++
+	k.mu.Unlock()
+	select {
+	case l.held <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		k.release(key, l)
+		return false
+	}
+}
+
+func (k *keyLocks) unlock(key string) {
+	k.mu.Lock()
+	l := k.m[key]
+	k.mu.Unlock()
+	if l == nil {
+		return
+	}
+	<-l.held
+	k.release(key, l)
+}
+
+func (k *keyLocks) release(key string, l *keyLock) {
+	k.mu.Lock()
+	if l.refs--; l.refs == 0 {
+		delete(k.m, key)
+	}
+	k.mu.Unlock()
+}
+
 // failed counts one failure under each limit.
 func (s *Server) failed(ctx context.Context, limits ...limit) {
 	keys := make([]string, len(limits))
@@ -240,6 +315,11 @@ func (s *Server) passwordLogin(ctx context.Context, ip, username, password strin
 	s.init()
 	key, addr, isAddress := limiterKey(username)
 	byAddr, byIP := s.limitWeb(key), s.limitIP(ip)
+	done, ok := s.turn(ctx, byIP, byAddr)
+	if !ok {
+		return store.Account{}, http.StatusServiceUnavailable, 0
+	}
+	defer done()
 	shared, wait, blocked := s.blocked(ctx, byIP, byAddr)
 	if blocked {
 		return store.Account{}, http.StatusTooManyRequests, wait
@@ -293,6 +373,11 @@ func (s *Server) MailLogin(ctx context.Context, ip, scope, username, secret stri
 	s.init()
 	key, addr, isAddress := limiterKey(username)
 	byAddr, byIP := s.limitMail(key), s.limitIP(ip)
+	done, ok := s.turn(ctx, byIP, byAddr)
+	if !ok {
+		return Credential{}, http.StatusServiceUnavailable, 0
+	}
+	defer done()
 	shared, wait, blocked := s.blocked(ctx, byIP, byAddr)
 	if blocked {
 		return Credential{}, http.StatusTooManyRequests, wait

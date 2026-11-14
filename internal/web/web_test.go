@@ -470,11 +470,17 @@ func TestPasswordCheckBound(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	codes := make([]int, 12)
+	// Twelve accounts: logins for one address take turns (turn), so they
+	// would not show the bound.
+	for i := range codes {
+		st.accounts.accounts[fmt.Sprintf("acct-%d", i)] = &store.Account{ID: fmt.Sprintf("acct-%d", i),
+			Address: fmt.Sprintf("user%d@example.test", i), PasswordHash: "hash:correct horse"}
+	}
 	for i := range codes {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			codes[i] = st.login(tlsBase, "anna@example.test", "correct horse", from(fmt.Sprintf("198.51.100.%d:1", i))).Code
+			codes[i] = st.login(tlsBase, fmt.Sprintf("user%d@example.test", i), "correct horse", from(fmt.Sprintf("198.51.100.%d:1", i))).Code
 		}()
 	}
 	deadline := time.Now().Add(5 * time.Second)

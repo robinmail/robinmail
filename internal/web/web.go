@@ -152,6 +152,7 @@ type Server struct {
 	byMail     *limiter // wrong secrets from mail clients
 	byCode     *limiter // wrong TOTP and recovery codes
 	byIP       *limiter
+	turns      keyLocks // attempts under one limit take turns (turn)
 	usedMu     sync.Mutex
 	used       map[string]time.Time // when the use of an app password was last written
 	hashing    chan struct{}        // bounds password checks running at once
