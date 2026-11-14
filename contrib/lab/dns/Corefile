@@ -1,0 +1,19 @@
+# The only name server the lab's containers know. It answers for .test and
+# for the lab's reverse zone from the files next to it, and refuses
+# everything else: no forwarding, so no name outside the lab resolves.
+test {
+    file /etc/coredns/test.zone
+    log
+    errors
+}
+25.77.10.in-addr.arpa {
+    file /etc/coredns/rev.zone
+    errors
+}
+. {
+    # No such name anywhere else.
+    template ANY ANY {
+        rcode NXDOMAIN
+    }
+    errors
+}

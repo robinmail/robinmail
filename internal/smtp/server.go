@@ -87,6 +87,11 @@ type Server struct {
 	DataTimeout     time.Duration // [10m] for the whole message
 	HandlerTimeout  time.Duration // [2m] for one Rcpt or Deliver call
 	MaxErrors       int           // [10] bad commands before the connection is closed
+	// Trace logs every command line and every reply line, for
+	// development: never the message, and AUTH without its credentials.
+	// A command line logged with more=true came in together with what
+	// follows it, before its reply was written: a pipelining client.
+	Trace bool
 
 	mu       sync.Mutex
 	perIP    map[string]int
@@ -320,6 +325,9 @@ func (s *session) reply(code int, enhanced string, lines ...string) {
 		if max := maxReplyLine - 2 - len(head); len(l) > max {
 			l = l[:max]
 		}
+		if s.srv.Trace {
+			s.log.Info("smtp trace", "side", "server", "dir", "S", "line", head+l)
+		}
 		s.w.WriteString(head + l + "\r\n")
 	}
 }
@@ -379,6 +387,14 @@ func (s *session) serve() {
 		var ne net.Error
 		switch {
 		case err == nil:
+			if s.srv.Trace {
+				shown := line
+				if len(shown) >= 5 && strings.EqualFold(shown[:5], "AUTH ") {
+					mech, _, _ := strings.Cut(shown[5:], " ")
+					shown = "AUTH " + mech + " ..."
+				}
+				s.log.Info("smtp trace", "side", "server", "dir", "C", "line", shown, "more", s.r.Buffered() > 0)
+			}
 			s.command(line)
 		case errors.As(err, &ne) && ne.Timeout() && closed:
 			s.reply(421, "4.3.2", s.srv.Hostname+" Service shutting down, closing transmission channel")

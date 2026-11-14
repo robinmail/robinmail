@@ -5,3 +5,4 @@
 /dev/
 /internal/web/dist/
 /contrib/compose/cluster/secrets/
+/contrib/lab/secrets/

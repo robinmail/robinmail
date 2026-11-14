@@ -108,13 +108,23 @@ type Client struct {
 	broken bool
 	// Sent counts the transactions done on the connection.
 	Sent int
+	// trace, when set, is given every command line sent ("C") and every
+	// reply line received ("S"), never the message.
+	trace func(dir, line string)
 }
 
 // NewClient takes a connection that was just made and reads the greeting.
 // A server that does not want us answers 554 (RFC 5321 3.1); that reply, or
 // any other than 220, comes back as the error.
 func NewClient(conn net.Conn, localName string, t Timeouts) (*Client, error) {
-	c := &Client{LocalName: localName, Timeouts: t.withDefaults(), conn: conn, r: bufio.NewReaderSize(conn, maxReplyLineLen)}
+	return NewClientTrace(conn, localName, t, nil)
+}
+
+// NewClientTrace is NewClient with a function that is given every command
+// line the client sends (dir "C") and every reply line it reads ("S"),
+// the greeting included, but not the message. For development.
+func NewClientTrace(conn net.Conn, localName string, t Timeouts, trace func(dir, line string)) (*Client, error) {
+	c := &Client{LocalName: localName, Timeouts: t.withDefaults(), conn: conn, r: bufio.NewReaderSize(conn, maxReplyLineLen), trace: trace}
 	rep, err := c.read(c.Timeouts.Greeting)
 	if err != nil {
 		c.Close()
@@ -156,6 +166,9 @@ func (c *Client) read(timeout time.Duration) (Reply, error) {
 			return Reply{}, fmt.Errorf("smtp: reading the reply: %w", err)
 		}
 		s := strings.TrimRight(string(line), "\r\n")
+		if c.trace != nil {
+			c.trace("S", s)
+		}
 		if n >= maxReplyLines || len(s) < 3 {
 			c.broken = true
 			return Reply{}, ErrProtocol
@@ -223,6 +236,9 @@ func (c *Client) write(data []byte, timeout time.Duration) error {
 }
 
 func (c *Client) cmd(line string, timeout time.Duration) (Reply, error) {
+	if c.trace != nil {
+		c.trace("C", line)
+	}
 	if err := c.write([]byte(line+"\r\n"), timeout); err != nil {
 		return Reply{}, err
 	}
@@ -445,6 +461,11 @@ func (c *Client) Send(from string, rcpts []string, msg []byte) ([]RcptResult, er
 			b.WriteString("RCPT TO:<" + to[i] + ">\r\n")
 		}
 		b.WriteString("DATA\r\n")
+		if c.trace != nil {
+			for _, l := range strings.Split(strings.TrimSuffix(b.String(), "\r\n"), "\r\n") {
+				c.trace("C", l+" (pipelined)")
+			}
+		}
 		if err = c.write(b.Bytes(), c.Timeouts.Mail); err != nil {
 			return nil, err
 		}
@@ -578,6 +599,9 @@ func (c *Client) Reset() error {
 func (c *Client) Quit() error {
 	if !c.broken {
 		c.conn.SetDeadline(time.Now().Add(10 * time.Second))
+		if c.trace != nil {
+			c.trace("C", "QUIT")
+		}
 		if _, err := c.conn.Write([]byte("QUIT\r\n")); err == nil {
 			c.r.ReadSlice('\n')
 		}

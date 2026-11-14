@@ -10,3 +10,4 @@
 /web/test-results
 /web/playwright-report
 /contrib/compose/cluster/secrets
+/contrib/lab/secrets

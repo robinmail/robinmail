@@ -1,0 +1,70 @@
+; Every name of the lab. The network is 10.77.25.0/24 (compose.yaml).
+$ORIGIN test.
+$TTL 5
+@       IN SOA dns.lab.test. hostmaster.lab.test. 1 3600 600 86400 5
+@       IN NS  dns.lab.test.
+
+; Infrastructure
+dns.lab         IN A 10.77.25.2
+web.lab         IN A 10.77.25.3
+rqlite.lab      IN A 10.77.25.4
+suite.lab       IN A 10.77.25.5
+
+; robinmail
+robin           IN MX  10 mx.robin.test.
+robin           IN TXT "v=spf1 mx -all"
+mx.robin        IN A   10.77.25.10
+_mta-sts.robin  IN TXT "v=STSv1; id=lab1"
+mta-sts.robin   IN A   10.77.25.3
+
+; Postfix: postfix.test refuses unknown users at RCPT, late.postfix.test
+; takes everything and bounces. MTA-STS: enforce.
+postfix             IN MX  10 mx.postfix.test.
+postfix             IN TXT "v=spf1 mx -all"
+late.postfix        IN MX  10 mx.postfix.test.
+under_score.postfix IN MX  10 mx.postfix.test.
+under_score.postfix IN A   10.77.25.11
+mx.postfix          IN A   10.77.25.11
+_mta-sts.postfix    IN TXT "v=STSv1; id=lab1"
+mta-sts.postfix     IN A   10.77.25.3
+
+; Exim: the same pair. MTA-STS: enforce.
+exim                IN MX  10 mx.exim.test.
+exim                IN TXT "v=spf1 mx -all"
+late.exim           IN MX  10 mx.exim.test.
+under_score.exim    IN MX  10 mx.exim.test.
+under_score.exim    IN A   10.77.25.12
+mx.exim             IN A   10.77.25.12
+_mta-sts.exim       IN TXT "v=STSv1; id=lab1"
+mta-sts.exim        IN A   10.77.25.3
+
+; OpenSMTPD: the same pair. MTA-STS: testing.
+opensmtpd               IN MX  10 mx.opensmtpd.test.
+opensmtpd               IN TXT "v=spf1 mx -all"
+late.opensmtpd          IN MX  10 mx.opensmtpd.test.
+under_score.opensmtpd   IN MX  10 mx.opensmtpd.test.
+under_score.opensmtpd   IN A   10.77.25.13
+mx.opensmtpd            IN A   10.77.25.13
+_mta-sts.opensmtpd      IN TXT "v=STSv1; id=lab1"
+mta-sts.opensmtpd       IN A   10.77.25.3
+
+; A Postfix whose certificate is self-signed. badtls.test has no policy
+; (opportunistic TLS delivers), badtls-sts.test has one in mode enforce
+; (nothing may be delivered).
+badtls              IN MX  10 mx.badtls.test.
+badtls-sts          IN MX  10 mx.badtls.test.
+mx.badtls           IN A   10.77.25.14
+_mta-sts.badtls-sts IN TXT "v=STSv1; id=lab1"
+mta-sts.badtls-sts  IN A   10.77.25.3
+
+; A Postfix that offers no STARTTLS. notls.test has no policy (delivered in
+; the clear), notls-sts.test has one in mode enforce (not delivered).
+notls               IN MX  10 mx.notls.test.
+notls-sts           IN MX  10 mx.notls.test.
+mx.notls            IN A   10.77.25.15
+_mta-sts.notls-sts  IN TXT "v=STSv1; id=lab1"
+mta-sts.notls-sts   IN A   10.77.25.3
+
+; A domain whose only mail server is never there.
+down                IN MX  10 mx.down.test.
+mx.down             IN A   10.77.25.99

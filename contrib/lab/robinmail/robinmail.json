@@ -1,0 +1,30 @@
+{
+  "hostname": "mx.robin.test",
+  "data_dir": "/var/lib/robinmail",
+  "master_key_file": "/lab/secrets/master.key",
+  "rqlite": {
+    "url": "http://rqlite.lab.test:4001"
+  },
+  "tls": {
+    "cert_file": "/lab/secrets/mx.robin.test.crt",
+    "key_file": "/lab/secrets/mx.robin.test.key"
+  },
+  "smtp": {
+    "listen": ":25",
+    "max_message_bytes": 2097152,
+    "max_connections": 1000,
+    "max_connections_per_ip": 1000
+  },
+  "web": {
+    "listen": ":443"
+  },
+  "submission": {
+    "listen": ":587",
+    "listen_tls": ":465",
+    "undo_seconds": 0
+  },
+  "dev": {
+    "retry_seconds": 5,
+    "smtp_trace": true
+  }
+}

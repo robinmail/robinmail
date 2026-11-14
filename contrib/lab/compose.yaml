@@ -1,0 +1,149 @@
+# The interoperability lab: robinmail next to three other mail servers, each
+# with a domain of its own, exchanging mail over SMTP as servers on the
+# Internet would, with MX records, STARTTLS and MTA-STS policies.
+#
+#   contrib/lab/lab.sh up      certificates, images, containers, users
+#   make lab-test              up, the tests in internal/labtest, down
+#   contrib/lab/lab.sh down    remove the containers and their volumes
+#
+# Nothing leaves the lab. The network "lab" is internal: its containers
+# have no route to the outside. Their only name server is "dns" (CoreDNS,
+# mounted over /etc/resolv.conf), which answers for .test from
+# dns/test.zone and says "no such name" to everything else. Mail can only
+# go to hosts in that zone.
+#
+#   10.77.25.2   dns         CoreDNS
+#   10.77.25.3   web         nginx: https://mta-sts.<domain>/ and the gate
+#   10.77.25.4   rqlite      robinmail's database
+#   10.77.25.10  robinmail   mx.robin.test      robin.test
+#   10.77.25.11  postfix     mx.postfix.test    postfix.test, late.postfix.test
+#   10.77.25.12  exim        mx.exim.test       exim.test, late.exim.test
+#   10.77.25.13  opensmtpd   mx.opensmtpd.test  opensmtpd.test, late.opensmtpd.test
+#   10.77.25.14  badtls      mx.badtls.test     badtls.test, badtls-sts.test (Postfix, self-signed)
+#   10.77.25.15  notls       mx.notls.test      notls.test, notls-sts.test (Postfix, no STARTTLS)
+#
+# Every peer has the local users alice and bob with a Maildir in their
+# home, where the tests read what arrived, and a sendmail command, with
+# which the tests send. A "late" domain takes any recipient and bounces
+# afterwards.
+#
+# The gate: "web" is also on a second network and passes these ports on
+# 127.0.0.1 on to the lab, for the test harness on the host:
+#
+#   8450  robinmail HTTPS (JMAP, webmail): https://mx.robin.test
+#   2540  robinmail SMTP      2541  Postfix SMTP
+#   2542  Exim SMTP           2543  OpenSMTPD SMTP
+name: robinmail-lab
+
+x-peer: &peer
+  restart: "no"
+  depends_on: [dns]
+
+x-mounts: &mounts
+  - ./secrets:/lab/secrets:ro
+  - ./dns/resolv.conf:/etc/resolv.conf:ro
+
+services:
+  dns:
+    image: coredns/coredns:1.15.0
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes: ["./dns:/etc/coredns:ro"]
+    networks: {lab: {ipv4_address: 10.77.25.2}}
+
+  web:
+    image: nginx:1.30.6-alpine
+    depends_on: [dns]
+    volumes:
+      - ./web/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./web/sts:/lab/sts:ro
+      - ./secrets:/lab/secrets:ro
+    networks:
+      lab: {ipv4_address: 10.77.25.3}
+      gate: {}
+    ports:
+      - "127.0.0.1:8450:8450"
+      - "127.0.0.1:2540:2540"
+      - "127.0.0.1:2541:2541"
+      - "127.0.0.1:2542:2542"
+      - "127.0.0.1:2543:2543"
+
+  rqlite:
+    image: rqlite/rqlite:10.7.1
+    hostname: rqlite
+    networks: {lab: {ipv4_address: 10.77.25.4}}
+
+  robinmail:
+    image: robinmail-lab
+    build:
+      context: ../..
+    depends_on: [dns, rqlite]
+    restart: "no"
+    stop_grace_period: 35s
+    hostname: mx
+    command: ["-config", "/lab/robinmail.json", "serve"]
+    environment:
+      # The lab CA is the only authority robinmail knows here: for the
+      # MTA-STS policies it fetches and the certificates they demand.
+      SSL_CERT_FILE: /lab/secrets/ca.crt
+    volumes:
+      - ./secrets:/lab/secrets:ro
+      - ./dns/resolv.conf:/etc/resolv.conf:ro
+      - ./robinmail/robinmail.json:/lab/robinmail.json:ro
+      - robinmail:/var/lib/robinmail
+    networks: {lab: {ipv4_address: 10.77.25.10}}
+
+  postfix:
+    <<: *peer
+    image: robinmail-lab-postfix
+    build: ./postfix
+    hostname: mx
+    volumes: *mounts
+    networks: {lab: {ipv4_address: 10.77.25.11}}
+
+  exim:
+    <<: *peer
+    image: robinmail-lab-exim
+    build: ./exim
+    hostname: mx
+    volumes: *mounts
+    networks: {lab: {ipv4_address: 10.77.25.12}}
+
+  opensmtpd:
+    <<: *peer
+    image: robinmail-lab-opensmtpd
+    build: ./opensmtpd
+    hostname: mx
+    volumes: *mounts
+    networks: {lab: {ipv4_address: 10.77.25.13}}
+
+  badtls:
+    <<: *peer
+    image: robinmail-lab-postfix
+    hostname: mx
+    environment:
+      LAB_HOST: mx.badtls.test
+      LAB_DOMAINS: "badtls.test, badtls-sts.test"
+    volumes: *mounts
+    networks: {lab: {ipv4_address: 10.77.25.14}}
+
+  notls:
+    <<: *peer
+    image: robinmail-lab-postfix
+    hostname: mx
+    environment:
+      LAB_HOST: mx.notls.test
+      LAB_DOMAINS: "notls.test, notls-sts.test"
+      LAB_TLS: "no"
+    volumes: *mounts
+    networks: {lab: {ipv4_address: 10.77.25.15}}
+
+networks:
+  lab:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.77.25.0/24
+  gate: {}
+
+volumes:
+  robinmail:

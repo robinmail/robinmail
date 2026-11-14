@@ -101,6 +101,7 @@ func (a *app) serve(stop func()) error {
 		MaxRecipients:   a.cfg.SMTP.MaxRecipients,
 		MaxConnections:  a.cfg.SMTP.MaxConnections,
 		MaxConnsPerIP:   a.cfg.SMTP.MaxConnectionsPerIP,
+		Trace:           a.cfg.Dev.SMTPTrace,
 	}
 	l, err := net.Listen("tcp", a.cfg.SMTP.Listen)
 	if err != nil {
@@ -176,6 +177,7 @@ func (a *app) serve(stop func()) error {
 			MaxRecipients:   a.cfg.SMTP.MaxRecipients,
 			MaxConnections:  a.cfg.SMTP.MaxConnections,
 			MaxConnsPerIP:   a.cfg.SMTP.MaxConnectionsPerIP,
+			Trace:           a.cfg.Dev.SMTPTrace,
 		}
 		var plain, implicit net.Addr
 		if addr := a.cfg.Submission.Listen; addr != "" {
@@ -216,6 +218,11 @@ func (a *app) serve(stop func()) error {
 	if worker.NodeID == "" {
 		worker.NodeID = a.cfg.Hostname
 	}
+	if s := a.cfg.Dev.RetrySeconds; s > 0 {
+		log.Warn("dev.retry_seconds is set: the outbound queue does not follow its retry schedule", "seconds", s)
+		worker.Retry = func(int) time.Duration { return time.Duration(s) * time.Second }
+	}
+	worker.Trace = a.cfg.Dev.SMTPTrace
 	if queueSetup != nil {
 		queueSetup(worker)
 	}

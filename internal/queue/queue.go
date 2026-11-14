@@ -100,7 +100,11 @@ type Worker struct {
 	ClaimFor time.Duration
 	MaxAge   time.Duration
 	Now      func() time.Time
-	Logger   *slog.Logger
+	// Retry is how long a message waits after its n-th try [Backoff].
+	Retry func(n int) time.Duration
+	// Trace logs every command and reply of the SMTP client.
+	Trace  bool
+	Logger *slog.Logger
 
 	once sync.Once
 	mu   sync.Mutex
@@ -159,6 +163,13 @@ func (w *Worker) now() time.Time {
 		return w.Now()
 	}
 	return time.Now()
+}
+
+func (w *Worker) retry(n int) time.Duration {
+	if w.Retry != nil {
+		return w.Retry(n)
+	}
+	return Backoff(n)
 }
 
 func (w *Worker) log() *slog.Logger {
@@ -432,7 +443,7 @@ func (w *Worker) work(ctx context.Context, ref store.SubmissionRef) bool {
 			return true
 		}
 	}
-	next := w.now().Add(Backoff(sub.Tries))
+	next := w.now().Add(w.retry(sub.Tries))
 	log.Info("queue: attempt done", "delivered", delivered, "failed", len(failed), "waiting", waiting, "next_try", next.Format(time.RFC3339))
 	w.save(ctx, sub, token, next, log)
 	return true
@@ -470,7 +481,7 @@ func (w *Worker) release(ctx context.Context, sub store.Submission, token string
 	if err != nil {
 		return
 	}
-	w.save(ctx, fresh, token, w.now().Add(Backoff(1)), log)
+	w.save(ctx, fresh, token, w.now().Add(w.retry(1)), log)
 }
 
 // outcome is what an attempt found for one recipient. An empty state
@@ -726,7 +737,13 @@ func (w *Worker) connect(ctx context.Context, hp hostPort, ip net.IP, policy *st
 		if err != nil {
 			return nil, temporary("4.4.1", "connecting to "+hp.host+" ("+ip.String()+") failed: "+netText(err))
 		}
-		c, err := smtp.NewClient(conn, w.Hostname, w.Timeouts)
+		var trace func(dir, line string)
+		if w.Trace {
+			trace = func(dir, line string) {
+				log.Info("smtp trace", "side", "client", "host", hp.host, "remote", ip.String(), "dir", dir, "line", line)
+			}
+		}
+		c, err := smtp.NewClientTrace(conn, w.Hostname, w.Timeouts, trace)
 		if err == nil {
 			err = c.Hello()
 			if err != nil {

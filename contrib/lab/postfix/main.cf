@@ -1,0 +1,53 @@
+# Postfix as a lab peer. entrypoint.sh sets the host name, the domains and
+# the certificate, which differ per container.
+compatibility_level = 3.6
+inet_interfaces = all
+inet_protocols = ipv4
+mynetworks = 127.0.0.0/8
+biff = no
+maillog_file = /dev/stdout
+
+# Mail for local users goes to ~/Maildir, where the tests read it.
+home_mailbox = Maildir/
+mailbox_size_limit = 0
+recipient_delimiter = +
+alias_maps =
+alias_database =
+# A local user with a name outside ASCII (RFC 6531).
+smtputf8_enable = yes
+virtual_alias_maps = texthash:/etc/postfix/virtual
+
+# late.postfix.test: a relay domain without a list of its recipients, so
+# every recipient is accepted. Its mail goes to the local delivery agent,
+# which does not know the user and bounces: the sender gets a notification
+# instead of a 550.
+relay_domains = late.postfix.test
+transport_maps = texthash:/etc/postfix/transport
+
+# 4 MiB for what local users hand in; the SMTP listener takes 1 MiB
+# (master.cf), so robinmail can be offered more than this server accepts.
+message_size_limit = 4194304
+
+# Inbound TLS.
+smtpd_tls_security_level = may
+smtpd_tls_received_header = yes
+smtpd_tls_loglevel = 1
+
+# Outbound TLS: opportunistic, but robin.test only with a certificate that
+# the lab CA signed for the MX host (tls_policy).
+smtp_tls_security_level = may
+smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+smtp_tls_policy_maps = texthash:/etc/postfix/tls_policy
+smtp_tls_loglevel = 1
+
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+# grey@postfix.test is greylisted by postgrey: 450 at first, 250 a few
+# seconds later.
+smtpd_restriction_classes = greylist
+greylist = check_policy_service inet:127.0.0.1:10023
+smtpd_recipient_restrictions = check_recipient_access texthash:/etc/postfix/grey
+
+# Try again soon: the tests do not wait for the usual five minutes.
+queue_run_delay = 5s
+minimal_backoff_time = 5s
+maximal_backoff_time = 10s

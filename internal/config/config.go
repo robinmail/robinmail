@@ -33,6 +33,20 @@ type Config struct {
 	Rspamd        Rspamd     `json:"rspamd"`
 	Submission    Submission `json:"submission"`
 	Outbound      Outbound   `json:"outbound"`
+	Dev           Dev        `json:"dev"`
+}
+
+// Dev holds settings for development and test labs (contrib/lab). None of
+// them belongs in a real installation.
+type Dev struct {
+	// RetrySeconds replaces the retry schedule of the outbound queue (five
+	// minutes, doubling up to four hours) by this fixed wait, so a test
+	// can see a second try without waiting.
+	RetrySeconds int `json:"retry_seconds"`
+	// SMTPTrace logs every SMTP command and reply, of the listeners and
+	// of the outbound client, without message content and without
+	// credentials.
+	SMTPTrace bool `json:"smtp_trace"`
 }
 
 // The domains the server accepts mail for are not in this file: the nodes of
@@ -249,7 +263,7 @@ func Load(path string) (*Config, error) {
 		ten := 10
 		c.Submission.UndoSeconds = &ten
 	}
-	if c.Outbound.Concurrency < 0 || c.Outbound.PerDestination < 0 {
+	if c.Outbound.Concurrency < 0 || c.Outbound.PerDestination < 0 || c.Dev.RetrySeconds < 0 {
 		return nil, errors.New(path + ": limits cannot be negative")
 	}
 	for domain, route := range c.Outbound.Routes {

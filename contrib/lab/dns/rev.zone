@@ -1,0 +1,14 @@
+$ORIGIN 25.77.10.in-addr.arpa.
+$TTL 5
+@   IN SOA dns.lab.test. hostmaster.lab.test. 1 3600 600 86400 5
+@   IN NS  dns.lab.test.
+2   IN PTR dns.lab.test.
+3   IN PTR web.lab.test.
+4   IN PTR rqlite.lab.test.
+5   IN PTR suite.lab.test.
+10  IN PTR mx.robin.test.
+11  IN PTR mx.postfix.test.
+12  IN PTR mx.exim.test.
+13  IN PTR mx.opensmtpd.test.
+14  IN PTR mx.badtls.test.
+15  IN PTR mx.notls.test.
