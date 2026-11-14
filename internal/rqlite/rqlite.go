@@ -120,6 +120,10 @@ func IsUnique(err error) bool {
 // tries again instead.
 var ErrUnknownOutcome = errors.New("the outcome of the write is unknown")
 
+// ErrStale is returned by a Query at level None when the node that was asked
+// has been without a leader for too long to answer from its own copy.
+var ErrStale = errors.New("rqlite: this node's copy is stale")
+
 // Client talks to an rqlite cluster through any of its nodes.
 //
 // A node that is not the leader hands writes, and reads that need the
@@ -404,6 +408,12 @@ func decode(data []byte, want int) ([]Result, outcome, error) {
 		// matters: the batch may still be committed by the next leader.
 		if noLeader([]byte(out.Error)) || strings.Contains(out.Error, "not leader") {
 			return nil, notSent, errors.New(out.Error)
+		}
+		if out.Error == "stale read" {
+			// A read at level none on a node that lost its leader longer
+			// ago than the freshness bound. That is the answer the caller
+			// asked for with this level: it is not worth waiting for.
+			return nil, done, ErrStale
 		}
 		return nil, unknown, errors.New(out.Error)
 	}

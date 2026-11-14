@@ -372,6 +372,18 @@ func TestGivesUp(t *testing.T) {
 	}
 }
 
+// A node without a leader for too long refuses a read at level none; the
+// client reports that at once instead of waiting.
+func TestStaleRead(t *testing.T) {
+	n := newNode(t, status(200, `{"results":[],"error":"stale read"}`))
+	c := cluster(t, n.URL)
+	start := time.Now()
+	_, err := c.Query(context.Background(), None, Stmt("a"))
+	if !errors.Is(err, ErrStale) || n.hits.Load() != 1 || time.Since(start) > time.Second {
+		t.Errorf("err = %v after %d requests and %s", err, n.hits.Load(), time.Since(start))
+	}
+}
+
 // A statement SQLite refused is an answer. It is not sent to another node.
 func TestStatementErrorIsFinal(t *testing.T) {
 	a := newNode(t, status(200, `{"results":[{"error":"UNIQUE constraint failed: t.a"}]}`))
