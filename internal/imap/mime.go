@@ -329,7 +329,7 @@ func (e *entity) writeStructure(b *strings.Builder, ext, utf8ok bool) {
 		typ, sub, params = "text", "plain", nil
 	}
 	if typ == "text" && params["charset"] == "" && !haveHeader(e, "Content-Type") {
-		params = map[string]string{"charset": "us-ascii"} // RFC 2045 5.2
+		params = map[string]string{"charset": "US-ASCII"} // RFC 2045 5.2
 	}
 	b.WriteString(quote(strings.ToUpper(typ), utf8ok))
 	b.WriteByte(' ')

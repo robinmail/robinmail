@@ -96,6 +96,9 @@ func (p *parser) fetchItem() (fetchItem, error) {
 			return it, bad("a BINARY section is a part number")
 		}
 		it.text = strings.ToUpper(p.takeWhile(itemNameChar))
+		if it.text == "" {
+			return it, bad(`"]" is missing`)
+		}
 		switch it.text {
 		case "HEADER", "TEXT":
 		case "MIME":

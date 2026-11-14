@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mikepage/robinmail/internal/message"
 )
 
 // The tests of this package run the server against a store in memory that
@@ -328,10 +330,8 @@ func (s *memStore) Summaries(ctx context.Context, ids []int64) (map[int64]Summar
 			}
 		}
 		if v, ok := e.get("Date"); ok {
-			if t, err := time.Parse(time.RFC1123Z, v); err == nil {
+			if t, ok := message.Date(v); ok {
 				sum.SentAt = t
-			} else {
-				sum.Partial = true
 			}
 		}
 		out[id] = sum
@@ -734,4 +734,11 @@ func wantLines(t *testing.T, what string, got []string, want ...string) {
 	if !equalLines(got, want) {
 		t.Errorf("%s\n got:\n   %s\nwant:\n   %s", what, strings.Join(got, "\n   "), strings.Join(want, "\n   "))
 	}
+}
+
+// addAt is add with an internal date.
+func (s *memStore) addAt(box, raw string, date time.Time, flags ...string) uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.addLocked(s.box(box), []byte(raw), flags, date)
 }
