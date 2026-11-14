@@ -29,6 +29,7 @@ func TestCluster(t *testing.T) {
 	t.Run("c: node with a wiped blob directory catches up", func(t *testing.T) { wipedNode(t, sessions) })
 	t.Run("d: read through a node that lacks the blob", func(t *testing.T) { readWithoutBlob(t, sessions) })
 	t.Run("e: throughput", func(t *testing.T) { throughput(t, sessions) })
+	t.Run("f: sending while a node that holds queue claims is killed", func(t *testing.T) { senderKilled(t, sessions) })
 }
 
 func report(t *testing.T, st *stream, d time.Duration) {
@@ -331,4 +332,192 @@ func throughput(t *testing.T, sessions []session) {
 			verify(t, st, sessions, 0)
 		}
 	}
+}
+
+// (f) Phase 5: mail leaves the cluster for another robinmail (the "sink",
+// with a database and a domain of its own) while one of the three nodes
+// dies with messages in its hands.
+//
+// The other side is frozen first, so that a node which takes a message
+// keeps its claim: it has a connection and waits for the greeting. A user
+// then submits a batch through node 1, all three nodes claim, and node 2
+// is killed. The other side is let go again. What nodes 1 and 3 hold
+// arrives at once; what node 2 held has a claim that nobody renews, runs
+// out after two minutes, and is then taken by a survivor. Every message
+// must arrive, and exactly once. Then the other side answers, and the
+// reply comes back into the cluster through its own queue.
+func senderKilled(t *testing.T, sessions []session) {
+	const victim, count = 1, 60
+	token := fmt.Sprintf("f%d", time.Now().UnixNano())
+	sender := sessions[0]
+	j := newJMAP(0)
+	sink := newSinkJMAP()
+	waitFor(t, sinkService, 60*time.Second, func() bool {
+		code, _, _, err := sink.do("GET", "/auth/session", "", nil)
+		return err == nil && code == 401
+	})
+	receiver := sink.loginAs(t, sinkUser)
+
+	compose(t, "pause", sinkService)
+	paused := true
+	defer func() {
+		if paused {
+			composeErr("unpause", sinkService)
+		}
+	}()
+
+	// 60 messages: for each an Email in Sent and an EmailSubmission.
+	start := time.Now()
+	var submissions []string
+	for first := 0; first < count; first += 15 {
+		var calls []any
+		for i := first; i < first+15; i++ {
+			cid := fmt.Sprintf("m%d", i)
+			calls = append(calls,
+				[]any{"Email/set", map[string]any{"accountId": sender.account, "create": map[string]any{cid: map[string]any{
+					"mailboxIds": map[string]bool{"m3": true},
+					"from":       []any{map[string]any{"name": nil, "email": sender.user}},
+					"to":         []any{map[string]any{"name": nil, "email": sinkUser}},
+					"subject":    fmt.Sprintf("%s message %d", token, i),
+					"textBody":   []any{map[string]any{"partId": "t", "type": "text/plain"}},
+					"bodyValues": map[string]any{"t": map[string]any{"value": fmt.Sprintf("Message %d of %d.", i, count)}},
+				}}}, "e" + cid},
+				[]any{"EmailSubmission/set", map[string]any{"accountId": sender.account,
+					"create": map[string]any{"s" + cid: map[string]any{"identityId": "i1", "emailId": "#" + cid}}}, "s" + cid})
+		}
+		res, err := j.batch(sender.cookie, calls)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k := 1; k < len(res); k += 2 {
+			created, _ := res[k]["created"].(map[string]any)
+			if len(created) != 1 {
+				t.Fatalf("a submission was refused: %v", res[k])
+			}
+			for _, v := range created {
+				submissions = append(submissions, v.(map[string]any)["id"].(string))
+			}
+		}
+	}
+	t.Logf("%d messages for %s submitted through %s in %s, while %s is frozen", len(submissions), sinkUser, robin[0].service,
+		time.Since(start).Round(time.Millisecond), sinkService)
+
+	// Who holds what. A claim names the node in front of the colon.
+	claims := func() map[string]int {
+		out := map[string]int{}
+		for _, row := range rqliteRows(t, "SELECT claimed_by FROM submission WHERE queue = 'active' AND claimed_by <> ''") {
+			node, _, _ := strings.Cut(row[0].(string), ":")
+			out[node]++
+		}
+		return out
+	}
+	victimID := fmt.Sprintf("n%d", victim+1)
+	waitFor(t, "every node to hold claims", 30*time.Second, func() bool {
+		c := claims()
+		return c["n1"] > 0 && c["n2"] > 0 && c["n3"] > 0
+	})
+	held := claims()
+	t.Logf("claims held: %v; killing %s", held, robin[victim].service)
+	compose(t, "kill", robin[victim].service)
+	killed := time.Now()
+	compose(t, "unpause", sinkService)
+	paused = false
+
+	// What the survivors hold arrives now.
+	arrived := func() []string {
+		list, err := sink.subjects(receiver.cookie, receiver.account, token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list
+	}
+	waitFor(t, "the messages of the surviving nodes", 60*time.Second, func() bool { return len(arrived()) >= count-held[victimID] })
+	early := len(arrived())
+	stuck := claims()[victimID]
+	t.Logf("%s after the kill: %d of %d arrived; %d are still claimed by the dead %s",
+		time.Since(killed).Round(time.Millisecond), early, count, stuck, robin[victim].service)
+	if stuck == 0 {
+		t.Errorf("the killed node held no claim any more: the test did not test what it is for")
+	}
+	if early == count {
+		t.Errorf("everything arrived although %s died holding %d claims", robin[victim].service, held[victimID])
+	}
+
+	// The claims of the dead node run out (two minutes) and a survivor
+	// takes the rows.
+	took := waitFor(t, "the messages the dead node held", 4*time.Minute, func() bool { return len(arrived()) >= count })
+	t.Logf("all %d arrived %s after the kill", count, time.Since(killed).Round(time.Second))
+	_ = took
+	// Give a duplicate the chance to show up, then count.
+	time.Sleep(3 * time.Second)
+	seen := map[string]int{}
+	for _, subject := range arrived() {
+		seen[subject]++
+	}
+	lost, doubled := 0, 0
+	for i := 0; i < count; i++ {
+		switch n := seen[fmt.Sprintf("%s message %d", token, i)]; {
+		case n == 0:
+			lost++
+		case n > 1:
+			doubled++
+		}
+	}
+	t.Logf("at %s: %d emails for %d messages; %d lost, %d doubled", sinkUser, len(arrived()), count, lost, doubled)
+	if lost != 0 || doubled != 0 || len(seen) != count {
+		t.Errorf("%d lost, %d doubled, %d different subjects", lost, doubled, len(seen))
+	}
+	// The queue is empty, and JMAP shows every submission as handed over.
+	if left := rqliteRows(t, "SELECT count(*) FROM submission WHERE queue = 'active'"); fmt.Sprint(left[0][0]) != "0" {
+		t.Errorf("%v submissions are still active", left[0][0])
+	}
+	res, err := j.call(sender.cookie, "EmailSubmission/get", map[string]any{"accountId": sender.account, "ids": submissions,
+		"properties": []string{"undoStatus", "deliveryStatus"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, _ := res["list"].([]any)
+	done := 0
+	for _, x := range list {
+		m := x.(map[string]any)
+		st, _ := m["deliveryStatus"].(map[string]any)[sinkUser].(map[string]any)
+		if m["undoStatus"] == "final" && st["delivered"] == "unknown" && strings.HasPrefix(fmt.Sprint(st["smtpReply"]), "250 ") {
+			done++
+		}
+	}
+	t.Logf("EmailSubmission/get through %s: %d of %d are final with a 250 from the other side", robin[0].service, done, len(submissions))
+	if done != count {
+		t.Errorf("%d of %d submissions are done", done, count)
+	}
+	// No bounce was made for mail that arrived.
+	if bounces, _ := j.subjects(sender.cookie, sender.account, "Undelivered Mail"); len(bounces) != 0 {
+		t.Errorf("%d bounces for mail that was delivered", len(bounces))
+	}
+
+	compose(t, "start", robin[victim].service)
+	waitFor(t, robin[victim].service+" to answer again", 60*time.Second, func() bool { return nodeUp(victim) == nil })
+
+	// And back: the other side answers, through its own queue, into the
+	// cluster. Read through the node that was dead.
+	reply, err := sink.batch(receiver.cookie, []any{
+		[]any{"Email/set", map[string]any{"accountId": receiver.account, "create": map[string]any{"r": map[string]any{
+			"mailboxIds": map[string]bool{"m3": true},
+			"from":       []any{map[string]any{"name": nil, "email": sinkUser}},
+			"to":         []any{map[string]any{"name": nil, "email": sender.user}},
+			"subject":    token + " reply from the other side",
+			"textBody":   []any{map[string]any{"partId": "t", "type": "text/plain"}},
+			"bodyValues": map[string]any{"t": map[string]any{"value": "All " + fmt.Sprint(count) + " arrived."}},
+		}}}, "e"},
+		[]any{"EmailSubmission/set", map[string]any{"accountId": receiver.account,
+			"create": map[string]any{"s": map[string]any{"identityId": "i1", "emailId": "#r"}}}, "s"},
+	})
+	if err != nil || reply[1]["created"] == nil {
+		t.Fatalf("the reply was not submitted: %v %v", reply, err)
+	}
+	back := newJMAP(victim)
+	took = waitFor(t, "the reply in the cluster", 60*time.Second, func() bool {
+		list, err := back.subjects(sender.cookie, sender.account, token+" reply")
+		return err == nil && len(list) == 1
+	})
+	t.Logf("the reply from %s is in %s's mailbox, read through %s, after %s", sinkUser, sender.user, robin[victim].service, took.Round(time.Millisecond))
 }

@@ -1,0 +1,26 @@
+{
+  "hostname": "mail.sink.test",
+  "data_dir": "/var/lib/robinmail",
+  "master_key_file": "/etc/robinmail/secrets/master.key",
+  "rqlite": {
+    "url": "http://rqlite-sink:4001"
+  },
+  "tls": {
+    "cert_file": "/etc/robinmail/secrets/sink.crt",
+    "key_file": "/etc/robinmail/secrets/sink.key"
+  },
+  "smtp": {
+    "listen": ":25",
+    "max_connections": 1000,
+    "max_connections_per_ip": 1000
+  },
+  "web": {
+    "listen": ":443"
+  },
+  "submission": {
+    "undo_seconds": 0
+  },
+  "outbound": {
+    "routes": {"cluster.test": "robinmail-1:25"}
+  }
+}

@@ -25,6 +25,7 @@ func queueAccount(t *testing.T, s *Store) (Account, []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { s.PurgeSubmissions(ctx, a.ID) })
 	return a, []string{domain}
 }
 

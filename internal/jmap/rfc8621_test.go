@@ -73,6 +73,8 @@ func newEnv(t *testing.T) *env {
 	e := &env{t: t, st: st, h: &Handler{Store: st, Hostname: "mail.example.test"}, acct: acct, ctx: ctx, local: local,
 		user: User{AccountID: acct.ID, Username: acct.Address}}
 	e.h.Send = e.send
+	// The database outlives the test; its queue should not.
+	t.Cleanup(func() { st.PurgeSubmissions(ctx, acct.ID) })
 	return e
 }
 

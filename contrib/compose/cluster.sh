@@ -4,12 +4,14 @@
 #   cluster.sh up [rspamd]   make the secrets, build the image, start three
 #                            rqlite and three robinmail nodes, wait for them,
 #                            add the domain cluster.test and the users
-#                            user1@cluster.test .. user4@cluster.test
+#                            user1@cluster.test .. user4@cluster.test, and
+#                            start "the other side": robinmail-sink with
+#                            sink@sink.test
 #   cluster.sh down          stop and remove the containers and their volumes
 #   cluster.sh ps|logs ...   passed on to docker compose
 #
-# The secrets (a master key all nodes share and a self-signed certificate
-# for mail.robinmail.test) are made once in contrib/compose/cluster/secrets,
+# The secrets (a master key all nodes share and self-signed certificates
+# for mail.robinmail.test and mail.sink.test) are made once in contrib/compose/cluster/secrets,
 # which git ignores. The users' password is for this local cluster only; set
 # ROBINMAIL_CLUSTER_PASSWORD to use another.
 set -eu
@@ -35,6 +37,12 @@ if [ ! -f "$SECRETS/tls.crt" ]; then
 	(umask 077; openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
 		-subj "/CN=mail.robinmail.test" -addext "subjectAltName=DNS:mail.robinmail.test" \
 		-keyout "$SECRETS/tls.key" -out "$SECRETS/tls.crt" 2>/dev/null)
+fi
+
+if [ ! -f "$SECRETS/sink.crt" ]; then
+	(umask 077; openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
+		-subj "/CN=mail.sink.test" -addext "subjectAltName=DNS:mail.sink.test" \
+		-keyout "$SECRETS/sink.key" -out "$SECRETS/sink.crt" 2>/dev/null)
 fi
 
 PROFILE=
@@ -68,3 +76,19 @@ for u in user1 user2 user3 user4; do
 	robinmail user list | grep -q "^$u@cluster.test" || printf '%s\n' "$PASSWORD" | robinmail user add "$u@cluster.test"
 done
 robinmail node list
+
+# The other side: one robinmail with its own database and the domain
+# sink.test, which the cluster sends to and gets mail from.
+sink() { $COMPOSE exec -T robinmail-sink robinmail -config /etc/robinmail/sink.json "$@"; }
+i=0
+until sink domain list >/dev/null 2>&1; do
+	i=$((i + 1))
+	if [ $i -gt 60 ]; then
+		echo "robinmail-sink did not come up:" >&2
+		$COMPOSE logs --tail 20 robinmail-sink >&2
+		exit 1
+	fi
+	sleep 1
+done
+sink domain list | grep -qx sink.test || sink domain add sink.test
+sink user list | grep -q "^sink@sink.test" || printf '%s\n' "$PASSWORD" | sink user add sink@sink.test

@@ -1,7 +1,8 @@
 // Package clustertest holds the tests that run against the real three-node
 // cluster of contrib/compose/cluster.yaml: three rqlite nodes and three
-// robinmail nodes in Docker. They kill and restart containers, so they only
-// run when asked:
+// robinmail nodes in Docker, and next to them a single robinmail with a
+// database of its own that the cluster exchanges mail with. They kill,
+// freeze and restart containers, so they only run when asked:
 //
 //	make cluster-test
 //

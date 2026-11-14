@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -376,27 +377,42 @@ func (st *stream) counts() (acked, unacked, tempfail, connfail int) {
 
 // jmap talks to one robinmail node over HTTPS under the cluster's hostname.
 type jmap struct {
-	node int
-	hc   *http.Client
+	node    int
+	service string // the container, for messages
+	host    string // the name the server answers to
+	hc      *http.Client
 }
 
-func newJMAP(n int) *jmap {
-	return &jmap{node: n, hc: &http.Client{
+// The other side (cluster.yaml): one robinmail with its own database.
+const (
+	sinkService = "robinmail-sink"
+	sinkHost    = "mail.sink.test"
+	sinkHTTPS   = "127.0.0.1:8444"
+	sinkUser    = "sink@sink.test"
+)
+
+func newJMAP(n int) *jmap { return newJMAPAt(n, robin[n].service, hostname, robin[n].https) }
+
+// newSinkJMAP talks to the robinmail of the other side.
+func newSinkJMAP() *jmap { return newJMAPAt(-1, sinkService, sinkHost, sinkHTTPS) }
+
+func newJMAPAt(n int, service, host, addr string) *jmap {
+	return &jmap{node: n, service: service, host: host, hc: &http.Client{
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
 			// Every node is https://mail.robinmail.test; which one answers
 			// is decided here.
 			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, robin[n].https)
+				return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, addr)
 			},
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true, ServerName: hostname}, // self-signed, local
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true, ServerName: host}, // self-signed, local
 			MaxIdleConnsPerHost: 32,
 		},
 	}}
 }
 
 func (j *jmap) do(method, path, cookie string, body []byte) (int, []byte, http.Header, error) {
-	req, err := http.NewRequest(method, "https://"+hostname+path, bytes.NewReader(body))
+	req, err := http.NewRequest(method, "https://"+j.host+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -423,7 +439,7 @@ func (j *jmap) login(user string) (cookie, account string, err error) {
 		return "", "", err
 	}
 	if code != 200 {
-		return "", "", fmt.Errorf("login %s via %s: %d %s", user, robin[j.node].service, code, data)
+		return "", "", fmt.Errorf("login %s via %s: %d %s", user, j.service, code, data)
 	}
 	var out struct {
 		AccountID string `json:"accountId"`
@@ -440,7 +456,7 @@ func (j *jmap) login(user string) (cookie, account string, err error) {
 // call runs one JMAP method and returns its arguments.
 func (j *jmap) call(cookie, method string, args map[string]any) (map[string]any, error) {
 	body, _ := json.Marshal(map[string]any{
-		"using":       []string{"urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"},
+		"using":       usingAll,
 		"methodCalls": []any{[]any{method, args, "c0"}},
 	})
 	code, data, _, err := j.do("POST", "/jmap/api", cookie, body)
@@ -448,22 +464,113 @@ func (j *jmap) call(cookie, method string, args map[string]any) (map[string]any,
 		return nil, err
 	}
 	if code != 200 {
-		return nil, fmt.Errorf("%s via %s: HTTP %d %s", method, robin[j.node].service, code, data)
+		return nil, fmt.Errorf("%s via %s: HTTP %d %s", method, j.service, code, data)
 	}
 	var out struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil || len(out.MethodResponses) != 1 || len(out.MethodResponses[0]) != 3 {
-		return nil, fmt.Errorf("%s via %s: bad response %s", method, robin[j.node].service, data)
+		return nil, fmt.Errorf("%s via %s: bad response %s", method, j.service, data)
 	}
 	var name string
 	json.Unmarshal(out.MethodResponses[0][0], &name)
 	var res map[string]any
 	json.Unmarshal(out.MethodResponses[0][1], &res)
 	if name != method {
-		return nil, fmt.Errorf("%s via %s: %s %v", method, robin[j.node].service, name, res)
+		return nil, fmt.Errorf("%s via %s: %s %v", method, j.service, name, res)
 	}
 	return res, nil
+}
+
+var usingAll = []string{"urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:submission"}
+
+// batch runs several method calls in one request and returns the
+// arguments of every response, in order. A method error fails it.
+func (j *jmap) batch(cookie string, calls []any) ([]map[string]any, error) {
+	body, _ := json.Marshal(map[string]any{"using": usingAll, "methodCalls": calls})
+	code, data, _, err := j.do("POST", "/jmap/api", cookie, body)
+	if err != nil {
+		return nil, err
+	}
+	if code != 200 {
+		return nil, fmt.Errorf("batch via %s: HTTP %d %s", j.service, code, data)
+	}
+	var out struct {
+		MethodResponses [][]json.RawMessage `json:"methodResponses"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("batch via %s: bad response %s", j.service, data)
+	}
+	var results []map[string]any
+	for _, r := range out.MethodResponses {
+		var name string
+		var res map[string]any
+		json.Unmarshal(r[0], &name)
+		json.Unmarshal(r[1], &res)
+		if name == "error" {
+			return nil, fmt.Errorf("batch via %s: %v", j.service, res)
+		}
+		results = append(results, res)
+	}
+	return results, nil
+}
+
+// subjects returns the subjects of the account's emails that contain the
+// text, one entry per email.
+func (j *jmap) subjects(cookie, account, text string) ([]string, error) {
+	res, err := j.batch(cookie, []any{
+		[]any{"Email/query", map[string]any{"accountId": account, "filter": map[string]any{"subject": text}, "limit": 500}, "q"},
+		[]any{"Email/get", map[string]any{"accountId": account, "properties": []string{"subject"},
+			"#ids": map[string]any{"resultOf": "q", "name": "Email/query", "path": "/ids"}}, "g"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	list, _ := res[1]["list"].([]any)
+	for _, x := range list {
+		subject, _ := x.(map[string]any)["subject"].(string)
+		out = append(out, subject)
+	}
+	return out, nil
+}
+
+// loginAs logs a user in with the cluster password.
+func (j *jmap) loginAs(t testing.TB, user string) session {
+	t.Helper()
+	cookie, account, err := j.login(user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session{user, cookie, account}
+}
+
+// rqliteRows runs a query on the cluster's rqlite and returns the rows.
+func rqliteRows(t testing.TB, sql string) [][]any {
+	t.Helper()
+	var last error
+	for _, addr := range rqliteHTTP {
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http://" + addr + "/db/query?level=weak&q=" + url.QueryEscape(sql))
+		if err != nil {
+			last = err
+			continue
+		}
+		var out struct {
+			Results []struct {
+				Values [][]any `json:"values"`
+				Error  string  `json:"error"`
+			} `json:"results"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		if err != nil || len(out.Results) != 1 || out.Results[0].Error != "" {
+			last = fmt.Errorf("rqlite %s: %v %+v", addr, err, out)
+			continue
+		}
+		return out.Results[0].Values
+	}
+	t.Fatalf("rqlite query failed: %v", last)
+	return nil
 }
 
 type email struct {
@@ -494,7 +601,7 @@ func (j *jmap) emails(cookie, account string) ([]email, error) {
 		}
 		list, _ := res["list"].([]any)
 		if len(list) != n {
-			return nil, fmt.Errorf("Email/get via %s returned %d of %d emails", robin[j.node].service, len(list), n)
+			return nil, fmt.Errorf("Email/get via %s returned %d of %d emails", j.service, len(list), n)
 		}
 		for _, x := range list {
 			m := x.(map[string]any)
@@ -516,7 +623,7 @@ func (j *jmap) download(cookie, account, blob string) ([]byte, error) {
 		return nil, err
 	}
 	if code != 200 {
-		return nil, fmt.Errorf("download %s via %s: HTTP %d %s", blob, robin[j.node].service, code, bytes.TrimSpace(data))
+		return nil, fmt.Errorf("download %s via %s: HTTP %d %s", blob, j.service, code, bytes.TrimSpace(data))
 	}
 	return data, nil
 }

@@ -22,5 +22,11 @@
   },
   "web": {
     "listen": ":443"
+  },
+  "submission": {
+    "undo_seconds": 0
+  },
+  "outbound": {
+    "routes": {"sink.test": "robinmail-sink:25"}
   }
 }

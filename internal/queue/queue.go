@@ -326,11 +326,19 @@ func (w *Worker) work(ctx context.Context, ref store.SubmissionRef) bool {
 
 	msg, err := w.Store.SubmissionMessage(ctx, sub)
 	if err != nil {
-		// The blob may be on another node that is away; the claim runs
-		// out and the row is tried again, here or elsewhere.
+		// The blob may be on another node that is away: the row is tried
+		// again later, here or elsewhere. Only when its time is up is the
+		// message given up, like any other that could not be delivered.
 		log.Error("queue: reading the message failed", "err", err)
-		w.release(ctx, sub, token, log)
-		return true
+		if w.now().Sub(sub.CreatedAt) < w.MaxAge {
+			w.release(ctx, sub, token, log)
+			return true
+		}
+		for i, r := range sub.Recipients {
+			if r.State == store.RcptQueued {
+				w.set(&sub, i, outcome{reply: "the server could not read the message from its own store", status: "4.3.0"})
+			}
+		}
 	}
 
 	// Recipients by where they go: one connection and one transaction per
@@ -359,6 +367,9 @@ func (w *Worker) work(ctx context.Context, ref store.SubmissionRef) bool {
 	for _, domain := range order {
 		if ctx.Err() != nil {
 			return true // shutting down, or the claim is gone
+		}
+		if msg == nil {
+			break // unreadable and out of time: see above
 		}
 		idx := groups[domain]
 		rcpts := make([]string, len(idx))

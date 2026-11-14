@@ -723,3 +723,15 @@ func (s *Store) TrimSTSPolicies(ctx context.Context, before time.Time) (int64, e
 	}
 	return res[0].RowsAffected, nil
 }
+
+// PurgeSubmissions removes every row of an account from the queue, sent or
+// not, without telling anyone. For tests that share a database, so that
+// what they queued is not found by a server started on it later; a real
+// account's queue is never purged.
+func (s *Store) PurgeSubmissions(ctx context.Context, account string) error {
+	_, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM submission WHERE account_id = ?`, account))
+	if err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	return nil
+}

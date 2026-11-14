@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mikepage/robinmail/internal/config"
 	"github.com/mikepage/robinmail/internal/queue"
 	"github.com/mikepage/robinmail/internal/smtp"
 )
@@ -183,7 +184,26 @@ func (in *instance) user(local string) string {
 	in.t.Helper()
 	addr := local + "@" + in.domain
 	in.ok("correct horse\n", "user", "add", addr)
+	// The database outlives the test: what the user still has queued at
+	// the end is removed, so that no server started on it later finds it.
+	in.t.Cleanup(func() { in.purge(addr) })
 	return addr
+}
+
+func (in *instance) purge(addr string) {
+	cfg, err := config.Load(in.cfg)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	a, err := open(ctx, cfg, false)
+	if err != nil {
+		return
+	}
+	if acct, err := a.store.Account(ctx, addr); err == nil {
+		a.store.PurgeSubmissions(ctx, acct.ID)
+	}
 }
 
 // inbox returns the listing of a user's Inbox.

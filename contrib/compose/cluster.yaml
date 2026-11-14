@@ -13,6 +13,13 @@
 #   SMTP             2531  2532  2533
 #   HTTPS (webmail)  8441  8442  8443    https://mail.robinmail.test, self-signed
 #
+# Next to the cluster runs "the other side": robinmail-sink, one robinmail
+# with a database of its own (rqlite-sink) and the domain sink.test, for the
+# test that sends mail out of the cluster and back. Its webmail is on
+# 8444 (https://mail.sink.test). Neither side asks DNS about the other:
+# each has a route for the other's domain (outbound.routes), and the mail
+# never leaves the compose network.
+#
 # The three robinmail nodes answer to the same hostname, as they would behind
 # one DNS name. To open the webmail of node 1 in a browser:
 #
@@ -76,6 +83,17 @@ services:
     volumes: ["./cluster:/etc/robinmail:ro", "blobs-3:/var/lib/robinmail"]
     ports: ["127.0.0.1:2533:25", "127.0.0.1:8443:443"]
 
+  rqlite-sink:
+    image: rqlite/rqlite:10.7.1
+    hostname: rqlite-sink
+  robinmail-sink:
+    <<: *robinmail
+    depends_on: [rqlite-sink]
+    hostname: robinmail-sink
+    command: ["-config", "/etc/robinmail/sink.json", "serve"]
+    volumes: ["./cluster:/etc/robinmail:ro", "blobs-sink:/var/lib/robinmail"]
+    ports: ["127.0.0.1:8444:443"]
+
   rspamd:
     profiles: [rspamd]
     image: rspamd/rspamd:4.3.0
@@ -90,3 +108,4 @@ volumes:
   blobs-1:
   blobs-2:
   blobs-3:
+  blobs-sink:

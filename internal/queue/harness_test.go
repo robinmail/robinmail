@@ -370,6 +370,9 @@ func newWorld(t *testing.T) *world {
 		t.Fatal(err)
 	}
 	x.acct = acct
+	// The database outlives the test: leave no row behind that a server
+	// started on it later would find in its queue.
+	t.Cleanup(func() { x.st.PurgeSubmissions(ctx, acct.ID) })
 	x.local.domains[x.domain] = true
 	x.w = x.worker("n1")
 	return x
