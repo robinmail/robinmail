@@ -5,6 +5,10 @@
   "rqlite": {
     "url": "http://127.0.0.1:4001"
   },
+  "tls": {
+    "cert_file": "tls.crt",
+    "key_file": "tls.key"
+  },
   "smtp": {
     "listen": "127.0.0.1:2525"
   },
@@ -13,6 +17,14 @@
     "dev_origins": [
       "http://localhost:5173"
     ]
+  },
+  "imap": {
+    "listen_tls": "127.0.0.1:1993",
+    "listen": "127.0.0.1:1143"
+  },
+  "submission": {
+    "listen_tls": "127.0.0.1:1465",
+    "listen": "127.0.0.1:1587"
   },
   "outbound": {
     "routes": {

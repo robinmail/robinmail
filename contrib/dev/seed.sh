@@ -7,8 +7,8 @@
 #   contrib/dev/seed.sh
 #   dev/robinmail -config dev/robinmail.json serve
 #
-# Then JMAP is on http://127.0.0.1:8080 and SMTP on 127.0.0.1:2525, without
-# TLS and without Rspamd. Mail sent from it to robinmail.test is delivered
+# Then the webmail and JMAP are on http://127.0.0.1:8080 and SMTP on
+# 127.0.0.1:2525, without Rspamd. Mail sent from it to robinmail.test is delivered
 # in the instance itself. Mail to any other domain goes to Mailpit, a mail
 # catcher from the same compose file: the config routes every domain that
 # is not ours to it ("outbound": {"routes": {"*": "127.0.0.1:1025"}}), and
@@ -20,8 +20,34 @@
 # on http://localhost:5173, live reload) or "make" and run ./robinmail with
 # the same config (see the Makefile). Run this script again any time: it
 # rebuilds the binary and leaves an existing user and their mail alone. An
-# existing dev/robinmail.json is left alone too: one from before Mailpit
-# still routes to the dead port 127.0.0.1:1 until that line is changed.
+# existing dev/robinmail.json is left alone too, with one exception: one
+# from before the IMAP and submission listeners is moved aside and
+# replaced (the script says so). One from before Mailpit still routes to
+# the dead port 127.0.0.1:1 until that line is changed.
+#
+# A mail client (Thunderbird, Apple Mail, mbsync) can use the instance
+# too. IMAP and submission only speak TLS, so this script makes a
+# self-signed certificate once (dev/tls.crt, by contrib/dev/cert.sh; it
+# names localhost, 127.0.0.1 and mail.robinmail.test). Settings:
+#
+#   incoming   IMAP   127.0.0.1   port 1993   SSL/TLS    (or 1143, STARTTLS)
+#   outgoing   SMTP   127.0.0.1   port 1465   SSL/TLS    (or 1587, STARTTLS)
+#   user name  dev@robinmail.test             authentication: normal password
+#
+# The client shows the certificate once and asks whether to trust it:
+# make the exception, for incoming and for outgoing. Thunderbird's
+# automatic set-up finds nothing for robinmail.test; choose "configure
+# manually". Mail the client sends to an outside address lands in Mailpit
+# on http://127.0.0.1:8025, like the webmail's.
+#
+# Which password: the account password below, as long as the account has
+# no app password and no two-step login. That is how seed.sh leaves the
+# dev account, so a client can be set up without opening the webmail. To
+# try app passwords, make one in the webmail under Security (the shield):
+# from then on mail clients are refused the account password ("wrong name
+# or password") and want the app password, and the account password only
+# opens the webmail. Revoking the last app password brings the account
+# password back for mail clients.
 #
 # The user is dev@robinmail.test. A second one, other@robinmail.test, has
 # no mail: it is there to send mail to and to answer from (the end-to-end
@@ -36,6 +62,15 @@ OTHER_ADDRESS=other@robinmail.test
 PASSWORD=${ROBINMAIL_DEV_PASSWORD:-robinmail-dev}
 
 mkdir -p "$DIR"
+contrib/dev/cert.sh "$DIR"
+# A config from before the instance had IMAP and submission listeners is
+# set aside and replaced: it has no "imap" section. Changes made to it by
+# hand are in the copy.
+if [ -f "$DIR/robinmail.json" ] && ! grep -q '"imap"' "$DIR/robinmail.json"; then
+	mv "$DIR/robinmail.json" "$DIR/robinmail.json.before-mail-clients"
+	echo "$DIR/robinmail.json had no IMAP and submission listeners: replaced by contrib/dev/robinmail.dev.json,"
+	echo "the old one is $DIR/robinmail.json.before-mail-clients; restart a running dev server to use the new one"
+fi
 [ -f "$DIR/robinmail.json" ] || cp contrib/dev/robinmail.dev.json "$DIR/robinmail.json"
 go build -o "$DIR/robinmail" ./cmd/robinmail
 robinmail() { "$DIR/robinmail" -config "$DIR/robinmail.json" "$@"; }

@@ -1713,6 +1713,14 @@ Built as follows:
     have fixed ids: Keycloak otherwise makes new ones at every import,
     and robinmail, which holds an account to the `sub` of its first
     login, rightly refused the second container's user.
+- **The development instance takes a mail client.** `seed.sh` makes a
+  self-signed certificate once (`contrib/dev/cert.sh`: localhost,
+  127.0.0.1, mail.robinmail.test) and the dev config has IMAP on
+  127.0.0.1:1993 and :1143 and submission on :1465 and :1587 next to the
+  plain webmail on 8080. The dev account logs in there with its account
+  password until somebody makes it an app password. `cert_file` and
+  `key_file` are now resolved against the config file like the other
+  paths. A dev config from before is moved aside and replaced.
 - **Threats this covers.** A password guessed or phished: TOTP. A
   password stored in a mail client that leaks: it is an app password,
   for one device, with a scope, revocable without touching the others,

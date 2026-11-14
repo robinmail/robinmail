@@ -15,11 +15,16 @@ const keycloak = 'http://127.0.0.1:8180/realms/robinmail'
 const cfg = JSON.parse(readFileSync('dev/robinmail.json', 'utf8'))
 // ROBINMAIL_E2E_PORT moves the instance off the development ports, for
 // when a development server is already running there: the web listener
-// goes to that port and SMTP to the one after it.
+// goes to that port, SMTP to the one after it, and the IMAP and
+// submission listeners are left out.
 const port = Number(process.env.ROBINMAIL_E2E_PORT ?? 8080)
 if (port !== 8080) {
   cfg.web = { ...cfg.web, http_listen: `127.0.0.1:${port}` }
   cfg.smtp = { ...cfg.smtp, listen: `127.0.0.1:${port + 1}` }
+  // The mail client listeners belong to the server that is already
+  // running; the browser tests do not use them.
+  delete cfg.imap
+  delete cfg.submission
 }
 const oidc = [
   { name: 'test', label: 'Test provider', issuer: 'http://127.0.0.1:8090', client_id: 'robinmail', client_secret: 'test-secret-of-the-fake-provider' },

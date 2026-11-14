@@ -30,7 +30,10 @@
 # The Go server listens on http://127.0.0.1:8080 and Vite on
 # http://localhost:5173, which is the one to open: it serves web/src with
 # live reload and passes /jmap, /.well-known/jmap and /auth on to Go. It
-# needs rqlite from contrib/compose, as above.
+# needs rqlite from contrib/compose, as above. The instance also takes a
+# mail client: IMAP on 127.0.0.1:1993 and :1143, submission on :1465 and
+# :1587, with a self-signed certificate (contrib/dev/seed.sh has the
+# settings for Thunderbird).
 #
 # make e2e uses the same instance, but the webmail inside ./robinmail on
 # http://127.0.0.1:8080, with a config of its own (dev/robinmail.e2e.json)

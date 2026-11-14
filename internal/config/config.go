@@ -234,6 +234,9 @@ type Rspamd struct {
 	TimeoutSeconds int  `json:"timeout_seconds"`
 }
 
+// TLS is the certificate of the SMTP, submission, IMAP and HTTPS
+// listeners: a pair of files (a relative path is resolved against the
+// directory of the config file), or ACME.
 type TLS struct {
 	CertFile  string `json:"cert_file"`
 	KeyFile   string `json:"key_file"`
@@ -309,6 +312,13 @@ func Load(path string) (*Config, error) {
 
 	if !c.TLS.ACME && (c.TLS.CertFile == "") != (c.TLS.KeyFile == "") {
 		return nil, errors.New(path + ": tls needs both cert_file and key_file")
+	}
+	// Like the other files the config names, relative to the config file.
+	if c.TLS.CertFile != "" && !filepath.IsAbs(c.TLS.CertFile) {
+		c.TLS.CertFile = filepath.Join(dir, c.TLS.CertFile)
+	}
+	if c.TLS.KeyFile != "" && !filepath.IsAbs(c.TLS.KeyFile) {
+		c.TLS.KeyFile = filepath.Join(dir, c.TLS.KeyFile)
 	}
 	if c.SMTP.Listen == "" {
 		c.SMTP.Listen = ":25"
