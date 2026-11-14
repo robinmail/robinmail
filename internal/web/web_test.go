@@ -833,3 +833,50 @@ func TestAddresses(t *testing.T) {
 		t.Fatalf("store down: %d", rec.Code)
 	}
 }
+
+// /healthz says whether the node can do its work, to whoever asks and
+// under whatever name: a load balancer asks by address. It says "ok" or
+// "unavailable" and never why; what Health answered is reused for a few
+// seconds.
+func TestHealthz(t *testing.T) {
+	st := newSite(t)
+	// Without a Health function there is no such endpoint.
+	if rec := st.do("GET", tlsBase+"/healthz", ""); rec.Code == 200 && rec.Body.String() == "ok\n" {
+		t.Error("/healthz without Health answers ok")
+	}
+	var asked int
+	var failing error
+	st.s.Health = func(context.Context) error { asked++; return failing }
+	for _, base := range []string{tlsBase, plainBase, "https://10.1.2.3", "https://lb.elsewhere.example"} {
+		rec := st.do("GET", base+"/healthz", "")
+		if rec.Code != 200 || rec.Body.String() != "ok\n" || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("%s/healthz: %d %q", base, rec.Code, rec.Body)
+		}
+	}
+	if asked != 1 {
+		t.Errorf("Health was asked %d times for four requests within a second", asked)
+	}
+	// It fails: after the answer has aged, the endpoint says so, without
+	// the reason.
+	failing = errors.New("rqlite: no leader at 10.0.0.5:4001")
+	if rec := st.do("GET", tlsBase+"/healthz", ""); rec.Code != 200 {
+		t.Errorf("within the cache time: %d", rec.Code)
+	}
+	st.clock = st.clock.Add(healthFor + time.Second)
+	rec := st.do("GET", tlsBase+"/healthz", "")
+	if rec.Code != 503 || rec.Body.String() != "unavailable\n" || strings.Contains(rec.Body.String(), "rqlite") {
+		t.Errorf("a failing node: %d %q", rec.Code, rec.Body)
+	}
+	failing = nil
+	st.clock = st.clock.Add(healthFor + time.Second)
+	if rec := st.do("GET", tlsBase+"/healthz", ""); rec.Code != 200 {
+		t.Errorf("after it recovered: %d", rec.Code)
+	}
+	if rec := st.do("POST", tlsBase+"/healthz", "{}"); rec.Code != 405 {
+		t.Errorf("POST: %d", rec.Code)
+	}
+	// Nothing else is served under a foreign name.
+	if rec := st.do("GET", "https://lb.elsewhere.example/auth/config", ""); rec.Code != 421 {
+		t.Errorf("another path under a foreign name: %d", rec.Code)
+	}
+}

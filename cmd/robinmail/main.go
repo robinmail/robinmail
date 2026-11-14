@@ -39,7 +39,17 @@ An <email> is an id (e1).
 
 commands:
   serve                                        run the server until SIGINT or SIGTERM
+  status                                       what the server holds, its queue and nodes, and the checks of "health"
+  health                                       check the database, the master key, the blob directory, the certificate
+                                               and whether the server answers; exit status 1 when one fails
   key generate                                 write a new master key to master_key_file
+  key status                                   list the master keys of the file and how many accounts use each
+  key add                                      add a new master key to the file, accepted and not used yet
+  key rotate <fingerprint>                     make that key the current one and wrap every account's key under it
+  key prune                                    take the keys no account uses out of the file
+  backup <directory>                           write the database and all blob files into a new directory
+  restore <directory>                          load a backup into an empty database and this node's blob directory
+  restore-blobs <directory>                    copy the blob files of a backup that this node lacks (after a failed restore)
   domain add <domain>                          accept mail for a domain
   domain list                                  list the accepted domains
   domain remove <domain>                       stop accepting mail for a domain without users
@@ -49,6 +59,12 @@ commands:
   alias remove <alias> [target]                remove one target of an alias, or the alias
   user add <address>                           create a user (password from the prompt or stdin)
   user list                                    list users
+  user show <address>                          show a user's account: mail, quota, ways in, aliases
+  user remove <address> --yes                  delete a user with all mail; it cannot be undone
+  queue list [count]                           list the outbound messages that still have work (default: 100)
+  queue show <address> <id>                    show one of them with its recipients
+  queue retry <address> <id> | all             try a message, or all that wait, now instead of at their next try
+  queue delete <address> <id>                  give a message up; no bounce is sent
   user quota <address> [<storage> <messages>]  show a user's quota and use, or set the limits: a number of octets
                                                (with K, M or G) and a number of messages; "none" for no limit,
                                                "default" for the default of the config
@@ -63,7 +79,7 @@ commands:
   user sessions <address>                      list a user's web sessions
   user session-revoke <address> <id|all>       end one web session, or all
   user oidc-unlink <address>                   forget the user's subject at the OIDC providers
-  audit [address|all] [count]                  show the newest auth events (default: all, 50)
+  audit [address|all] [count]                  show the newest auth events and what administrators did (default: all, 50)
   mailbox list <address>                       list a user's mailboxes
   mailbox create <address> <path>              create a mailbox
   mailbox rename <address> <mailbox> <name>    rename a mailbox
@@ -80,6 +96,8 @@ commands:
   trim                                         remove change log, delivery keys, sessions and auth events past their time
   sweep                                        remove this node's blob files that no email refers to
   repair                                       fetch the blobs this node lacks from the other nodes
+  scrub                                        check this node's blob files against their hashes; in a cluster
+                                               replace a corrupt one from another node
   node list                                    list the nodes of the cluster
   node remove <id>                             take a stopped node out of the cluster
   reindex [address]                            read stored messages again and refresh the cached columns
@@ -134,7 +152,14 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		a.ctx, a.stdin, a.stdout = ctx, stdin, stdout
 		return a.serve(stop)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	// A command has ten minutes, except those whose time grows with the
+	// mail stored.
+	limit := 10 * time.Minute
+	switch args[0] {
+	case "backup", "restore", "restore-blobs", "scrub", "repair", "reindex":
+		limit = 24 * time.Hour
+	}
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	a, err := open(ctx, cfg, false)
 	if err != nil {
@@ -148,6 +173,38 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 	cmd, args := args[0], args[1:]
 	n := len(args)
 	switch {
+	case cmd == "status" && n == 0:
+		return a.status()
+	case cmd == "health" && n == 0:
+		return a.health()
+	case cmd == "key" && n == 1 && args[0] == "status":
+		return a.keyStatus()
+	case cmd == "key" && n == 1 && args[0] == "add":
+		return a.keyAdd()
+	case cmd == "key" && n == 2 && args[0] == "rotate":
+		return a.keyRotate(args[1])
+	case cmd == "key" && n == 1 && args[0] == "prune":
+		return a.keyPrune()
+	case cmd == "backup" && n == 1:
+		return a.backup(args[0])
+	case cmd == "restore" && n == 1:
+		return a.restore(args[0])
+	case cmd == "restore-blobs" && n == 1:
+		return a.restoreBlobs(args[0])
+	case cmd == "scrub" && n == 0:
+		return a.scrub()
+	case cmd == "user" && n == 2 && args[0] == "show":
+		return a.userShow(args[1])
+	case cmd == "user" && (n == 2 || (n == 3 && args[2] == "--yes")) && args[0] == "remove":
+		return a.userRemove(args[1], n == 3)
+	case cmd == "queue" && (n == 1 || n == 2) && args[0] == "list":
+		return a.queueList(optional(args, 1, "100"))
+	case cmd == "queue" && n == 3 && args[0] == "show":
+		return a.queueShow(args[1], args[2])
+	case cmd == "queue" && ((n == 2 && args[1] == "all") || n == 3) && args[0] == "retry":
+		return a.queueRetry(args[1:])
+	case cmd == "queue" && n == 3 && args[0] == "delete":
+		return a.queueDelete(args[1], args[2])
 	case cmd == "domain" && n == 2 && args[0] == "add":
 		return a.domainAdd(args[1])
 	case cmd == "domain" && n == 1 && args[0] == "list":

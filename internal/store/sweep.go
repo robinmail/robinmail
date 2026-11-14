@@ -143,3 +143,25 @@ func (r blobRefs) Accounts(ctx context.Context) ([]string, error) {
 	}
 	return out, nil
 }
+
+// ScrubBlobs reads every blob file on this node that the database refers
+// to and checks it against its name (VerifyBlob: it decrypts and hashes).
+// In a cluster a file that fails is replaced by a good copy from another
+// node; on a single node it is reported. Every node runs it for its own
+// disk, from time to time.
+func (s *Store) ScrubBlobs(ctx context.Context) (blob.ScrubResult, error) {
+	var res blob.ScrubResult
+	var err error
+	switch b := s.blobs.(type) {
+	case *blob.Replicated:
+		res, err = b.Scrub(ctx, blobRefs{s})
+	case *blob.Local:
+		res, err = b.Scrub(ctx, blobRefs{s}, s.VerifyBlob, nil)
+	default:
+		return res, errors.New("store: this blob store cannot be scrubbed")
+	}
+	if err != nil {
+		return res, fmt.Errorf("store: scrubbing blobs: %w", err)
+	}
+	return res, nil
+}

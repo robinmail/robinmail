@@ -18,6 +18,8 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"github.com/mikepage/robinmail/internal/metrics"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -25,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -104,6 +107,10 @@ type Server struct {
 	// server answers under (mta-sts.<domain>, autoconfig.<domain>), or
 	// nil for a name that is not ours.
 	Hosts func(host string) http.Handler
+	// Health, when set, is asked by GET /healthz: nil means the node can
+	// do its work. The answer is "ok" or "unavailable" and never says why:
+	// the reason is in the log and in "robinmail status".
+	Health func(ctx context.Context) error
 	// Clients, when set, are the settings mail programs are given
 	// (clients.go).
 	Clients *MailClients
@@ -136,6 +143,9 @@ type Server struct {
 	Now func() time.Time
 
 	once       sync.Once
+	healthMu   sync.Mutex
+	healthAt   time.Time
+	healthErr  error
 	static     fs.FS
 	devHosts   map[string]bool
 	byAddress  *limiter // wrong account passwords at the web login
@@ -298,6 +308,14 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w = &countingWriter{ResponseWriter: w}
+		defer w.(*countingWriter).count()
+		// For a load balancer or a monitor, under whatever name or address
+		// it asks: whether this node can do its work, and nothing more.
+		if r.URL.Path == "/healthz" && s.Health != nil {
+			s.healthz(w, r)
+			return
+		}
 		s.securityHeaders(w, r)
 		// Names that are ours for one purpose: the MTA-STS policy host of
 		// a domain, its autoconfig host. They get that and nothing else:
@@ -542,3 +560,74 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 	r2.URL.Path = "/" + name
 	s.fileServer.ServeHTTP(w, r2)
 }
+
+// countingWriter remembers the status of an answer for the request counter.
+type countingWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (c *countingWriter) WriteHeader(status int) {
+	if c.status == 0 {
+		c.status = status
+	}
+	c.ResponseWriter.WriteHeader(status)
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	return c.ResponseWriter.Write(p)
+}
+
+// Flush and Unwrap keep what the event stream and http.ResponseController
+// need.
+func (c *countingWriter) Flush() {
+	if f, ok := c.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (c *countingWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
+func (c *countingWriter) count() {
+	status := c.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	metrics.HTTPRequests.Inc(strconv.Itoa(status/100) + "xx")
+}
+
+// healthz answers GET /healthz. What Health says is remembered for a few
+// seconds, so that asking often costs the database nothing.
+func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.healthMu.Lock()
+	if s.Now().Sub(s.healthAt) > healthFor || s.Now().Before(s.healthAt) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		s.healthErr = s.Health(ctx)
+		cancel()
+		s.healthAt = s.Now()
+		if s.healthErr != nil {
+			s.Logger.Warn("health check failed", "err", s.healthErr)
+		}
+	}
+	err := s.healthErr
+	s.healthMu.Unlock()
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, "unavailable\n")
+		return
+	}
+	io.WriteString(w, "ok\n")
+}
+
+// healthFor is how long an answer of Health is reused.
+const healthFor = 5 * time.Second

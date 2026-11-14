@@ -28,6 +28,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"github.com/mikepage/robinmail/internal/metrics"
 	"log/slog"
 	"net"
 	"sync"
@@ -149,6 +150,7 @@ func (s *Server) Serve(l net.Listener) error {
 			return err
 		}
 		delay = 0
+		metrics.IMAPConnections.Inc()
 		ip := remoteIP(nc)
 		s.mu.Lock()
 		var refuse string

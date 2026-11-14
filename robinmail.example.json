@@ -72,5 +72,12 @@
     "disabled": false,
     "from": "",
     "organization": ""
+  },
+  "metrics": {
+    "listen": "127.0.0.1:9150"
+  },
+  "scrub": {
+    "interval_hours": 168,
+    "disabled": false
   }
 }

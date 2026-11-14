@@ -182,6 +182,7 @@ internal/search      words of a text, search terms, snippets  new
 internal/srs         sender rewriting for forwarded mail (SRS0, SRS1)   new
 internal/sieve       Sieve scripts: parser and interpreter (RFC 5228 and extensions)   new
 internal/tlsrpt      TLS reports (RFC 8460): the JSON, the record, the mail   new
+internal/metrics     counters and gauges in Prometheus' text format           new
 internal/jmap        JMAP core and mail, protocol only  new
 internal/web         HTTPS, login, sessions, settings, OIDC login, static app   new
 internal/totp        HOTP and TOTP (RFC 4226, RFC 6238), otpauth URI    new
@@ -1941,7 +1942,7 @@ Built as follows:
 
 Built in this order, each item committed with its tests: 1 full-text
 search (done), 2 aliases (done), 3 Sieve (done), 4 VacationResponse (done), 5 quotas (done), 6 MTA-STS
-serving and TLS-RPT (done), 7 autoconfig (done), 8 operations, 9 README, 10 lab and
+serving and TLS-RPT (done), 7 autoconfig (done), 8 operations (done), 9 README, 10 lab and
 cluster cases.
 
 Built as follows:
@@ -2502,6 +2503,132 @@ Built as follows:
     the profile and the files cannot say that, the Security page does.
     Ports are those of the listeners: a server behind a port forward
     that changes them announces the wrong ones.
+
+- **Operations.**
+  - **Backup.** `robinmail backup <dir>` writes, into a new directory:
+    `db.sqlite` (rqlite's `/db/backup`: one SQLite file, made by the
+    leader at one point of its log, so all tables are from one moment),
+    `blobs/<account>/<xx>/<sha256>` (the blob files as they are on disk,
+    encrypted; in a cluster a file this node lacks is fetched from
+    another) and, last, `manifest.json` (schema version, counts, the
+    SHA-256 of the database file, the fingerprints of the master keys in
+    use). It runs while the server runs. Every blob file is read back
+    and checked (decrypt, hash) before it counts.
+    - Which blobs: everything the database refers to just before and
+      just after the copy is made, plus the unreferenced files this node
+      still has for those accounts (a destroyed message keeps its file a
+      day). That is everything the copy refers to, except a blob that
+      was stored and dropped again within the seconds around the copy
+      and lies only on another node. Closing that would need the list
+      of references out of the copy itself, which means reading SQLite
+      files, and the standard library cannot. Restore names a message
+      without its blob.
+    - **What a backup protects.** The messages are in the blob files and
+      unreadable without the master key. `db.sqlite` is the database:
+      addresses, subjects, previews, the search index and password
+      hashes are in it in the clear, as in rqlite's own files. The
+      command says so each time.
+  - **Restore.** `robinmail restore <dir>` loads a backup into an empty
+    server: it refuses a database that has a domain or an account. In
+    this order: the manifest (a directory without one is an unfinished
+    backup), the schema (not newer than the binary), **the master key**,
+    the hash of the database file; only then `/db/load`, which replaces
+    the database on every rqlite node through the log; then the schema
+    is migrated if the backup is older, the node table is emptied (it
+    was the old cluster's) and queue claims are released; then the blob
+    files, each checked, into this node's blob directory. Other nodes
+    register when they start and fetch their blobs through the repair
+    pass. `restore-blobs <dir>` copies the blobs again after a restore
+    that failed halfway.
+    - **The master key is not in a backup and restore does not make
+      one.** The key file of the config has to hold the key the accounts
+      of the backup are wrapped under (the manifest has the
+      fingerprints); with another key, or without the file, restore
+      stops before it changes anything. A backup made before a key
+      rotation needs the key of that time.
+  - **Master key rotation.** A key file may hold up to eight keys, one
+    per line: the first wraps new account keys, all of them unwrap.
+    Account keys are wrapped again; blob keys and blob files do not
+    change. The steps, each of which can be stopped and run again:
+    1. `key add`: a new key joins the file, accepted and unused. Copy
+       the file to every node, restart them. Now every node reads both.
+    2. `key rotate <fingerprint>`: that key becomes the first in this
+       node's file, then every account is one statement, `UPDATE account
+       SET blob_key = new WHERE id = ? AND blob_key = old`. Copy the file
+       to every node, restart them, and run it once more: a node that
+       still had the old order made new accounts under the old key.
+    3. `key prune`: reads every account through the log and removes the
+       keys none is wrapped under; it refuses while one is.
+    `key status` shows the keys by fingerprint (16 hex digits derived
+    from the key) and the accounts under each. The file is replaced by
+    write, sync and rename. A node reads its key file at start only.
+    Keys derived from the master key (the SRS hash) are derived from the
+    current one; addresses made under an older key in the file are still
+    read. After `prune`, forwarded mail rewritten under the old key can
+    no longer bounce back through us; that window is the 21 days an SRS
+    address lives.
+  - **Scrub.** `robinmail scrub`, and every node by itself once a week
+    (`scrub {interval_hours, disabled}`, the first time within an hour
+    of the start): every blob file on this disk that the database
+    refers to is decrypted and hashed. A file that fails is fetched
+    again from another node, which verifies before it replaces; without
+    a good copy anywhere the file stays, is named, and is an error in
+    the log every pass. One file after the other, no other pacing.
+    Missing files stay the repair pass's business.
+  - **Health.** `robinmail health` checks the database (a read through
+    the log), the master key against every account, the blob directory
+    (a file written and removed), the certificate file (fails seven days
+    before it ends) and whether the server of this config answers; one
+    line each, exit status 1 when one fails. `robinmail status` adds
+    totals, the queue and the nodes. `GET /healthz` on the web listeners
+    answers `ok` or `503 unavailable` to any host name (a load balancer
+    asks by address), from the database and blob directory checks,
+    remembered for five seconds, without the reason.
+  - **Metrics.** `metrics {listen}` serves `GET /metrics` in Prometheus'
+    text format (`internal/metrics`, our own: counters, gauges, the
+    format). The listener has no login and no TLS and the config refuses
+    an address that is not loopback. Counters: SMTP and IMAP
+    connections, delivered and refused messages, queue attempts and
+    recipients by result, HTTP requests by status class, auth events by
+    event, rqlite requests by outcome, scrub results. Gauges, read from
+    the database at most every ten seconds: accounts, domains, emails
+    and their octets, the queue by state and its oldest message, nodes
+    seen and away, the end of the certificate, healthy.
+  - **Admin commands** that were missing: `queue list|show|retry|delete`
+    (`retry` makes a message, or all, due now; `delete` fails the
+    waiting recipients with "Removed from the queue by the
+    administrator", sends no bounce, and leaves a message alone that a
+    node is working on), `user show`, `user remove <address> --yes` (one
+    batch that deletes every row of the account, takes it out of
+    aliases, and leaves the blob files to the sweep). What an
+    administrator does with keys, backups, the queue and accounts is
+    written to the auth event log, which `audit` shows.
+  - **Tests.** `internal/blob`: the key file with several keys through
+    add, promote, rewrap and prune, with a node whose file is a step
+    behind; scrub with a flipped bit, an emptied file, a peer with a bad
+    copy and a file nobody has. `internal/srs`: addresses of an old key.
+    `internal/rqlite`: backup and load against a stand-in (redirect to
+    the leader, a dead node, rqlite's error answers) and a real backup.
+    `internal/metrics`: the text format line by line. `internal/web`:
+    `/healthz`. `cmd/robinmail`, each on an rqlite container of its own
+    (the shared test database holds accounts under thousands of master
+    keys): `TestKeyRotation` (the three steps with a second node behind,
+    a run cut off after 30 ms, two nodes rotating at once, the old key
+    alone reading nothing afterwards); **`TestBackupRestore` (a backup
+    of a running server restored into a second rqlite and data
+    directory: mailboxes, emails with bodies, threads, identities,
+    quota, filters, vacation and every message's bytes are the same
+    over JMAP, state strings included**; refused with another key,
+    without a manifest, with a changed database file, into a database
+    that is not empty; a backup that lacks a blob); `TestOperations`
+    (health, status, `/healthz`, `/metrics`, the queue commands, user
+    show and remove, a scrub that finds a damaged file).
+  - **Not handled.** No incremental backup and no restore of one
+    account. No backup to anything but a directory. No reload of the key
+    file without a restart. A master key is not kept in a KMS or HSM.
+    `user remove` is one large batch for a large account. The periodic
+    scrub has no rate limit. `/metrics` has no histograms: no latencies.
+    No alerting; `health` is what a monitor calls.
 
 ## Open questions
 

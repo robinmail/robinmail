@@ -170,3 +170,36 @@ func FuzzReverse(f *testing.F) {
 		}
 	})
 }
+
+// A rotation of the master key changes Key. Addresses made under the old
+// key are still out there, in mail that may bounce for days: they are read
+// as long as the old key is in OldKeys, and new ones are made under Key.
+func TestOldKeys(t *testing.T) {
+	old, _ := rewriter()
+	made, _ := old.Forward("user@source.example", "f.example")
+	chained, _ := old.Forward("SRS0=abcd=jd=origin.example=someone@first.example", "f.example")
+
+	now := &Rewriter{Key: []byte("the key after the rotation......"), OldKeys: [][]byte{old.Key}, Now: old.Now}
+	for _, addr := range []string{made, chained} {
+		if _, err := now.Reverse(addr); err != nil {
+			t.Errorf("Reverse(%q) with the old key accepted: %v", addr, err)
+		}
+	}
+	fresh, _ := now.Forward("user@source.example", "f.example")
+	if fresh == made {
+		t.Error("the new key makes the same address as the old one")
+	}
+	if _, err := old.Reverse(fresh); !errors.Is(err, ErrHash) {
+		t.Errorf("the old key reads an address of the new one: %v", err)
+	}
+	// Once the old key is pruned its addresses are forgeries like any other.
+	pruned := &Rewriter{Key: now.Key, Now: old.Now}
+	for _, addr := range []string{made, chained} {
+		if _, err := pruned.Reverse(addr); !errors.Is(err, ErrHash) {
+			t.Errorf("Reverse(%q) without the old key: %v", addr, err)
+		}
+	}
+	if back, err := pruned.Reverse(fresh); err != nil || back != "user@source.example" {
+		t.Errorf("Reverse of a new address: %q %v", back, err)
+	}
+}

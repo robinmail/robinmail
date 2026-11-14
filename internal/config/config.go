@@ -37,8 +37,28 @@ type Config struct {
 	Auth          Auth       `json:"auth"`
 	Quota         Quota      `json:"quota"`
 	MTASTS        MTASTS     `json:"mta_sts"`
+	Metrics       Metrics    `json:"metrics"`
+	Scrub         Scrub      `json:"scrub"`
 	TLSRPT        TLSRPT     `json:"tls_rpt"`
 	Dev           Dev        `json:"dev"`
+}
+
+// Metrics configures the listener that serves /metrics in the text format
+// Prometheus reads. It has no login and no TLS, so it must be on a
+// loopback address; a collector on another machine reaches it through a
+// tunnel or a proxy that adds both.
+type Metrics struct {
+	// Listen is the address, such as "127.0.0.1:9150". Empty: no listener.
+	Listen string `json:"listen"`
+}
+
+// Scrub configures the periodic check of this node's blob files against
+// their hashes ("robinmail scrub" does one by hand).
+type Scrub struct {
+	// IntervalHours is the time between two scrubs. [168: a week]
+	IntervalHours int `json:"interval_hours"`
+	// Disabled turns the periodic scrub off.
+	Disabled bool `json:"disabled"`
 }
 
 // MTASTS is the MTA-STS policy (RFC 8461) robinmail serves for its own
@@ -438,6 +458,19 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Web.Listen != "" && !c.TLS.ACME && c.TLS.CertFile == "" {
 		return nil, errors.New(path + ": web listen needs a certificate (tls); for development use web http_listen")
+	}
+	if c.Metrics.Listen != "" {
+		host, _, err := net.SplitHostPort(c.Metrics.Listen)
+		ip := net.ParseIP(host)
+		if err != nil || !(host == "localhost" || (ip != nil && ip.IsLoopback())) {
+			return nil, fmt.Errorf("%s: metrics listen must be on a loopback address such as 127.0.0.1:9150", path)
+		}
+	}
+	if c.Scrub.IntervalHours < 0 {
+		return nil, errors.New(path + ": scrub: interval_hours cannot be negative")
+	}
+	if c.Scrub.IntervalHours == 0 {
+		c.Scrub.IntervalHours = 168
 	}
 	if c.Web.HTTPListen != "" {
 		host, _, err := net.SplitHostPort(c.Web.HTTPListen)

@@ -64,7 +64,11 @@ const tsAlphabet = "abcdefghijklmnopqrstuvwxyz234567"
 // needs the same Key.
 type Rewriter struct {
 	Key []byte
-	Now func() time.Time // time.Now when nil
+	// OldKeys are keys that addresses were made under before Key replaced
+	// them (a master key rotation). Addresses made under them are still
+	// read until they are too old anyway; new ones are made under Key.
+	OldKeys [][]byte
+	Now     func() time.Time // time.Now when nil
 }
 
 func (r *Rewriter) now() time.Time {
@@ -74,8 +78,23 @@ func (r *Rewriter) now() time.Time {
 	return time.Now()
 }
 
-func (r *Rewriter) hash(parts ...string) string {
-	h := hmac.New(sha256.New, r.Key)
+func (r *Rewriter) hash(parts ...string) string { return hashWith(r.Key, parts...) }
+
+// hashOK reports whether hash is the hash of the parts under the key or
+// one of the old keys.
+func (r *Rewriter) hashOK(hash string, parts ...string) bool {
+	ok := false
+	for _, key := range append([][]byte{r.Key}, r.OldKeys...) {
+		// Every key is tried, so the time taken does not tell which matched.
+		if hmac.Equal([]byte(strings.ToLower(hash)), []byte(hashWith(key, parts...))) {
+			ok = true
+		}
+	}
+	return ok
+}
+
+func hashWith(key []byte, parts ...string) string {
+	h := hmac.New(sha256.New, key)
 	for _, p := range parts {
 		h.Write([]byte(strings.ToLower(p)))
 		h.Write([]byte{0})
@@ -174,7 +193,7 @@ func (r *Rewriter) Reverse(rcpt string) (string, error) {
 		if !found || !found2 || first == "" || rest == "" {
 			return "", ErrNotSRS
 		}
-		if !hmac.Equal([]byte(strings.ToLower(hash)), []byte(r.hash(first, rest))) {
+		if !r.hashOK(hash, first, rest) {
 			return "", ErrHash
 		}
 		return "SRS0=" + rest + "@" + first, nil
@@ -184,7 +203,7 @@ func (r *Rewriter) Reverse(rcpt string) (string, error) {
 		return "", ErrNotSRS
 	}
 	hash, ts, host, user := parts[0], parts[1], parts[2], parts[3]
-	if !hmac.Equal([]byte(strings.ToLower(hash)), []byte(r.hash(ts, host, user))) {
+	if !r.hashOK(hash, ts, host, user) {
 		return "", ErrHash
 	}
 	day, ok := parseTimestamp(ts)

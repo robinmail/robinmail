@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -489,5 +490,95 @@ func TestReplicatedConcurrentPuts(t *testing.T) {
 	}
 	if len(acked) != 64 {
 		t.Errorf("%d of 64 writes acknowledged with two nodes always up", len(acked))
+	}
+}
+
+// Scrub reads the files the database refers to and replaces what no
+// longer is the blob its name says with a good copy from another node.
+func TestScrub(t *testing.T) {
+	ctx := context.Background()
+	r, peers := group(t, 3)
+	const account = "acct"
+	cat := catalog{account: {}}
+	var keys []string
+	for i := 0; i < 5; i++ {
+		key, data := sealed(t, "content "+strconv.Itoa(i))
+		if err := r.Put(ctx, key, bytes.NewReader(data)); err != nil {
+			t.Fatal(err)
+		}
+		cat[account][key[len(account)+1:]] = true
+		keys = append(keys, key)
+	}
+	r.Wait()
+	res, err := r.Scrub(ctx, cat)
+	if err != nil || res.Checked != 5 || res.Corrupt != 0 || res.Repaired != 0 || res.Bad != nil {
+		t.Fatalf("a clean disk: %+v %v", res, err)
+	}
+
+	damage := func(key string) {
+		t.Helper()
+		path, _ := r.Local.Path(key)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data[len(data)/2] ^= 0x01 // one bit, as a disk does
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One flipped bit and one emptied file: both are found and fetched
+	// again from a peer.
+	damage(keys[1])
+	path, _ := r.Local.Path(keys[3])
+	os.WriteFile(path, nil, 0o600)
+	// A file that is corrupt and unreferenced is nobody's concern.
+	stray, data := sealed(t, "unreferenced")
+	r.Local.Put(ctx, stray, bytes.NewReader(data[:len(data)-3]))
+	// And one the disk lacks is Repair's.
+	missing, _ := r.Local.Path(keys[4])
+	os.Remove(missing)
+
+	res, err = r.Scrub(ctx, cat)
+	if err != nil || res.Checked != 4 || res.Corrupt != 2 || res.Repaired != 2 || len(res.Bad) != 0 {
+		t.Fatalf("after damage: %+v %v", res, err)
+	}
+	for _, key := range []string{keys[1], keys[3]} {
+		f, err := r.Local.Get(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := verifier(ctx, key, f); err != nil {
+			t.Errorf("%s after the scrub: %v", key, err)
+		}
+		f.Close()
+	}
+
+	// A file no node has a good copy of stays and is named, every time.
+	damage(keys[0])
+	for _, p := range peers {
+		p.local.Delete(ctx, keys[0])
+	}
+	for i := 0; i < 2; i++ {
+		res, err = r.Scrub(ctx, cat)
+		if err == nil || res.Corrupt != 1 || res.Repaired != 0 || len(res.Bad) != 1 || res.Bad[0] != keys[0] {
+			t.Fatalf("an unrepairable file, run %d: %+v %v", i, res, err)
+		}
+	}
+	if !r.Local.Has(keys[0]) {
+		t.Error("the corrupt file was removed: it is the only copy there is")
+	}
+
+	// A single node has nobody to ask.
+	res, err = r.Local.Scrub(ctx, cat, verifier, nil)
+	if err == nil || res.Corrupt != 1 || res.Repaired != 0 {
+		t.Errorf("without peers: %+v %v", res, err)
+	}
+	// A peer that itself has a bad copy is passed over.
+	damage(keys[2])
+	peers[0].garbage.Store(true)
+	res, _ = r.Scrub(ctx, cat)
+	if res.Repaired != 1 {
+		t.Errorf("with one bad peer: %+v", res)
 	}
 }

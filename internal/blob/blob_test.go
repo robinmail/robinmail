@@ -363,3 +363,153 @@ func TestMasterKey(t *testing.T) {
 		t.Error("accepted a 16-byte master key")
 	}
 }
+
+// A key file with several keys: the first wraps, all unwrap. That is what
+// lets the master key be replaced while servers run (key add, rotate,
+// prune).
+func TestMasterKeyRotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "master.key")
+	if err := GenerateMasterKeyFile(path); err != nil {
+		t.Fatal(err)
+	}
+	old, err := LoadMasterKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldFP := old.Fingerprints()[0]
+	key, wrapped, _ := old.NewAccountKey("acct")
+	if fp, err := old.WrappedBy("acct", wrapped); err != nil || fp != oldFP {
+		t.Fatalf("WrappedBy: %q %v", fp, err)
+	}
+	if len(oldFP) != 16 || strings.Contains(oldFP, keyEncoding.EncodeToString(old.keys[0].raw)[:8]) {
+		t.Errorf("fingerprint %q", oldFP)
+	}
+
+	// key add: the new key is accepted and not used.
+	raw, err := NewRandomKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	both, err := old.With(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := both.WriteFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode of the rewritten file: %v", fi.Mode().Perm())
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".master-key-*")); len(left) != 0 {
+		t.Errorf("temporary files left: %v", left)
+	}
+	both, err = LoadMasterKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fps := both.Fingerprints()
+	if len(fps) != 2 || fps[0] != oldFP || fps[1] == oldFP {
+		t.Fatalf("fingerprints after add: %v", fps)
+	}
+	newFP := fps[1]
+	if _, w, _ := both.NewAccountKey("x"); mustFP(t, both, "x", w) != oldFP {
+		t.Error("a key that was only added wraps new accounts")
+	}
+	if _, changed, err := both.Rewrap("acct", wrapped); err != nil || changed {
+		t.Errorf("Rewrap under the current key: changed %v, %v", changed, err)
+	}
+
+	// key rotate: the new key is current; the account key is the same
+	// key, wrapped again.
+	rotated, err := both.Promote(newFP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rotated.Fingerprints(); got[0] != newFP || got[1] != oldFP {
+		t.Fatalf("fingerprints after promote: %v", got)
+	}
+	rewrapped, changed, err := rotated.Rewrap("acct", wrapped)
+	if err != nil || !changed || rewrapped == wrapped {
+		t.Fatalf("Rewrap: changed %v, %v", changed, err)
+	}
+	if got, err := rotated.Unwrap("acct", rewrapped); err != nil || !bytes.Equal(got, key) {
+		t.Errorf("the rewrapped key is another key: %v", err)
+	}
+	if mustFP(t, rotated, "acct", rewrapped) != newFP {
+		t.Error("the rewrapped key is not under the new master key")
+	}
+	// A node that still has the old order reads both forms.
+	for _, w := range []string{wrapped, rewrapped} {
+		if got, err := both.Unwrap("acct", w); err != nil || !bytes.Equal(got, key) {
+			t.Errorf("a node with the old order: %v", err)
+		}
+	}
+	// A node with the old key alone reads the old form only.
+	if _, err := old.Unwrap("acct", rewrapped); err == nil {
+		t.Error("the old key unwraps what the new one wrapped")
+	}
+	if _, _, err := rotated.Rewrap("other", rewrapped); err == nil {
+		t.Error("Rewrap for another account")
+	}
+
+	// key prune: only the new key; the old form is unreadable from then.
+	pruned, err := rotated.Only(map[string]bool{newFP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pruned.Unwrap("acct", wrapped); err == nil {
+		t.Error("a pruned key still unwraps")
+	}
+	if got, err := pruned.Unwrap("acct", rewrapped); err != nil || !bytes.Equal(got, key) {
+		t.Errorf("after prune: %v", err)
+	}
+	if _, err := rotated.Only(map[string]bool{oldFP: true}); err == nil {
+		t.Error("dropped the current key")
+	}
+	if _, err := rotated.Promote("0000000000000000"); err == nil {
+		t.Error("promoted a key that is not there")
+	}
+	if _, err := both.With(raw); err == nil {
+		t.Error("the same key twice")
+	}
+
+	// Derived keys follow the current key; the older ones stay available.
+	if bytes.Equal(old.Derive("x", 32), rotated.Derive("x", 32)) || !bytes.Equal(rotated.DeriveAll("x", 32)[1], old.Derive("x", 32)) ||
+		bytes.Equal(rotated.Derive("x", 32), rotated.Derive("y", 32)) {
+		t.Error("derived keys")
+	}
+
+	// WriteFile changes a file, it does not make one; a file with too
+	// many keys or a broken line is refused as a whole.
+	if err := rotated.WriteFile(filepath.Join(dir, "absent.key")); err == nil {
+		t.Error("WriteFile made a key file")
+	}
+	many := old
+	for i := 0; i < MaxMasterKeys; i++ {
+		r, _ := NewRandomKey()
+		if next, err := many.With(r); err == nil {
+			many = next
+		} else if i != MaxMasterKeys-1 {
+			t.Errorf("key %d: %v", i+2, err)
+		}
+	}
+	if len(many.Fingerprints()) != MaxMasterKeys {
+		t.Errorf("%d keys", len(many.Fingerprints()))
+	}
+	good, _ := os.ReadFile(path)
+	bad := filepath.Join(dir, "bad.key")
+	os.WriteFile(bad, append(good, []byte("not a key\n")...), 0o600)
+	if _, err := LoadMasterKey(bad); err == nil {
+		t.Error("loaded a key file with a broken line")
+	}
+}
+
+func mustFP(t *testing.T, m *MasterKey, account, wrapped string) string {
+	t.Helper()
+	fp, err := m.WrappedBy(account, wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fp
+}

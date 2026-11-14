@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/mikepage/robinmail/internal/metrics"
 	"io"
 	"log/slog"
 	"math"
@@ -189,6 +190,7 @@ func (s *Server) Serve(l net.Listener) error {
 			}
 			return err
 		}
+		metrics.SMTPConnections.Inc()
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()

@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
+	"github.com/mikepage/robinmail/internal/metrics"
 	"log/slog"
 	"net"
 	"net/http"
@@ -449,6 +450,10 @@ func (w *Worker) work(ctx context.Context, ref store.SubmissionRef) bool {
 		}
 	}
 	next := w.now().Add(w.retry(sub.Tries))
+	metrics.QueueAttempts.Inc()
+	metrics.QueueRecipients.Add(float64(delivered), "delivered")
+	metrics.QueueRecipients.Add(float64(len(failed)), "failed")
+	metrics.QueueRecipients.Add(float64(waiting), "deferred")
 	log.Info("queue: attempt done", "delivered", delivered, "failed", len(failed), "waiting", waiting, "next_try", next.Format(time.RFC3339))
 	w.save(ctx, sub, token, next, log)
 	return true

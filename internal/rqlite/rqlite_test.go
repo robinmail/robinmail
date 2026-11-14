@@ -1,6 +1,7 @@
 package rqlite
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -400,5 +401,97 @@ func TestStatementErrorIsFinal(t *testing.T) {
 		if _, err := c.Query(context.Background(), Weak, Stmt("a")); err == nil || a.hits.Load() < 2 || b.hits.Load() != 0 {
 			t.Errorf("HTTP %d: err = %v, second node asked %d times", code, err, b.hits.Load())
 		}
+	}
+}
+
+// Backup and Load against a stand-in for rqlite's /db/backup and /db/load:
+// the body is passed through whole, a follower's redirect to the leader is
+// followed with the method and the body kept, and a node that is away is
+// passed over.
+func TestBackupAndLoad(t *testing.T) {
+	database := bytes.Repeat([]byte("SQLite format 3\x00 and the rest of a database. "), 5000)
+	var loaded []byte
+	var loadType string
+	leader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/db/backup":
+			w.Write(database)
+		case r.Method == http.MethodPost && r.URL.Path == "/db/load":
+			loadType = r.Header.Get("Content-Type")
+			loaded, _ = io.ReadAll(r.Body)
+			if int64(len(loaded)) != r.ContentLength {
+				t.Errorf("load: %d bytes with Content-Length %d", len(loaded), r.ContentLength)
+			}
+			io.WriteString(w, `{"results":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer leader.Close()
+	follower := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, leader.URL+r.URL.Path, http.StatusMovedPermanently)
+	}))
+	defer follower.Close()
+	dead := httptest.NewServer(nil)
+	dead.Close()
+
+	c, err := NewCluster([]string{dead.URL, follower.URL}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
+	if err := c.Backup(context.Background(), &got); err != nil || !bytes.Equal(got.Bytes(), database) {
+		t.Fatalf("Backup: %d bytes, %v", got.Len(), err)
+	}
+	if err := c.Load(context.Background(), bytes.NewReader(database)); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !bytes.Equal(loaded, database) || loadType != "application/octet-stream" {
+		t.Errorf("Load sent %d bytes as %q", len(loaded), loadType)
+	}
+
+	// What rqlite answers when it could not load, and a node that fails.
+	for name, answer := range map[string]func(w http.ResponseWriter){
+		"an error member": func(w http.ResponseWriter) { io.WriteString(w, `{"error":"file is not a database"}`) },
+		"a failed result": func(w http.ResponseWriter) { io.WriteString(w, `{"results":[{"error":"disk I/O error"}]}`) },
+		"not JSON":        func(w http.ResponseWriter) { io.WriteString(w, `<html>`) },
+		"a server error":  func(w http.ResponseWriter) { http.Error(w, "boom", http.StatusInternalServerError) },
+		"a redirect loop": func(w http.ResponseWriter) { w.Header().Set("Location", "/db/load"); w.WriteHeader(http.StatusFound) },
+		"a bare redirect": func(w http.ResponseWriter) { w.WriteHeader(http.StatusFound) },
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { answer(w) }))
+		c, _ := New(srv.URL, nil)
+		if err := c.Load(context.Background(), bytes.NewReader(database)); err == nil {
+			t.Errorf("Load with %s: no error", name)
+		}
+		if name == "a server error" {
+			if err := c.Backup(context.Background(), io.Discard); err == nil {
+				t.Errorf("Backup with %s: no error", name)
+			}
+		}
+		srv.Close()
+	}
+}
+
+// Backup and Load on a real rqlite: what Load puts in is what Backup gives.
+// It runs on a database of its own table name and leaves the rest alone:
+// only Backup is used against the shared database.
+func TestBackupReal(t *testing.T) {
+	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
+	if base == "" {
+		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
+	}
+	c, err := New(base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
+	if err := c.Backup(context.Background(), &got); err != nil {
+		t.Fatal(err)
+	}
+	// "SQLite format 3\000" starts every database file (SQLite's file
+	// format, section 1.3).
+	if !bytes.HasPrefix(got.Bytes(), []byte("SQLite format 3\x00")) || got.Len() < 4096 {
+		t.Errorf("the backup is %d bytes and starts %q", got.Len(), got.Bytes()[:min(got.Len(), 16)])
 	}
 }

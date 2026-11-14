@@ -33,6 +33,8 @@ var (
 	onListen     func(net.Addr)
 	onWebListen  func(net.Addr)
 	onNodeListen func(net.Addr)
+	// onMetricsListen is told the address of the metrics listener.
+	onMetricsListen func(net.Addr)
 	// onSubmissionListen is told the STARTTLS and the implicit TLS
 	// submission listener, each nil without one.
 	onSubmissionListen func(starttls, implicit net.Addr)
@@ -78,7 +80,10 @@ func (a *app) serve(stop func()) error {
 	}
 	d.Submissions = a.store
 	d.Aliases, d.Forwards = a.store, a.store
-	d.SRS = &srs.Rewriter{Key: a.master.Derive("robinmail srs", 32)}
+	// Under the current master key; addresses made under a key that was
+	// replaced since are still read.
+	srsKeys := a.master.DeriveAll("robinmail srs", 32)
+	d.SRS = &srs.Rewriter{Key: srsKeys[0], OldKeys: srsKeys[1:]}
 	sender := &delivery.Submitter{
 		Hostname:        a.cfg.Hostname,
 		Store:           a.store,
@@ -153,6 +158,7 @@ func (a *app) serve(stop func()) error {
 		RequireAppPasswords: a.cfg.Auth.RequireAppPasswords,
 		SendAs:              a.store.SendAddresses,
 		Clients:             clients,
+		Health:              a.healthy,
 		Hosts:               extraHosts(a.cfg, domainNames, clients.AutoconfigHost),
 		JMAP: &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store),
 			SendAs: a.store.SendAddresses, Push: hub, Closing: a.ctx.Done()},
@@ -375,6 +381,30 @@ func (a *app) serve(stop func()) error {
 			go a.node.Run(a.ctx)
 			repairLoop(a.ctx, a.store, log, interval)
 		}()
+	}
+
+	// The metrics, for a collector on this machine.
+	if a.cfg.Metrics.Listen != "" {
+		ml, err := net.Listen("tcp", a.cfg.Metrics.Listen)
+		if err != nil {
+			return errors.New("metrics: " + err.Error())
+		}
+		metricsServer := &http.Server{Handler: a.metricsHandler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second}
+		log.Info("metrics listening", "addr", ml.Addr().String())
+		if onMetricsListen != nil {
+			onMetricsListen(ml.Addr())
+		}
+		go metricsServer.Serve(ml)
+		go func() {
+			<-a.ctx.Done()
+			metricsServer.Close()
+		}()
+	}
+
+	// Every node scrubs its own disk, a week apart by default, the first
+	// time within the first hour.
+	if !a.cfg.Scrub.Disabled {
+		go scrubLoop(a.ctx, a.store, log, rand.N(time.Hour), time.Duration(a.cfg.Scrub.IntervalHours)*time.Hour)
 	}
 
 	// Every node trims. The first run comes at a random moment so the nodes

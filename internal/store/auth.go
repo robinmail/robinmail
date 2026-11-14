@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/mikepage/robinmail/internal/metrics"
 	"strings"
 	"time"
 
@@ -401,6 +402,7 @@ func cut(s string, max int) string {
 
 // AddAuthEvent appends to the log of auth events. At is set to now.
 func (s *Store) AddAuthEvent(ctx context.Context, e AuthEvent) error {
+	metrics.AuthEvents.Inc(e.Event)
 	_, err := s.db.Execute(ctx, rqlite.Stmt(
 		`INSERT INTO auth_event (at, account_id, address, event, ip, detail) VALUES (?, ?, ?, ?, ?, ?)`,
 		s.Now().Unix(), e.AccountID, cut(e.Address, maxEventAddress), e.Event, cut(e.IP, 64), cut(e.Detail, maxEventDetail)))

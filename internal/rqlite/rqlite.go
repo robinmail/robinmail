@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/mikepage/robinmail/internal/metrics"
 	"io"
 	"net"
 	"net/http"
@@ -289,6 +290,14 @@ func (c *Client) do(ctx context.Context, query string, stmts []Statement, m mode
 		target.Path = strings.TrimSuffix(target.Path, "/") + "/db/request"
 		target.RawQuery = query
 		results, out, err := c.attempt(ctx, &target, body, len(stmts))
+		switch {
+		case out != done:
+			metrics.DBRequests.Inc("failed")
+		case err != nil:
+			metrics.DBRequests.Inc("error")
+		default:
+			metrics.DBRequests.Inc("ok")
+		}
 		if out == done {
 			if failed > 0 || node != c.preferred() {
 				c.mu.Lock()
@@ -466,4 +475,125 @@ func clip(b []byte) string {
 		s = s[:300]
 	}
 	return strings.ToValidUTF8(s, "")
+}
+
+// stream is the client for Backup and Load: the same transport without the
+// per-request timeout, which a large database would outlive.
+func (c *Client) stream() *http.Client {
+	return &http.Client{Transport: c.client.Transport, CheckRedirect: c.client.CheckRedirect}
+}
+
+// transfer sends one request to /db/<path> on the nodes in turn, following
+// a redirect to the leader, and hands the first 200 answer to use.
+func (c *Client) transfer(ctx context.Context, method, path, contentType string, body func() (io.Reader, int64, error), use func(io.Reader) error) error {
+	var lastErr error
+	start := c.preferred()
+	for i := range c.nodes {
+		target := *c.nodes[(start+i)%len(c.nodes)]
+		target.Path = strings.TrimSuffix(target.Path, "/") + path
+		for hop := 0; hop <= maxRedirects; hop++ {
+			var rd io.Reader
+			var size int64
+			if body != nil {
+				var err error
+				if rd, size, err = body(); err != nil {
+					return fmt.Errorf("rqlite: %w", err)
+				}
+			}
+			req, err := http.NewRequestWithContext(ctx, method, target.String(), rd)
+			if err != nil {
+				return fmt.Errorf("rqlite: %w", err)
+			}
+			if body != nil {
+				req.ContentLength = size
+				req.Header.Set("Content-Type", contentType)
+			}
+			resp, err := c.stream().Do(req)
+			if err != nil {
+				lastErr = redact(err)
+				break
+			}
+			switch resp.StatusCode {
+			case http.StatusOK:
+				err := use(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					return fmt.Errorf("rqlite: %w", err)
+				}
+				return nil
+			case http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+				loc := resp.Header.Get("Location")
+				resp.Body.Close()
+				next, err := target.Parse(loc)
+				if err != nil || loc == "" || (next.Scheme != "http" && next.Scheme != "https") {
+					lastErr = fmt.Errorf("HTTP %d without a usable Location", resp.StatusCode)
+					hop = maxRedirects
+					continue
+				}
+				if next.User == nil {
+					next.User = target.User
+				}
+				target = *next
+				continue
+			}
+			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, clip(data))
+			break
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return fmt.Errorf("rqlite: %s %s: %w", method, path, lastErr)
+}
+
+// Backup writes a copy of the database to w, as one SQLite file. rqlite
+// makes it on the leader at one point of its log. When Backup fails, w
+// may hold part of a file.
+func (c *Client) Backup(ctx context.Context, w io.Writer) error {
+	return c.transfer(ctx, http.MethodGet, "/db/backup", "", nil, func(r io.Reader) error {
+		_, err := io.Copy(w, r)
+		return err
+	})
+}
+
+// Load replaces the database of the cluster by the SQLite file in r. It
+// goes through the log like any write, so every node ends up with it.
+func (c *Client) Load(ctx context.Context, r io.ReadSeeker) error {
+	body := func() (io.Reader, int64, error) {
+		size, err := r.Seek(0, io.SeekEnd)
+		if err != nil {
+			return nil, 0, err
+		}
+		if _, err := r.Seek(0, io.SeekStart); err != nil {
+			return nil, 0, err
+		}
+		return io.NopCloser(r), size, nil
+	}
+	return c.transfer(ctx, http.MethodPost, "/db/load", "application/octet-stream", body, func(resp io.Reader) error {
+		data, err := io.ReadAll(io.LimitReader(resp, 64<<10))
+		if err != nil {
+			return err
+		}
+		// {"results":[]} when it worked; an "error" member otherwise.
+		var answer struct {
+			Error   string `json:"error"`
+			Results []struct {
+				Error string `json:"error"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal(data, &answer); err != nil {
+			return fmt.Errorf("load: unexpected answer %s", clip(data))
+		}
+		if answer.Error != "" {
+			return errors.New("load: " + answer.Error)
+		}
+		for _, res := range answer.Results {
+			if res.Error != "" {
+				return errors.New("load: " + res.Error)
+			}
+		}
+		return nil
+	})
 }

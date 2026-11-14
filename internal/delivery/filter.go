@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/mikepage/robinmail/internal/metrics"
 	"log/slog"
 	"strings"
 	"sync"
@@ -282,6 +283,7 @@ func (d *Deliverer) finish(ctx context.Context, in *incoming) error {
 	alone := len(accounts) == 1 && len(in.to.forwards) == 0
 	if alone && plans[0].reject != nil {
 		reason := rejectReason(plans[0].reject.Reason)
+		metrics.Rejected.Inc("filter")
 		in.log.Info("rejected by the recipient's filter", "to", accounts[0].Address, "reason", reason)
 		return &smtp.Error{Code: 550, Enhanced: "5.7.1", Msg: reason}
 	}
@@ -356,6 +358,7 @@ func (d *Deliverer) finish(ctx context.Context, in *incoming) error {
 			in.log.Error("store failed", "to", a.Address, "err", err)
 			return errTempFail
 		}
+		metrics.Delivered.Inc()
 		in.log.Info("delivered", "to", a.Address, "email", store.EmailID(e.ID), "role", in.role, "mailboxes", len(m.MailboxIDs),
 			"keywords", strings.Join(p.keywords, " "), "size", len(in.final))
 	}

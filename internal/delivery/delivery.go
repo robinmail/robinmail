@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"github.com/mikepage/robinmail/internal/metrics"
 	"log/slog"
 	"net"
 	"strings"
@@ -222,6 +223,7 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 			log = log.With("action", res.Action, "score", res.Score)
 			if e := verdict(res); e != nil {
 				log.Info("rejected", "code", e.Code, "symbols", strings.Join(res.Symbols, ","))
+				metrics.Rejected.Inc("scan")
 				return e
 			}
 			for name, n := range res.RemoveHeaders {
