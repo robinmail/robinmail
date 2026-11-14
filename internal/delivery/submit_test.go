@@ -476,8 +476,9 @@ func TestPeerNotificationsAreRecorded(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// As it came over SMTP: without the Return-Path the
-			// delivery adds.
+			// As it came over SMTP: with CRLF (the files have LF) and
+			// without the Return-Path the delivery adds.
+			raw = bytes.ReplaceAll(bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n")), []byte("\n"), []byte("\r\n"))
 			if _, rest, ok := bytes.Cut(raw, []byte("Return-Path: <>\r\n")); ok {
 				raw = rest
 			}

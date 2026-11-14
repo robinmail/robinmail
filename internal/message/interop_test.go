@@ -11,13 +11,20 @@ import (
 	"testing"
 )
 
-func peerDSN(t *testing.T, peer string) (*Message, *DSN) {
+// peerFile reads a captured notification. The files are kept with LF line
+// ends, which is what git makes of them; on the wire they had CRLF.
+func peerFile(t *testing.T, peer string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/dsn-" + peer + ".eml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := Parse(raw)
+	return []byte(strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n", "\r\n"))
+}
+
+func peerDSN(t *testing.T, peer string) (*Message, *DSN) {
+	t.Helper()
+	m := Parse(peerFile(t, peer))
 	d, ok := ParseDSN(m)
 	if !ok {
 		t.Fatalf("the notification of %s is not read as a DSN (root %s)", peer, m.Root.Type)
@@ -60,10 +67,7 @@ func TestPeerNotifications(t *testing.T) {
 
 // What the leniency for OpenSMTPD must not take for a notification.
 func TestNotANotification(t *testing.T) {
-	raw, err := os.ReadFile("testdata/dsn-opensmtpd.eml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := peerFile(t, "opensmtpd")
 	// The same message, forwarded by a person as an attachment.
 	forwarded := "From: a@b.test\r\nSubject: Fwd: look at this bounce\r\nMIME-Version: 1.0\r\n" +
 		"Content-Type: multipart/mixed; boundary=fwd\r\n\r\n--fwd\r\nContent-Type: text/plain\r\n\r\nsee below\r\n" +
