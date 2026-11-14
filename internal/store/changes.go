@@ -29,6 +29,9 @@ type Changes struct {
 	Email    ChangeSet
 	Mailbox  ChangeSet
 	Thread   ChangeSet
+	// EmailSubmission and Identity changes (RFC 8621 6 and 7).
+	Submission ChangeSet
+	Identity   ChangeSet
 }
 
 // Changes returns what changed after state since. An object created and
@@ -75,6 +78,10 @@ func (s *Store) Changes(ctx context.Context, account string, since int64) (Chang
 			set = &c.Mailbox
 		case "Thread":
 			set = &c.Thread
+		case "EmailSubmission":
+			set = &c.Submission
+		case "Identity":
+			set = &c.Identity
 		default:
 			return Changes{}, fmt.Errorf("store: unknown change type %q", k.typ)
 		}
@@ -89,7 +96,7 @@ func (s *Store) Changes(ctx context.Context, account string, since int64) (Chang
 			set.Updated = append(set.Updated, k.id)
 		}
 	}
-	for _, set := range []*ChangeSet{&c.Email, &c.Mailbox, &c.Thread} {
+	for _, set := range []*ChangeSet{&c.Email, &c.Mailbox, &c.Thread, &c.Submission, &c.Identity} {
 		for _, list := range [][]int64{set.Created, set.Updated, set.Destroyed} {
 			sort.Slice(list, func(i, j int) bool { return list[i] < list[j] })
 		}
@@ -134,7 +141,8 @@ func (s *Store) TrimDelivered(ctx context.Context, before time.Time) (int64, err
 	return res[0].RowsAffected, nil
 }
 
-// ChangesOf is Changes for one type ("Email", "Mailbox" or "Thread") with
+// ChangesOf is Changes for one type ("Email", "Mailbox", "Thread",
+// "EmailSubmission" or "Identity") with
 // a cap, as JMAP's Foo/changes wants (RFC 8620 5.2). With max > 0 it stops
 // at the last state up to which no more than max objects changed and
 // reports that state and more = true; the caller asks again from there. A

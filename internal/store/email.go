@@ -452,14 +452,15 @@ func (s *Store) Raw(ctx context.Context, account string, id int64) ([]byte, Emai
 }
 
 // OpenBlob opens a blob of the account by its id, the SHA-256 of its
-// content, and returns its size. Only blobs an email refers to exist: a
-// file on disk nobody references is not served. The caller closes it.
+// content, and returns its size. Only blobs an email refers to and uploads
+// exist: a file on disk nobody references is not served. The caller closes it.
 func (s *Store) OpenBlob(ctx context.Context, account, blobID string) (io.ReadCloser, int64, error) {
 	if len(blobID) != sha256.Size*2 {
 		return nil, 0, ErrNoBlob
 	}
 	res, err := s.query(ctx, account,
-		q(`SELECT size FROM email WHERE account_id = :a AND blob = :blob LIMIT 1`, "blob", blobID))
+		q(`SELECT size FROM email WHERE account_id = :a AND blob = :blob
+			UNION ALL SELECT size FROM upload WHERE account_id = :a AND blob = :blob LIMIT 1`, "blob", blobID))
 	if err != nil {
 		return nil, 0, err
 	}

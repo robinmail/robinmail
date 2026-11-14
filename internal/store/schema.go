@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -39,7 +39,9 @@ var schema = []string{
 		trimmed_modseq INTEGER NOT NULL DEFAULT 0,
 		next_email     INTEGER NOT NULL,
 		next_mailbox   INTEGER NOT NULL,
-		next_thread    INTEGER NOT NULL
+		next_thread    INTEGER NOT NULL,
+		next_submission INTEGER NOT NULL DEFAULT 1,
+		next_identity   INTEGER NOT NULL DEFAULT 2
 	) WITHOUT ROWID`,
 
 	// A web login. token_hash is the SHA-256 of the token in the cookie, so
@@ -144,19 +146,12 @@ var schema = []string{
 	) WITHOUT ROWID`,
 	`CREATE INDEX IF NOT EXISTS delivered_at ON delivered (at)`,
 
-	// Outbound queue. Nothing uses it before phase 5.
-	`CREATE TABLE IF NOT EXISTS submission (
-		account_id    TEXT NOT NULL,
-		id            INTEGER NOT NULL,
-		email_id      INTEGER NOT NULL,
-		envelope      TEXT NOT NULL,
-		state         TEXT NOT NULL,
-		next_try      INTEGER NOT NULL DEFAULT 0,
-		claimed_by    TEXT NOT NULL DEFAULT '',
-		claimed_until INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (account_id, id)
-	) WITHOUT ROWID`,
-	`CREATE INDEX IF NOT EXISTS submission_next ON submission (state, next_try)`,
+	sqlSubmissionTable,
+	sqlSubmissionDue,
+	sqlSubmissionMessage,
+	sqlIdentityTable,
+	sqlUploadTable,
+	sqlSTSTable,
 
 	sqlNodeTable,
 	sqlLoginFailureTable,
@@ -182,6 +177,17 @@ var migrations = map[int64][]string{
 	// 4: the cluster. Nodes find each other through the node table; login
 	// failures are counted for all nodes together.
 	3: {sqlNodeTable, sqlLoginFailureTable},
+	// 5: sending. The submission table of the first schema was never used
+	// and is replaced; accounts get a counter for submissions and one for
+	// identities, and every account its first identity.
+	4: {
+		`DROP INDEX IF EXISTS submission_next`,
+		`DROP TABLE IF EXISTS submission`,
+		sqlSubmissionTable, sqlSubmissionDue, sqlSubmissionMessage, sqlIdentityTable, sqlUploadTable, sqlSTSTable,
+		`ALTER TABLE account ADD COLUMN next_submission INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE account ADD COLUMN next_identity INTEGER NOT NULL DEFAULT 2`,
+		`INSERT OR IGNORE INTO identity (account_id, id, name, email, modseq) SELECT id, 1, '', address, modseq FROM account`,
+	},
 }
 
 const (
@@ -195,6 +201,81 @@ const (
 		cert       TEXT NOT NULL,
 		started_at INTEGER NOT NULL DEFAULT 0,
 		seen_at    INTEGER NOT NULL DEFAULT 0
+	) WITHOUT ROWID`
+
+	// The outbound queue: one row per submitted message. recipients is a
+	// JSON list with the state of every recipient. email_id is 0 for a
+	// message that came in over SMTP submission: it is no Email of the
+	// account and JMAP does not show the row. blob is the message as it
+	// goes out (signed, without Bcc), a blob of the account, and is emptied
+	// when the row is done. undo is the JMAP undoStatus; queue is 'active'
+	// while there is work and 'done' after. A node works on a row while its
+	// claim lasts (claimed_by, claimed_until). submit_key makes the insert
+	// safe to repeat. destroyed marks a row the JMAP client destroyed while
+	// it still had work.
+	sqlSubmissionTable = `CREATE TABLE IF NOT EXISTS submission (
+		account_id    TEXT NOT NULL,
+		id            INTEGER NOT NULL,
+		email_id      INTEGER NOT NULL DEFAULT 0,
+		thread_id     INTEGER NOT NULL DEFAULT 0,
+		identity_id   INTEGER NOT NULL DEFAULT 0,
+		message_id    TEXT NOT NULL DEFAULT '',
+		blob          TEXT NOT NULL DEFAULT '',
+		size          INTEGER NOT NULL DEFAULT 0,
+		mail_from     TEXT NOT NULL DEFAULT '',
+		recipients    TEXT NOT NULL,
+		rcpt_count    INTEGER NOT NULL,
+		undo          TEXT NOT NULL DEFAULT 'pending',
+		queue         TEXT NOT NULL DEFAULT 'active',
+		created_at    INTEGER NOT NULL,
+		send_at       INTEGER NOT NULL,
+		next_try      INTEGER NOT NULL DEFAULT 0,
+		tries         INTEGER NOT NULL DEFAULT 0,
+		claimed_by    TEXT NOT NULL DEFAULT '',
+		claimed_until INTEGER NOT NULL DEFAULT 0,
+		destroyed     INTEGER NOT NULL DEFAULT 0,
+		submit_key    TEXT NOT NULL,
+		modseq        INTEGER NOT NULL,
+		PRIMARY KEY (account_id, id),
+		UNIQUE (account_id, submit_key)
+	) WITHOUT ROWID`
+	sqlSubmissionDue     = `CREATE INDEX IF NOT EXISTS submission_due ON submission (queue, next_try)`
+	sqlSubmissionMessage = `CREATE INDEX IF NOT EXISTS submission_message ON submission (account_id, message_id)`
+
+	// The identities a user sends as (RFC 8621 6). Identity 1 is made with
+	// the account. reply_to and bcc are JSON lists of addresses, or empty.
+	sqlIdentityTable = `CREATE TABLE IF NOT EXISTS identity (
+		account_id     TEXT NOT NULL,
+		id             INTEGER NOT NULL,
+		name           TEXT NOT NULL DEFAULT '',
+		email          TEXT NOT NULL,
+		reply_to       TEXT NOT NULL DEFAULT '',
+		bcc            TEXT NOT NULL DEFAULT '',
+		text_signature TEXT NOT NULL DEFAULT '',
+		html_signature TEXT NOT NULL DEFAULT '',
+		modseq         INTEGER NOT NULL,
+		PRIMARY KEY (account_id, id)
+	) WITHOUT ROWID`
+
+	// Blobs a client uploaded (RFC 8620 6.1) and may refer to for a while.
+	sqlUploadTable = `CREATE TABLE IF NOT EXISTS upload (
+		account_id TEXT NOT NULL,
+		blob       TEXT NOT NULL,
+		size       INTEGER NOT NULL,
+		type       TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (account_id, blob)
+	) WITHOUT ROWID`
+
+	// MTA-STS policies of other domains (RFC 8461), cached for all nodes.
+	// mx holds the patterns, one per line.
+	sqlSTSTable = `CREATE TABLE IF NOT EXISTS mta_sts (
+		domain     TEXT NOT NULL PRIMARY KEY,
+		policy_id  TEXT NOT NULL,
+		mode       TEXT NOT NULL,
+		mx         TEXT NOT NULL,
+		fetched_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL
 	) WITHOUT ROWID`
 
 	// Failed logins per key ("a:" + address, "i:" + IP) in a window that

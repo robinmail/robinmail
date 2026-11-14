@@ -52,7 +52,9 @@ func (s *Store) CreateAccount(ctx context.Context, address, passwordHash string)
 		b.add(`INSERT INTO mailbox (account_id, id, parent_id, name, role, sort_order, uidvalidity, uidnext, modseq)
 			VALUES (:a, :id, 0, :name, :role, :id, :now, 1, 1)`, "id", i+1, "name", m.name, "role", m.role)
 	}
+	b.add(`INSERT INTO identity (account_id, id, name, email, modseq) VALUES (:a, 1, '', :address, 1)`, "address", address)
 	b.change("Mailbox", `id AS id, 'created' AS op FROM mailbox WHERE account_id = :a`)
+	b.change("Identity", `1 AS id, 'created' AS op`)
 	if _, err := s.run(ctx, b); err != nil {
 		return Account{}, err
 	}

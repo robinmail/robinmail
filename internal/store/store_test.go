@@ -213,7 +213,8 @@ func TestAccount(t *testing.T) {
 	want(t, "roles", roles, []string{RoleInbox, RoleDrafts, RoleSent, RoleJunk, RoleTrash})
 
 	c := changes(t, s, a, 0)
-	want(t, "changes after create", c, Changes{OldState: 0, NewState: 1, Mailbox: ChangeSet{Created: []int64{1, 2, 3, 4, 5}}})
+	want(t, "changes after create", c, Changes{OldState: 0, NewState: 1, Mailbox: ChangeSet{Created: []int64{1, 2, 3, 4, 5}},
+		Identity: ChangeSet{Created: []int64{1}}})
 
 	// Nothing exists for an unknown account, and nothing is created for it.
 	_, err = s.Mailboxes(ctx, "nope")

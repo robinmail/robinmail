@@ -23,6 +23,11 @@ type Message struct {
 	// Role is the inbox.
 	MailboxID int64
 	Role      string
+	// MailboxIDs, when not empty, puts the email in all of these mailboxes
+	// and replaces MailboxID and Role.
+	MailboxIDs []int64
+	// IfInState, when not 0, is the state the account must be in.
+	IfInState int64
 	// ReceivedAt defaults to now.
 	ReceivedAt time.Time
 	Keywords   []string
@@ -62,6 +67,10 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 	if err != nil {
 		return Email{}, err
 	}
+	targets := m.MailboxIDs
+	if len(targets) == 0 && m.MailboxID != 0 {
+		targets = []int64{m.MailboxID}
+	}
 	sealed, err := blob.Encrypt(key, account, blobID, bytes.NewReader(m.Raw))
 	if err != nil {
 		return Email{}, fmt.Errorf("store: %w", err)
@@ -77,14 +86,19 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 
 	b := s.newBatch(account)
 	b.guardAccount()
-	target := `:m`
-	if m.MailboxID != 0 {
-		b.base["m"] = m.MailboxID
-		b.guard(ErrNoMailbox, `EXISTS (SELECT 1 FROM mailbox WHERE account_id = :a AND id = :m)`)
+	b.ifState(m.IfInState)
+	var into string // a SQL condition on mailbox m: the mailboxes the email goes in
+	if len(targets) > 0 {
+		vals, kv := values("t", targets)
+		for k := 0; k < len(kv); k += 2 {
+			b.base[kv[k].(string)] = kv[k+1]
+		}
+		into = `m.id IN (VALUES ` + vals + `)`
+		b.guard(ErrNoMailbox, `(SELECT count(*) FROM mailbox m WHERE m.account_id = :a AND `+into+`) = :targets`, "targets", len(uniqueInts(targets)))
 	} else {
 		b.base["role"] = role
-		target = `(SELECT id FROM mailbox WHERE account_id = :a AND role IN (:role, 'inbox') ORDER BY role = 'inbox' LIMIT 1)`
-		b.guard(ErrNoMailbox, target+` IS NOT NULL`)
+		into = `m.id = (SELECT id FROM mailbox WHERE account_id = :a AND role IN (:role, 'inbox') ORDER BY role = 'inbox' LIMIT 1)`
+		b.guard(ErrNoMailbox, `EXISTS (SELECT 1 FROM mailbox m WHERE m.account_id = :a AND `+into+`)`)
 	}
 	if m.Key != "" {
 		// A repeated key fails here and rolls everything back. That also
@@ -119,9 +133,9 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 
 	b.add(`INSERT INTO email_mailbox (account_id, email_id, mailbox_id, uid)
 		SELECT m.account_id, ` + sqlNewEmail + `, m.id, m.uidnext FROM mailbox m
-		WHERE m.account_id = :a AND m.id = ` + target)
+		WHERE m.account_id = :a AND ` + into)
 	b.add(`UPDATE mailbox SET uidnext = uidnext + 1, modseq = ` + sqlModseq + `
-		WHERE account_id = :a AND id = (SELECT mailbox_id FROM email_mailbox WHERE account_id = :a AND email_id = ` + sqlNewEmail + `)`)
+		WHERE account_id = :a AND id IN (SELECT mailbox_id FROM email_mailbox WHERE account_id = :a AND email_id = ` + sqlNewEmail + `)`)
 	if len(keywords) > 0 {
 		vals, kv := values("k", keywords)
 		b.add(`INSERT INTO keyword (account_id, email_id, keyword)
@@ -146,4 +160,12 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 		return Email{}, fmt.Errorf("store: delivery returned %d rows", len(rows))
 	}
 	return scanEmail(rows[0]), nil
+}
+
+func uniqueInts(list []int64) map[int64]bool {
+	out := map[int64]bool{}
+	for _, v := range list {
+		out[v] = true
+	}
+	return out
 }
