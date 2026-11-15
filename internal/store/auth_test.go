@@ -241,8 +241,14 @@ func TestTOTPState(t *testing.T) {
 	if string(st.Secret) != string(secret2) || !st.Confirmed || st.LastStep != 100 || st.RecoveryCodes != 2 {
 		t.Fatalf("confirmed: %+v", st)
 	}
+	before := got.AuthSeq
 	got, _ = s.Account(ctx, a.Address)
 	want(t, "account.TOTP", got.TOTP, true)
+	// With TOTP on the account password no longer opens IMAP and SMTP:
+	// connections that logged in with it are to be looked at again.
+	if got.AuthSeq <= before {
+		t.Errorf("auth_seq %d after turning TOTP on, was %d: open mail sessions are not told", got.AuthSeq, before)
+	}
 	wantErr(t, "confirm twice", s.ConfirmTOTP(ctx, a.ID, 101, nil), ErrTOTPNotPending)
 	wantErr(t, "a new secret while on", s.SetPendingTOTP(ctx, a.ID, secret), ErrTOTPEnabled)
 

@@ -281,14 +281,21 @@ func (s *Store) TOTPState(ctx context.Context, account string) (TOTP, error) {
 
 // ConfirmTOTP turns TOTP on: the user showed the code of time step step
 // from the pending secret. The recovery codes, as hashes, are stored with
-// it. ErrTOTPNotPending when there is no secret waiting.
+// it. The account's auth_seq moves, as with a first app password.
+// ErrTOTPNotPending when there is no secret waiting.
 func (s *Store) ConfirmTOTP(ctx context.Context, account string, step int64, recoveryHashes []string) error {
 	b := s.newBatch(account)
 	b.guard(ErrTOTPNotPending, `EXISTS (SELECT 1 FROM totp WHERE account_id = :a AND confirmed_at = 0)`)
 	b.add(`UPDATE totp SET confirmed_at = :now, last_step = :step WHERE account_id = :a`, "step", step)
 	b.replaceRecoveryCodes(recoveryHashes)
-	_, err := s.run(ctx, b)
-	return err
+	// From here on the account password no longer opens IMAP, SMTP and
+	// Basic auth: connections that logged in with it are looked at again.
+	b.add(`UPDATE account SET auth_seq = auth_seq + 1 WHERE id = :a`)
+	if _, err := s.run(ctx, b); err != nil {
+		return err
+	}
+	s.authChanged(account)
+	return nil
 }
 
 func (b *batch) replaceRecoveryCodes(hashes []string) {
