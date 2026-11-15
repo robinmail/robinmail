@@ -129,4 +129,28 @@ describe('the mail page', () => {
     await until(() => [...server.emails.values()].some((e) => e.subject === 'A draft' && e.keywords.$draft), fixture, 5000)
     await until(() => text(el.querySelector('[data-testid="composer-status"]')) === 'Saved', fixture)
   })
+
+  it('answers a message: the sender as the recipient, the text quoted, sent with a notice that can undo it', async () => {
+    const e = server.deliver({ subject: 'Lunch', from: 'anna@example.org', seen: true })
+    await open(`/mail/m1/${e.threadId}`)
+    await until(() => !!el.querySelector('[data-testid="reply"]') && compose.state.identitiesLoaded, fixture)
+    el.querySelector<HTMLButtonElement>('[data-testid="reply"]')!.click()
+    await until(() => !!el.querySelector('[data-testid="composer"]'), fixture)
+    const panel = el.querySelector<HTMLElement>('[data-testid="composer"]')!
+    expect([...panel.querySelectorAll('[data-testid="address-chip"]')].map(text)).toEqual(['anna@example.org'])
+    expect(panel.querySelector<HTMLInputElement>('input[id$="-subject"]')!.value).toBe('Re: Lunch')
+    const body = panel.querySelector<HTMLTextAreaElement>('[data-testid="plain-body"]')!
+    expect(body.value).toContain('> ')
+    body.value = `Yes.\n${body.value}`
+    body.dispatchEvent(new Event('input', { bubbles: true }))
+
+    panel.querySelector<HTMLButtonElement>('[data-testid="composer-send"]')!.click()
+    await until(() => server.submissions.size === 1, fixture, 5000)
+    await until(() => !el.querySelector('[data-testid="composer"]'), fixture)
+    const sent = [...server.emails.values()].find((x) => x.subject === 'Re: Lunch')!
+    expect(sent.to).toEqual([{ name: null, email: 'anna@example.org' }])
+    await until(() => !!server.emails.get(e.id)!.keywords.$answered)
+    await until(() => text(el.querySelector('[data-testid="toast"]')).includes('Message sent'), fixture)
+    expect(text(el.querySelector('[data-testid="toast"] button'))).toBe('Undo')
+  })
 })
