@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -163,7 +164,11 @@ func FuzzQuery(f *testing.F) {
 					t.Fatalf("not a quoted string: %q in %q", part, q)
 				}
 				for _, r := range part[1 : len(part)-1] {
-					if r != ' ' && !isTokenRune(r) {
+					// A mark that NFD splits off a letter and that is not
+					// removed as a diacritic (a spacing mark, such as the
+					// second half of Tamil AU) stays in the word. It is no
+					// syntax of FTS5, inside quotes least of all.
+					if r != ' ' && !isTokenRune(r) && !unicode.Is(unicode.M, r) {
 						t.Fatalf("%q in %q", r, q)
 					}
 				}
