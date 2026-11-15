@@ -1,12 +1,7 @@
 import { type EnvironmentProviders, inject, makeEnvironmentProviders, provideEnvironmentInitializer } from '@angular/core'
 import { DefaultUrlSerializer, Router, type Routes, type UrlMatcher, UrlSegment, UrlSerializer, type UrlTree } from '@angular/router'
 import { Frame } from './frame'
-import { FiltersPage } from './pages/filters-page'
 import { LoginPage } from './pages/login-page'
-import { MailPage } from './pages/mail-page'
-import { SecurityPage } from './pages/security-page'
-import { SettingsPage } from './pages/settings-page'
-import { VacationPage } from './pages/vacation-page'
 import { sessionGuard, watchSession } from './session'
 import { ColorMode } from './ui/color-mode'
 
@@ -20,7 +15,9 @@ const mail: UrlMatcher = (segments) => {
   return { consumed: segments, posParams }
 }
 
-// The routes of the webmail, for the router of the host application.
+// The routes of the webmail, for the router of the host application. The
+// login comes with the first load; the pages behind it are fetched when
+// they are first opened.
 export const webmailRoutes: Routes = [
   {
     path: '',
@@ -28,11 +25,11 @@ export const webmailRoutes: Routes = [
     canActivateChild: [sessionGuard],
     children: [
       { path: 'login', component: LoginPage, data: { name: 'login' } },
-      { matcher: mail, component: MailPage, data: { name: 'mail' } },
-      { path: 'settings', component: SettingsPage, data: { name: 'settings' } },
-      { path: 'settings/filters', component: FiltersPage, data: { name: 'filters' } },
-      { path: 'settings/vacation', component: VacationPage, data: { name: 'vacation' } },
-      { path: 'settings/security', component: SecurityPage, data: { name: 'security' } },
+      { matcher: mail, loadComponent: () => import('./pages/mail-page').then((m) => m.MailPage), data: { name: 'mail' } },
+      { path: 'settings', loadComponent: () => import('./pages/settings-page').then((m) => m.SettingsPage), data: { name: 'settings' } },
+      { path: 'settings/filters', loadComponent: () => import('./pages/filters-page').then((m) => m.FiltersPage), data: { name: 'filters' } },
+      { path: 'settings/vacation', loadComponent: () => import('./pages/vacation-page').then((m) => m.VacationPage), data: { name: 'vacation' } },
+      { path: 'settings/security', loadComponent: () => import('./pages/security-page').then((m) => m.SecurityPage), data: { name: 'security' } },
       { path: '**', redirectTo: 'mail' },
     ],
   },

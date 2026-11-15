@@ -13,7 +13,7 @@ let moved = 0
 for (const name of readdirSync(dist)) {
   if (keep.has(name) || statSync(join(dist, name)).isDirectory()) continue
   // Only what carries a hash in its name may be cached forever.
-  if (!/-[A-Z0-9]{8}\.[a-z0-9]+$/.test(name)) throw new Error(`dist/shell/${name} has no content hash in its name: it cannot go to assets/`)
+  if (!/-[A-Za-z0-9_-]{8}\.[a-z0-9]+$/.test(name)) throw new Error(`dist/shell/${name} has no content hash in its name: it cannot go to assets/`)
   renameSync(join(dist, name), join(dist, 'assets', name))
   moved++
 }
