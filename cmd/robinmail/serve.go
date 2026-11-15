@@ -129,6 +129,9 @@ func (a *app) serve(stop func()) error {
 		log.Warn(`no domains yet, all mail is refused; add one with "robinmail domain add"`)
 	}
 
+	// One budget for the memory of messages in transit, shared by the
+	// inbound and the submission listeners (issue 43).
+	budget := &smtp.Budget{Total: a.cfg.SMTP.MaxBytesInTransit, PerClient: a.cfg.SMTP.MaxBytesInTransitPerIP}
 	srv := &smtp.Server{
 		Hostname:        a.cfg.Hostname,
 		TLSConfig:       tc,
@@ -138,6 +141,7 @@ func (a *app) serve(stop func()) error {
 		MaxRecipients:   a.cfg.SMTP.MaxRecipients,
 		MaxConnections:  a.cfg.SMTP.MaxConnections,
 		MaxConnsPerIP:   a.cfg.SMTP.MaxConnectionsPerIP,
+		Budget:          budget,
 		Trace:           a.cfg.Dev.SMTPTrace,
 	}
 	l, err := net.Listen("tcp", a.cfg.SMTP.Listen)
@@ -252,6 +256,7 @@ func (a *app) serve(stop func()) error {
 			MaxRecipients:   a.cfg.SMTP.MaxRecipients,
 			MaxConnections:  a.cfg.SMTP.MaxConnections,
 			MaxConnsPerIP:   a.cfg.SMTP.MaxConnectionsPerIP,
+			Budget:          budget,
 			Trace:           a.cfg.Dev.SMTPTrace,
 		}
 		var plain, implicit net.Addr

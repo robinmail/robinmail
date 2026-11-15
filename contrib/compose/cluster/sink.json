@@ -9,7 +9,9 @@
   "smtp": {
     "listen": ":25",
     "max_connections": 1000,
-    "max_connections_per_ip": 1000
+    "max_connections_per_ip": 1000,
+    "max_bytes_in_transit": 536870912,
+    "max_bytes_in_transit_per_ip": 536870912
   },
   "web": {
     "listen": ":443"

@@ -291,6 +291,7 @@ var (
 	errTooBig          = errors.New("message too big")
 	errBareLineEnding  = errors.New("bare CR or LF")
 	errDataLineTooLong = errors.New("line too long")
+	errBusy            = errors.New("no memory left for messages in transit")
 )
 
 // readData reads a message after DATA up to the terminating <CRLF>.<CRLF>
@@ -302,9 +303,14 @@ var (
 // The terminator is recognised only as "." on a line of its own after a real
 // CRLF. On errTooBig, errBareLineEnding and errDataLineTooLong the input is
 // still read up to the terminator, so the session stays in sync.
-func readData(r *bufio.Reader, max int64) ([]byte, error) {
+//
+// take, when not nil, is asked for memory before the buffer grows, for the
+// growth in bytes. When it refuses, the rest of the message is read and
+// dropped and the result is errBusy. The buffer is grown by hand, so what
+// take was asked for is the capacity actually held.
+func readData(r *bufio.Reader, limit int64, take func(n int64) bool) ([]byte, error) {
 	var (
-		buf       bytes.Buffer
+		buf       []byte
 		failed    error
 		lineStart = true // the previous segment ended in CRLF
 		size      int64
@@ -312,7 +318,7 @@ func readData(r *bufio.Reader, max int64) ([]byte, error) {
 	for {
 		seg, err := r.ReadSlice('\n')
 		if err == bufio.ErrBufferFull {
-			if failed == nil {
+			if failed == nil || failed == errBusy {
 				failed = errDataLineTooLong
 			}
 			lineStart = false
@@ -326,7 +332,7 @@ func readData(r *bufio.Reader, max int64) ([]byte, error) {
 			break
 		}
 		if !crlf || bytes.IndexByte(seg[:len(seg)-2], '\r') >= 0 {
-			if failed == nil || failed == errDataLineTooLong {
+			if failed == nil || failed == errDataLineTooLong || failed == errBusy {
 				failed = errBareLineEnding
 			}
 		}
@@ -335,17 +341,29 @@ func readData(r *bufio.Reader, max int64) ([]byte, error) {
 		}
 		lineStart = crlf
 		size += int64(len(seg))
-		if size > max && failed == nil {
+		if size > limit && (failed == nil || failed == errBusy) {
 			failed = errTooBig
 		}
+		if failed == nil && len(buf)+len(seg) > cap(buf) {
+			// Double, from 64 KiB, but never past limit: size <= limit here.
+			n := min(max(int64(2*cap(buf)), 1<<16, int64(len(buf)+len(seg))), limit)
+			if take != nil && !take(n-int64(cap(buf))) {
+				failed = errBusy
+				buf = nil
+			} else {
+				grown := make([]byte, len(buf), n)
+				copy(grown, buf)
+				buf = grown
+			}
+		}
 		if failed == nil {
-			buf.Write(seg)
+			buf = append(buf, seg...)
 		}
 	}
 	if failed != nil {
 		return nil, failed
 	}
-	return buf.Bytes(), nil
+	return buf, nil
 }
 
 // ValidMailbox reports whether s is a Mailbox of RFC 5321 4.1.2 (with the

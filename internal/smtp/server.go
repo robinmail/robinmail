@@ -106,6 +106,10 @@ type Server struct {
 	DataTimeout     time.Duration // [10m] for the whole message
 	HandlerTimeout  time.Duration // [2m] for one Rcpt or Deliver call
 	MaxErrors       int           // [10] bad commands before the connection is closed
+	// Budget bounds the bytes of messages held in memory by all sessions
+	// together and per client address. [Total 4 × MaxMessageBytes,
+	// PerClient MaxMessageBytes] Give servers one Budget to share it.
+	Budget *Budget
 	// Trace logs every command line and every reply line, for
 	// development: never the message, and AUTH without its credentials.
 	// A command line logged with more=true came in together with what
@@ -151,6 +155,17 @@ func (s *Server) defaults() {
 	if s.MaxErrors == 0 {
 		s.MaxErrors = 10
 	}
+	if s.Budget == nil {
+		s.Budget = &Budget{}
+	}
+	s.Budget.mu.Lock()
+	if s.Budget.Total == 0 {
+		s.Budget.Total = 4 * s.MaxMessageBytes
+	}
+	if s.Budget.PerClient == 0 {
+		s.Budget.PerClient = s.MaxMessageBytes
+	}
+	s.Budget.mu.Unlock()
 	if s.Logger == nil {
 		s.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -276,7 +291,7 @@ func (s *Server) handle(c net.Conn) {
 		io.WriteString(c, "421 4.7.0 Too many connections from your address\r\n")
 		return
 	}
-	sess := &session{srv: s, ip: ip, log: s.Logger.With("remote", key)}
+	sess := &session{srv: s, ip: ip, key: limitKey, log: s.Logger.With("remote", key)}
 	sess.setConn(c)
 	sess.tls = implicit
 	s.perIP[limitKey]++
@@ -312,6 +327,7 @@ type session struct {
 	r    *bufio.Reader
 	w    *bufio.Writer
 	ip   net.IP
+	key  string // the client address as the limits count it
 	log  *slog.Logger
 
 	helo string
@@ -983,10 +999,24 @@ func (s *session) cmdData(arg string) {
 	s.flush()
 
 	s.conn.SetReadDeadline(time.Now().Add(s.srv.DataTimeout))
-	msg, err := readData(s.r, s.srv.MaxMessageBytes)
+	// What the message holds of the budget is given back once the handler
+	// is done with it.
+	var held int64
+	defer func() { s.srv.Budget.give(s.key, held) }()
+	msg, err := readData(s.r, s.srv.MaxMessageBytes, func(n int64) bool {
+		if !s.srv.Budget.take(s.key, n) {
+			return false
+		}
+		held += n
+		return true
+	})
 	env := s.env
 	s.env = nil
 	switch {
+	case errors.Is(err, errBusy):
+		s.log.Info("deferred, too much mail in transit", "from", env.From)
+		s.reply(452, "4.3.1", "Too much mail in transit, try again later")
+		return
 	case errors.Is(err, errTooBig):
 		s.reply(552, "5.3.4", "Message too big")
 		return

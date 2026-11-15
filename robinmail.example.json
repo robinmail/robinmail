@@ -20,7 +20,9 @@
     "max_message_bytes": 26214400,
     "max_recipients": 100,
     "max_connections": 100,
-    "max_connections_per_ip": 10
+    "max_connections_per_ip": 10,
+    "max_bytes_in_transit": 104857600,
+    "max_bytes_in_transit_per_ip": 26214400
   },
   "web": {
     "listen": ":443",

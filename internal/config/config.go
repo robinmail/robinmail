@@ -211,6 +211,14 @@ type SMTP struct {
 	MaxRecipients       int    `json:"max_recipients"`
 	MaxConnections      int    `json:"max_connections"`
 	MaxConnectionsPerIP int    `json:"max_connections_per_ip"`
+	// MaxBytesInTransit bounds the bytes of messages that the SMTP and
+	// submission listeners hold in memory together, while a message is
+	// received and delivered. Past it a message is answered 452 4.3.1 and
+	// sent again later. [4 × max_message_bytes]
+	MaxBytesInTransit int64 `json:"max_bytes_in_transit"`
+	// MaxBytesInTransitPerIP is the share of it one client address (an IPv6
+	// /64) may hold. At least max_message_bytes. [max_message_bytes]
+	MaxBytesInTransitPerIP int64 `json:"max_bytes_in_transit_per_ip"`
 }
 
 // Submission configures the listeners users send mail through (RFC 6409,
@@ -376,13 +384,25 @@ func Load(path string) (*Config, error) {
 		c.SMTP.Listen = ":25"
 	}
 	if c.SMTP.MaxMessageBytes < 0 || c.SMTP.MaxRecipients < 0 || c.SMTP.MaxConnections < 0 ||
-		c.SMTP.MaxConnectionsPerIP < 0 || c.Rspamd.TimeoutSeconds < 0 {
+		c.SMTP.MaxConnectionsPerIP < 0 || c.SMTP.MaxBytesInTransit < 0 || c.SMTP.MaxBytesInTransitPerIP < 0 ||
+		c.Rspamd.TimeoutSeconds < 0 {
 		return nil, errors.New(path + ": limits cannot be negative")
 	}
 	// RFC 5321 4.5.3.1.7 and 4.5.3.1.8: every server takes a message of
 	// 64K octets and 100 recipients. Zero means the server's default.
 	if n := c.SMTP.MaxMessageBytes; n != 0 && n < MinMessageBytes {
 		return nil, fmt.Errorf("%s: smtp max_message_bytes must be at least %d (RFC 5321 4.5.3.1.7)", path, MinMessageBytes)
+	}
+	// A message of the largest size must fit in the budget and the share.
+	msgMax := c.SMTP.MaxMessageBytes
+	if msgMax == 0 {
+		msgMax = 25 << 20
+	}
+	if n := c.SMTP.MaxBytesInTransitPerIP; n != 0 && n < msgMax {
+		return nil, fmt.Errorf("%s: smtp max_bytes_in_transit_per_ip must be at least max_message_bytes (%d)", path, msgMax)
+	}
+	if n := c.SMTP.MaxBytesInTransit; n != 0 && n < max(msgMax, c.SMTP.MaxBytesInTransitPerIP) {
+		return nil, fmt.Errorf("%s: smtp max_bytes_in_transit must be at least max_message_bytes and max_bytes_in_transit_per_ip", path)
 	}
 	if n := c.SMTP.MaxRecipients; n != 0 && n < MinRecipients {
 		return nil, fmt.Errorf("%s: smtp max_recipients must be at least %d (RFC 5321 4.5.3.1.8)", path, MinRecipients)

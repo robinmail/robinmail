@@ -73,6 +73,13 @@ func TestRFC5321_4_5_3_1_MinimumLimits(t *testing.T) {
 		`{"max_message_bytes":65535}`:                      false,
 		`{"max_recipients":99}`:                            false,
 		`{"max_recipients":1}`:                             false,
+		// The budget for messages in transit must hold one of the largest.
+		`{"max_message_bytes":65536,"max_bytes_in_transit":65536,"max_bytes_in_transit_per_ip":65536}`: true,
+		`{"max_bytes_in_transit":104857600,"max_bytes_in_transit_per_ip":26214400}`:                    true,
+		`{"max_bytes_in_transit_per_ip":1048576}`:                                                      false,
+		`{"max_bytes_in_transit":1048576}`:                                                             false,
+		`{"max_bytes_in_transit":30000000,"max_bytes_in_transit_per_ip":40000000}`:                     false,
+		`{"max_bytes_in_transit":-1}`:                                                                  false,
 	} {
 		if _, err := load(t, head+body+"}"); (err == nil) != ok {
 			t.Errorf("smtp %s: err = %v, want ok = %v", body, err, ok)

@@ -359,7 +359,7 @@ func FuzzReadData(f *testing.F) {
 	f.Add([]byte("a\r\n..b\r\n.\r\n"))
 	f.Add([]byte("a\n.\r\nb\r\n.\r\n"))
 	f.Fuzz(func(t *testing.T, in []byte) {
-		msg, err := readData(bufio.NewReaderSize(bytes.NewReader(in), 64), 1<<20)
+		msg, err := readData(bufio.NewReaderSize(bytes.NewReader(in), 64), 1<<20, nil)
 		if err != nil {
 			return
 		}
