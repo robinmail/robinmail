@@ -3032,3 +3032,12 @@ Built as follows:
   hundreds of thousands of messages that is one very large Raft entry.
 - The repository has no LICENSE file. Until it has one nobody but its
   author may use the code.
+
+## Security review
+
+An adversarial review of the Go server was done on 2026-11-15 (the
+webmail clients were out of scope). Found: no critical, 1 high, 7 medium
+and 8 low findings. Fixed: the high one, 5 medium and 1 low. Open: 2
+medium (one of them partly fixed) and 7 low. The findings, the verdict
+and what was found sound are in the tracking issue:
+https://github.com/mikepage/robinmail/issues/44
