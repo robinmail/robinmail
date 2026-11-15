@@ -16,7 +16,7 @@ const root = fileURLToPath(new URL('../..', import.meta.url))
 const PASSWORD = 'e2e-auth-password'
 
 function cli(input: string, ...args: string[]): string {
-  return execFileSync('dev/robinmail', ['-config', 'dev/robinmail.json', ...args], { cwd: root, encoding: 'utf8', input })
+  return execFileSync('dev/robinmail', ['-config', process.env.ROBINMAIL_E2E_CONFIG ?? 'dev/robinmail.json', ...args], { cwd: root, encoding: 'utf8', input })
 }
 
 function newUser(): string {

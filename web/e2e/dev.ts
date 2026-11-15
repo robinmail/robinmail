@@ -11,17 +11,20 @@ export const USER = 'dev@robinmail.test'
 // The second user of the seed script: someone to send mail to.
 export const OTHER = 'other@robinmail.test'
 export const PASSWORD = process.env.ROBINMAIL_DEV_PASSWORD ?? 'robinmail-dev'
+// The config of the instance under test: e2e.sh runs one of its own, with
+// a data directory of its own, and says which.
+export const CONFIG = process.env.ROBINMAIL_E2E_CONFIG ?? 'dev/robinmail.json'
 
 // deliver stores a message in the dev account, as the seed script does.
 export function deliver(message: string, mailbox = 'inbox', user = USER): void {
-  execFileSync('dev/robinmail', ['-config', 'dev/robinmail.json', 'deliver', user, mailbox], {
+  execFileSync('dev/robinmail', ['-config', CONFIG, 'deliver', user, mailbox], {
     cwd: root,
     input: message.replace(/\r?\n/g, '\r\n'),
   })
 }
 
 export function cli(...args: string[]): string {
-  return execFileSync('dev/robinmail', ['-config', 'dev/robinmail.json', ...args], { cwd: root, encoding: 'utf8' })
+  return execFileSync('dev/robinmail', ['-config', CONFIG, ...args], { cwd: root, encoding: 'utf8' })
 }
 
 export function textMessage(subject: string, n: number): string {

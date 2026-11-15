@@ -476,7 +476,7 @@ const MAILPIT = process.env.ROBINMAIL_MAILPIT_URL ?? 'http://127.0.0.1:8025'
 
 function routedToMailpit(): boolean {
   try {
-    const config = JSON.parse(readFileSync(fileURLToPath(new URL('../../dev/robinmail.json', import.meta.url)), 'utf8'))
+    const config = JSON.parse(readFileSync(fileURLToPath(new URL('../../' + (process.env.ROBINMAIL_E2E_CONFIG ?? 'dev/robinmail.json'), import.meta.url)), 'utf8'))
     return /:1025$/.test(config.outbound?.routes?.['*'] ?? '')
   } catch {
     return false

@@ -39,4 +39,4 @@ trap stop EXIT
 sleep 1
 
 cd web
-ROBINMAIL_E2E_URL="http://127.0.0.1:$PORT" npx playwright test "$@"
+ROBINMAIL_E2E_CONFIG=dev/robinmail.e2e.json ROBINMAIL_E2E_URL="http://127.0.0.1:$PORT" npx playwright test "$@"

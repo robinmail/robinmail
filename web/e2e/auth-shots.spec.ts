@@ -16,7 +16,7 @@ for (const [size, viewport] of Object.entries(sizes)) {
   for (const scheme of ['light', 'dark'] as const) {
     test(`security ${size} ${scheme}`, async ({ browser }) => {
       const user = `shots-${randomBytes(4).toString('hex')}@robinmail.test`
-      execFileSync('dev/robinmail', ['-config', 'dev/robinmail.json', 'user', 'add', user], { cwd: root, input: `${PASSWORD}\n` })
+      execFileSync('dev/robinmail', ['-config', process.env.ROBINMAIL_E2E_CONFIG ?? 'dev/robinmail.json', 'user', 'add', user], { cwd: root, input: `${PASSWORD}\n` })
       const context = await browser.newContext({ viewport, colorScheme: scheme, hasTouch: size === 'phone' })
       const page = await context.newPage()
       const shot = (name: string) => page.screenshot({ path: `${dir}/auth-${size}-${scheme}-${name}.png`, fullPage: true })

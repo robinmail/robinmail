@@ -1,3 +1,5 @@
+# contrib/lab/lab.sh suite -r t   (JMAP-TestSuite 2fa1934, robinmail at the commit of this file)
+# 173 files: 158 ok, 4 skipped (no account pair), 11 failed: the 7 of before, and 4 of the calendar, contact and principal files that skipped before phase 9
 t/AddressBook/changes/basic.t ................................................ ok
 t/AddressBook/foreign-account.t .............................................. ok
 t/AddressBook/get/basic.t .................................................... ok
