@@ -113,11 +113,10 @@ export class ComposerDock implements OnDestroy {
 
   private onSent(s: Sent): void {
     const ms = Math.min(30_000, Math.max(3000, s.until - Date.now()))
-    const id = this.toaster.add({
+    this.toaster.add({
       title: 'Message sent', description: `You can take it back for ${Math.round(ms / 1000)} seconds.`, icon: 'send', duration: ms,
       actions: [{ label: 'Undo', run: () => void this.undo(s) }],
     })
-    void id
     setTimeout(() => {
       compose.forget(s)
       this.noticed.delete(s.key)

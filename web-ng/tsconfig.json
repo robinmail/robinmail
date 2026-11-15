@@ -25,7 +25,9 @@
       "ES2023",
       "DOM",
       "DOM.Iterable"
-    ]
+    ],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,

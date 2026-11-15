@@ -64,13 +64,14 @@ export class Modal implements OnDestroy {
         ref.close()
       }
     })
+    // Whether Escape and a click beside it close the dialog can change
+    // while it is open: one dialog shows several steps.
+    effect(() => {
+      const fixed = !this.dismissible()
+      this.open()
+      if (this.ref) this.ref.disableClose = fixed
+    })
   }
-
-  private readonly lock = effect(() => {
-    const fixed = !this.dismissible()
-    this.open()
-    if (this.ref) this.ref.disableClose = fixed
-  })
 
   ngOnDestroy(): void {
     this.ref?.close()

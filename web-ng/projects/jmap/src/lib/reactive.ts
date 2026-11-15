@@ -22,12 +22,6 @@ export function toRaw<T>(v: T): T {
   return (typeof v === 'object' && v !== null && (raws.get(v) as T | undefined)) || v
 }
 
-// stateVersion reads the signal: a computed() over data that is reached
-// some other way than through the proxy can depend on the state with it.
-export function stateVersion(): number {
-  return version()
-}
-
 // Looking an object up in a reactive array finds it whether the caller
 // holds the object itself or its proxy.
 const searches = {
