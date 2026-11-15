@@ -146,6 +146,21 @@ func candidates() []string {
 func matchZone(vt *Component) *time.Location {
 	year := time.Now().Year()
 	ts := transitions(vt, year-1, year+3)
+	if len(ts) == 0 {
+		// A VTIMEZONE that only covers other years (as one written for a
+		// single event far ahead): compare where it has its changes.
+		first := 0
+		for _, obs := range vt.Children {
+			if v := obs.Value("DTSTART"); len(v) >= 4 {
+				if y, err := strconv.Atoi(v[:4]); err == nil && (first == 0 || y < first) {
+					first = y
+				}
+			}
+		}
+		if first > 0 {
+			ts = transitions(vt, first, first+4)
+		}
+	}
 	std := 0
 	for _, obs := range vt.Sub("STANDARD") {
 		if off, err := ParseOffset(obs.Value("TZOFFSETTO")); err == nil {
@@ -214,12 +229,25 @@ func VTimezone(loc *time.Location, from, to int) *Component {
 	}
 	end := time.Date(to+1, 1, 1, 0, 0, 0, 0, loc)
 	t := start
-	for t.Before(end) {
+	for steps := 0; t.Before(end) && steps < 1000; steps++ {
 		_, next := t.ZoneBounds()
 		if next.IsZero() || !next.Before(end) {
 			break
 		}
+		if !next.After(t) {
+			// Go's own zone data (time/tzdata, what a host without
+			// /usr/share/zoneinfo uses) gives the end of a leap year as a
+			// boundary that ends where it starts: step past it.
+			t = t.Add(time.Hour)
+			continue
+		}
 		name, off := next.Zone()
+		if off == prevOff && name == func() string { n, _ := t.Zone(); return n }() {
+			// A boundary that changes nothing (the same data marks every
+			// new year): not a change of the zone.
+			t = next
+			continue
+		}
 		o := find(next.IsDST(), name, prevOff, off)
 		// Local time before the change, in the old offset.
 		o.changes = append(o.changes, next.In(time.FixedZone("", prevOff)))
