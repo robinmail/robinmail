@@ -3298,15 +3298,18 @@ Built as follows:
   gone; the tests read and fix rows with `robinmail db`).
 - **JMAP-TestSuite** (`lab.sh suite`): its container now runs on
   robinmail's node (network namespace and data volume) so that `robinmail
-  user add` reaches the server; before, it reached the shared rqlite. 158
-  files pass, 4 skip (no account pair), 11 fail: the same 7 as after
-  phase 8, and 4 of the calendar, contact and principal files, which
-  skipped (capability not offered) when the output was last recorded,
-  before phase 9: the `foreign-account` files of CalendarEvent,
-  ContactCard and Principal (`queryChanges` answers
-  `cannotCalculateChanges` before it says `accountNotFound`) and
-  `CalendarEvent/set/update`. They are about the phase 9 JMAP methods,
-  not the database; left for a follow-up.
+  user add` reaches the server; before, it reached the shared rqlite. 162
+  files pass, 4 skip (no account pair), 7 fail: the same 7 as after
+  phase 8. The first run had 4 more, calendar, contact and principal
+  files that skipped (capability not offered) before phase 9, fixed
+  after: the `foreign-account` files of CalendarEvent, ContactCard and
+  Principal (`/queryChanges` now checks the arguments and the account
+  first, RFC 8620 3.6.2, then answers `cannotCalculateChanges`) and
+  `CalendarEvent/set/update` (a second location was dropped: iCalendar
+  has one LOCATION; more locations are now a VLOCATION each, RFC 9073
+  7.2, keyed by UID, with `LOCATION;DERIVED=TRUE` naming
+  `mainLocationId`, and one location keeps its key in a JSID parameter,
+  draft-ietf-calext-jscalendar-icalendar 2.2.4, 2.3.25).
 - **Latency** (`ROBINMAIL_LATENCY`, `internal/store`, 500 operations one
   after the other on a laptop, p50 / p90 / p99; a delivery includes
   writing the blob file with fsync, which is most of it):
