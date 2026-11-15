@@ -1,7 +1,7 @@
 // One message being written: the fields, the body as plain or rich text,
 // attachments, and the buttons to send, close or discard it.
 
-import { ChangeDetectionStrategy, Component, type ElementRef, afterNextRender, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core'
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, type ElementRef, afterNextRender, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core'
 import { type Attachment, type Composer, formatAddress } from '@robinmail/jmap'
 import { client, compose } from '../app'
 import { ALERT, Btn } from '../ui/controls'
@@ -32,14 +32,14 @@ const sendKeys = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctr
       <header class="flex h-10 shrink-0 items-center gap-1 rounded-t-lg bg-elevated pl-3 pr-1" [class]="c.minimized ? '' : 'max-sm:rounded-none'">
         <button
           type="button" class="flex min-w-0 flex-1 items-center gap-2 self-stretch text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
-          [attr.aria-expanded]="!c.minimized" [attr.aria-label]="(c.minimized ? 'Open ' : 'Minimise ') + title()" (click)="c.minimized = !c.minimized"
+          [attr.aria-expanded]="!c.minimized" [attr.aria-label]="(c.minimized ? 'Open ' : 'Minimise ') + title()" (click)="toggleMinimized()"
         >
           <span class="truncate text-sm font-medium text-highlighted">{{ title() }}</span>
           @if (status()) {
             <span class="shrink-0 text-xs" [class]="c.saveError ? 'text-error' : 'text-dimmed'" data-testid="composer-status" aria-live="polite">{{ status() }}</span>
           }
         </button>
-        <button rmBtn type="button" size="xs" color="neutral" variant="ghost" [attr.aria-label]="c.minimized ? 'Open' : 'Minimise'" [title]="c.minimized ? 'Open' : 'Minimise'" (click)="c.minimized = !c.minimized">
+        <button rmBtn type="button" size="xs" color="neutral" variant="ghost" [attr.aria-label]="c.minimized ? 'Open' : 'Minimise'" [title]="c.minimized ? 'Open' : 'Minimise'" (click)="toggleMinimized()">
           <rm-icon [name]="c.minimized ? 'chevron-up' : 'minus'" class="size-4" />
         </button>
         <button rmBtn type="button" size="xs" color="neutral" variant="ghost" aria-label="Save and close" title="Save and close" data-testid="composer-close" (click)="close()">
@@ -170,6 +170,7 @@ export class ComposerPanel {
   readonly composer = input.required<Composer>()
   readonly phone = input(false)
   private readonly toaster = inject(Toaster)
+  private readonly changes = inject(ChangeDetectorRef)
   protected readonly compose = compose
   protected readonly fileSize = fileSize
   protected readonly round = Math.round
@@ -228,6 +229,15 @@ export class ComposerPanel {
         }
       })
     })
+  }
+
+  // The panel changes size at once, not at the next round of rendering:
+  // what is under it must not show through for a frame, and whoever
+  // measures the panel right after the click gets the new size.
+  protected toggleMinimized(): void {
+    const c = this.composer()
+    c.minimized = !c.minimized
+    this.changes.detectChanges()
   }
 
   protected max0(n: number): number {

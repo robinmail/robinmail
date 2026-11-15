@@ -1,5 +1,5 @@
 import { Dialog, type DialogRef } from '@angular/cdk/dialog'
-import { ChangeDetectionStrategy, Component, type OnDestroy, type TemplateRef, effect, inject, input, model, viewChild } from '@angular/core'
+import { ChangeDetectionStrategy, Component, type OnDestroy, type TemplateRef, effect, inject, input, model, untracked, viewChild } from '@angular/core'
 import { Icon } from './icon'
 
 // A dialog over the page (CDK Dialog: focus trap, Escape, role="dialog").
@@ -18,9 +18,11 @@ import { Icon } from './icon'
               <p class="mt-1 text-sm text-muted">{{ description() }}</p>
             }
           </div>
-          <button type="button" class="rounded p-1 text-dimmed hover:text-highlighted" aria-label="Close" (click)="open.set(false)">
-            <rm-icon name="x" class="size-4" />
-          </button>
+          @if (dismissible()) {
+            <button type="button" class="rounded p-1 text-dimmed hover:text-highlighted" aria-label="Close" (click)="open.set(false)">
+              <rm-icon name="x" class="size-4" />
+            </button>
+          }
         </div>
         <div class="overflow-y-auto p-4"><ng-content /></div>
         <div class="flex justify-end gap-2 border-t border-default p-4 empty:hidden"><ng-content select="[modal-footer]" /></div>
@@ -33,6 +35,8 @@ export class Modal implements OnDestroy {
   readonly title = input('')
   readonly description = input('')
   readonly wide = input(false)
+  // false: only the dialog's own buttons close it, not Escape or a click beside it.
+  readonly dismissible = input(true)
   private readonly tpl = viewChild.required<TemplateRef<unknown>>('tpl')
   private readonly dialog = inject(Dialog)
   private ref: DialogRef<unknown> | null = null
@@ -41,7 +45,7 @@ export class Modal implements OnDestroy {
     effect(() => {
       const open = this.open()
       if (open && !this.ref) {
-        const ref = this.dialog.open(this.tpl(), { ariaLabel: this.title(), autoFocus: 'first-tabbable', restoreFocus: true })
+        const ref = this.dialog.open(this.tpl(), { ariaLabel: untracked(() => this.title()), autoFocus: 'first-tabbable', restoreFocus: true, disableClose: untracked(() => !this.dismissible()) })
         this.ref = ref
         ref.closed.subscribe(() => {
           if (this.ref === ref) this.ref = null
@@ -54,6 +58,12 @@ export class Modal implements OnDestroy {
       }
     })
   }
+
+  private readonly lock = effect(() => {
+    const fixed = !this.dismissible()
+    this.open()
+    if (this.ref) this.ref.disableClose = fixed
+  })
 
   ngOnDestroy(): void {
     this.ref?.close()

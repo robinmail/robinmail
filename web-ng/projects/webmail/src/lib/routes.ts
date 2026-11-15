@@ -3,6 +3,8 @@ import { DefaultUrlSerializer, Router, type Routes, type UrlMatcher, UrlSegment,
 import { Frame } from './frame'
 import { LoginPage } from './pages/login-page'
 import { MailPage } from './pages/mail-page'
+import { SecurityPage } from './pages/security-page'
+import { SettingsPage } from './pages/settings-page'
 import { sessionGuard, watchSession } from './session'
 import { ColorMode } from './ui/color-mode'
 
@@ -25,6 +27,8 @@ export const webmailRoutes: Routes = [
     children: [
       { path: 'login', component: LoginPage, data: { name: 'login' } },
       { matcher: mail, component: MailPage, data: { name: 'mail' } },
+      { path: 'settings', component: SettingsPage, data: { name: 'settings' } },
+      { path: 'settings/security', component: SecurityPage, data: { name: 'security' } },
       { path: '**', redirectTo: 'mail' },
     ],
   },
