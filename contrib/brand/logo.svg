@@ -1,12 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="112" fill="#1d2433"/>
-  <!-- envelope -->
-  <rect x="96" y="160" width="320" height="224" rx="28" fill="#f4efe6"/>
-  <path d="M110 178 L256 292 L402 178" fill="none" stroke="#1d2433" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- robin: round body with an orange breast, sitting on the envelope -->
-  <circle cx="352" cy="146" r="62" fill="#3a2f2a"/>
-  <circle cx="362" cy="160" r="40" fill="#e8642c"/>
-  <circle cx="330" cy="124" r="9" fill="#f4efe6"/>
-  <circle cx="330" cy="124" r="4" fill="#1d2433"/>
-  <path d="M298 128 L272 138 L298 144 Z" fill="#f2b33d"/>
+  <defs><clipPath id="body"><path d="M134,198 C134,152 166,123 205,123 C247,123 270,152 280,188 C296,238 332,265 360,292 L415,366 L376,391 L334,355 C314,391 278,409 238,409 C170,409 126,355 126,283 C126,252 131,224 134,198 Z"/></clipPath></defs>
+  <rect width="512" height="512" fill="#f4efe6"/>
+  <path d="M134,198 C134,152 166,123 205,123 C247,123 270,152 280,188 C296,238 332,265 360,292 L415,366 L376,391 L334,355 C314,391 278,409 238,409 C170,409 126,355 126,283 C126,252 131,224 134,198 Z M136,182 L97,198 L138,211 Z" fill="#2a211c"/>
+  <ellipse cx="166" cy="314" rx="99" ry="113" fill="#e8642c" clip-path="url(#body)"/>
+  <circle cx="187" cy="171" r="11" fill="#f4efe6"/>
 </svg>
