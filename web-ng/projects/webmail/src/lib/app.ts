@@ -2,7 +2,7 @@
 // the stores. Nothing here is kept in localStorage: the session is the
 // cookie, which scripts cannot read.
 
-import { type Account, ComposeStore, JmapClient, MailStore, reactive } from '@robinmail/jmap'
+import { type Account, CalendarStore, ComposeStore, ContactsStore, JmapClient, MailStore, reactive } from '@robinmail/jmap'
 
 export const auth = reactive({
   // Whether /auth/session was asked yet.
@@ -15,6 +15,8 @@ export const auth = reactive({
 export const client = new JmapClient()
 export const store = new MailStore(client)
 export const compose = new ComposeStore(client, store)
+export const calendar = new CalendarStore(client)
+export const contacts = new ContactsStore(client)
 
 // loadAccount fetches what every screen behind the login needs: the
 // mailboxes, then the identities. Composers left from before a new login

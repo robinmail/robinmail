@@ -100,7 +100,12 @@ export async function destroyBySubject(page: Page, subject: string, unread: stri
   })
 }
 
-const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:sieve', 'urn:ietf:params:jmap:vacationresponse']
+const USING = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:sieve', 'urn:ietf:params:jmap:vacationresponse',
+  'urn:ietf:params:jmap:calendars', 'urn:ietf:params:jmap:contacts', 'urn:ietf:params:jmap:principals']
+
+// angular says the server under test has the Angular webmail, which has
+// the calendar and the contacts ("make e2e-vue" sets ROBINMAIL_E2E_WEBMAIL=vue).
+export const angular = process.env.ROBINMAIL_E2E_WEBMAIL !== 'vue'
 
 // jmap sends method calls with the page's session and returns the
 // arguments of each response. accountId is filled in.

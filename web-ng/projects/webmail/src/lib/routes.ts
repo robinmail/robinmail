@@ -26,6 +26,8 @@ export const webmailRoutes: Routes = [
     children: [
       { path: 'login', component: LoginPage, data: { name: 'login' } },
       { matcher: mail, loadComponent: () => import('./pages/mail-page').then((m) => m.MailPage), data: { name: 'mail' } },
+      { path: 'calendar', loadComponent: () => import('./pages/calendar-page').then((m) => m.CalendarPage), data: { name: 'calendar' } },
+      { path: 'contacts', loadComponent: () => import('./pages/contacts-page').then((m) => m.ContactsPage), data: { name: 'contacts' } },
       { path: 'settings', loadComponent: () => import('./pages/settings-page').then((m) => m.SettingsPage), data: { name: 'settings' } },
       { path: 'settings/filters', loadComponent: () => import('./pages/filters-page').then((m) => m.FiltersPage), data: { name: 'filters' } },
       { path: 'settings/vacation', loadComponent: () => import('./pages/vacation-page').then((m) => m.VacationPage), data: { name: 'vacation' } },

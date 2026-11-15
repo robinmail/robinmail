@@ -142,6 +142,7 @@ func mailClients(cfg *config.Config, domains *ownDomains) *web.MailClients {
 		Host:  cfg.Hostname,
 		IMAPS: port(cfg.IMAP.ListenTLS), IMAP: port(cfg.IMAP.Listen),
 		Submissions: port(cfg.Submission.ListenTLS), Submission: port(cfg.Submission.Listen),
+		HTTPS:  port(cfg.Web.Listen),
 		Domain: domains.has,
 	}
 }

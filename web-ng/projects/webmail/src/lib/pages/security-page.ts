@@ -41,7 +41,7 @@ const titles: Record<Dialog['kind'], string> = {
 const submitLabels: Partial<Record<Dialog['kind'], string>> = {
   'new-app': 'Make the password', 'revoke-app': 'Revoke', 'totp-password': 'Continue', 'totp-scan': 'Turn on', 'totp-off': 'Turn off', 'new-codes': 'Make new codes',
 }
-const scopeNames: Record<string, string> = { imap: 'reading (IMAP)', smtp: 'sending (SMTP)', jmap: 'JMAP' }
+const scopeNames: Record<string, string> = { imap: 'reading (IMAP)', smtp: 'sending (SMTP)', jmap: 'JMAP', dav: 'calendars and contacts (CalDAV, CardDAV)' }
 const NOTE = 'flex items-start gap-2 rounded-md px-3 py-2 text-sm ring ring-inset'
 
 @Component({
@@ -146,13 +146,16 @@ const NOTE = 'flex items-start gap-2 rounded-md px-3 py-2 text-sm ring ring-inse
                     <dt class="text-muted">Outgoing (SMTP)</dt>
                     <dd class="break-all font-mono text-highlighted" data-testid="mail-settings-smtp">{{ x.host }}, port {{ x.port }}, {{ x.security }}</dd>
                   }
+                  <dt class="text-muted">Calendars and contacts</dt>
+                  <dd class="break-all font-mono text-highlighted" data-testid="mail-settings-dav">{{ davURL }}</dd>
                 </dl>
+                <p class="text-sm text-muted">Calendar and contact programs (iPhone, macOS, Thunderbird, DAVx⁵) take that address as CalDAV and CardDAV server, or find it from your address.</p>
                 @if (m.profile) {
                   <div class="flex flex-col gap-2">
                     <div>
                       <a rmBtn color="neutral" variant="subtle" href="/auth/mobileconfig" download="mail.mobileconfig" data-testid="mobileconfig"><rm-icon name="download" class="size-4" />Profile for iPhone, iPad and Mac</a>
                     </div>
-                    <p class="text-sm text-muted">The profile adds this account to the Mail app. It is not signed, so the device shows it as “Unsigned”, and it holds no password: the device asks for one.</p>
+                    <p class="text-sm text-muted">The profile adds this account to the Mail app, and its calendars and contacts to Calendar and Contacts. It is not signed, so the device shows it as “Unsigned”, and it holds no password: the device asks for one.</p>
                   </div>
                 }
               </section>
@@ -233,6 +236,7 @@ const NOTE = 'flex items-start gap-2 rounded-md px-3 py-2 text-sm ring ring-inse
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="imap" [(ngModel)]="fImap">Reading mail (IMAP)</label>
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="smtp" [(ngModel)]="fSmtp">Sending mail (SMTP)</label>
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="jmap" [(ngModel)]="fJmap">JMAP programs</label>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="dav" [(ngModel)]="fDav">Calendars and contacts (CalDAV, CardDAV)</label>
           </fieldset>
           @if (hasPassword()) {
             <div class="flex flex-col gap-1">
@@ -374,6 +378,8 @@ export class SecurityPage implements OnInit {
   protected readonly fImap = signal(true)
   protected readonly fSmtp = signal(true)
   protected readonly fJmap = signal(true)
+  protected readonly fDav = signal(true)
+  protected readonly davURL = location.origin + '/dav/'
   protected readonly fPassword = signal('')
   protected readonly fCode = signal('')
   protected readonly submitLabel = computed(() => submitLabels[this.dialog()?.kind ?? 'revoke-others'] ?? 'Log out')
@@ -427,6 +433,7 @@ export class SecurityPage implements OnInit {
     this.fImap.set(true)
     this.fSmtp.set(true)
     this.fJmap.set(true)
+    this.fDav.set(true)
     this.fPassword.set('')
     this.fCode.set('')
   }
@@ -456,8 +463,8 @@ export class SecurityPage implements OnInit {
     switch (d.kind) {
       case 'new-app':
         return this.run(async () => {
-          const all = this.fImap() && this.fSmtp() && this.fJmap()
-          const scopes = all ? [] : [this.fImap() && 'imap', this.fSmtp() && 'smtp', this.fJmap() && 'jmap'].filter((s): s is string => !!s)
+          const all = this.fImap() && this.fSmtp() && this.fJmap() && this.fDav()
+          const scopes = all ? [] : [this.fImap() && 'imap', this.fSmtp() && 'smtp', this.fJmap() && 'jmap', this.fDav() && 'dav'].filter((s): s is string => !!s)
           if (!all && scopes.length === 0) throw new api.AuthError(400, 'choose at least one kind of program')
           const app = await api.createAppPassword(this.fName().trim(), scopes, this.fPassword())
           await this.load()

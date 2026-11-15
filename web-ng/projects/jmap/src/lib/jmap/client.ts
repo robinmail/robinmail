@@ -8,6 +8,8 @@ import type { Id, Invocation, MethodName, Methods, ResultReference, Session } fr
 export const USING = [
   'urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:sieve',
   'urn:ietf:params:jmap:vacationresponse', 'urn:ietf:params:jmap:quota',
+  'urn:ietf:params:jmap:calendars', 'urn:ietf:params:jmap:calendars:parse', 'urn:ietf:params:jmap:contacts',
+  'urn:ietf:params:jmap:principals', 'urn:ietf:params:jmap:principals:availability',
 ]
 
 // HttpError is a response that is not JMAP: 401 without a session, 5xx.
@@ -33,7 +35,9 @@ export function isMethodError(e: unknown, type?: string): e is MethodError {
 
 // Arguments of a call: the method's own, each of which may instead be given
 // as "#name" with a result reference.
-type Args<M extends MethodName> = Methods[M]['args'] & { [ref: `#${string}`]: ResultReference }
+// accountId, when given, names another account than the primary one: one
+// that shares calendars or address books with the user.
+type Args<M extends MethodName> = Methods[M]['args'] & { accountId?: Id } & { [ref: `#${string}`]: ResultReference }
 
 // A Call is one method call of a batch. ref() points a later call of the
 // same batch at part of its result.

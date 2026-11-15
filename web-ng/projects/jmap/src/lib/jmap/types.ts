@@ -311,7 +311,7 @@ export interface EmailGetArgs extends GetArgs {
   maxBodyValueBytes?: number
 }
 
-export interface Methods {
+export interface Methods extends PimMethods {
   'Core/echo': { args: Record<string, unknown>; response: Record<string, unknown> }
   'Mailbox/get': { args: GetArgs; response: GetResponse<Mailbox> }
   'Mailbox/changes': { args: ChangesArgs; response: ChangesResponse & { updatedProperties: string[] | null } }
@@ -360,3 +360,139 @@ export interface Methods {
   }
 }
 export type MethodName = keyof Methods
+
+// Calendars (JMAP Calendars, draft-ietf-jmap-calendars-33), contacts (RFC
+// 9610) and principals (RFC 9670): the parts the webmail uses. Events and
+// cards are JSCalendar and JSContact objects, kept loose.
+export interface CalendarRights {
+  mayReadFreeBusy: boolean
+  mayReadItems: boolean
+  mayWriteAll: boolean
+  mayWriteOwn: boolean
+  mayUpdatePrivate: boolean
+  mayRSVP: boolean
+  mayShare: boolean
+  mayDelete: boolean
+}
+export interface Calendar {
+  id: Id
+  name: string
+  description: string | null
+  color: string | null
+  sortOrder: number
+  isSubscribed: boolean
+  isVisible: boolean
+  isDefault: boolean
+  includeInAvailability: string
+  timeZone: string | null
+  shareWith: Record<Id, CalendarRights> | null
+  myRights: CalendarRights
+}
+export interface Participant {
+  '@type'?: 'Participant'
+  name?: string
+  email?: string
+  calendarAddress?: string
+  roles?: Record<string, boolean>
+  participationStatus?: string
+  expectReply?: boolean
+  kind?: string
+}
+export interface RecurrenceRule {
+  '@type'?: 'RecurrenceRule'
+  frequency: string
+  interval?: number
+  count?: number
+  until?: string
+  byDay?: { day: string; nthOfPeriod?: number }[]
+  byMonthDay?: number[]
+}
+export interface CalendarEvent {
+  id: Id
+  '@type'?: 'Event'
+  uid?: string
+  baseEventId?: Id | null
+  calendarIds: Record<Id, boolean>
+  isOrigin?: boolean
+  title?: string
+  description?: string
+  start: string
+  duration?: string
+  timeZone?: string | null
+  showWithoutTime?: boolean
+  utcStart?: string
+  utcEnd?: string
+  recurrenceRule?: RecurrenceRule | null
+  recurrenceOverrides?: Record<string, Record<string, unknown>> | null
+  recurrenceId?: string | null
+  locations?: Record<string, { '@type'?: 'Location'; name?: string }> | null
+  participants?: Record<string, Participant> | null
+  organizerCalendarAddress?: string | null
+  alerts?: Record<string, { '@type'?: 'Alert'; trigger: { '@type': string; offset?: string; when?: string } }> | null
+  status?: string
+  freeBusyStatus?: string
+  privacy?: string
+  sequence?: number
+  [key: string]: unknown
+}
+export interface AddressBook {
+  id: Id
+  name: string
+  description: string | null
+  sortOrder: number
+  isDefault: boolean
+  isSubscribed: boolean
+  shareWith: Record<Id, { mayRead: boolean; mayWrite: boolean; mayShare: boolean; mayDelete: boolean }> | null
+  myRights: { mayRead: boolean; mayWrite: boolean; mayShare: boolean; mayDelete: boolean }
+}
+export interface ContactCard {
+  id: Id
+  '@type'?: 'Card'
+  uid?: string
+  addressBookIds: Record<Id, boolean>
+  kind?: string
+  name?: { full?: string; components?: { kind: string; value: string }[] }
+  emails?: Record<string, { address: string; contexts?: Record<string, boolean>; label?: string; pref?: number }>
+  phones?: Record<string, { number: string; features?: Record<string, boolean>; contexts?: Record<string, boolean>; label?: string }>
+  organizations?: Record<string, { name?: string; units?: { name: string }[] }>
+  titles?: Record<string, { name: string; kind?: string }>
+  addresses?: Record<string, { full?: string; components?: { kind: string; value: string }[]; contexts?: Record<string, boolean> }>
+  notes?: Record<string, { note: string }>
+  anniversaries?: Record<string, { kind: string; date: { year?: number; month?: number; day?: number } }>
+  [key: string]: unknown
+}
+export interface Principal {
+  id: Id
+  type: string
+  name: string
+  email: string | null
+}
+export interface BusyPeriod {
+  utcStart: string
+  utcEnd: string
+  busyStatus: string
+  event: CalendarEvent | null
+}
+type Q<F> = { filter?: F | null; sort?: Comparator[] | null; position?: number; limit?: number; calculateTotal?: boolean }
+export interface PimMethods {
+  'Calendar/get': { args: GetArgs; response: GetResponse<Calendar> }
+  'Calendar/set': { args: SetArgs<Calendar> & { onDestroyRemoveEvents?: boolean; onSuccessSetIsDefault?: Id | null }; response: SetResponse<Calendar> }
+  'CalendarEvent/get': { args: GetArgs & { timeZone?: string; recurrenceOverridesBefore?: string; recurrenceOverridesAfter?: string }; response: GetResponse<CalendarEvent> }
+  'CalendarEvent/query': {
+    args: Q<Record<string, unknown>> & { expandRecurrences?: boolean; timeZone?: string }
+    response: QueryResponse
+  }
+  'CalendarEvent/set': { args: SetArgs<CalendarEvent> & { sendSchedulingMessages?: boolean }; response: SetResponse<CalendarEvent> }
+  'CalendarEvent/parse': { args: { blobIds: Id[]; properties?: string[] | null }; response: { accountId: Id; parsed: Record<Id, CalendarEvent[]> | null; notFound: Id[] | null; notParsable: Id[] | null } }
+  'AddressBook/get': { args: GetArgs; response: GetResponse<AddressBook> }
+  'AddressBook/set': { args: SetArgs<AddressBook>; response: SetResponse<AddressBook> }
+  'ContactCard/get': { args: GetArgs; response: GetResponse<ContactCard> }
+  'ContactCard/query': { args: Q<Record<string, unknown>>; response: QueryResponse }
+  'ContactCard/set': { args: SetArgs<ContactCard>; response: SetResponse<ContactCard> }
+  'Principal/get': { args: GetArgs; response: GetResponse<Principal> }
+  'Principal/query': { args: Q<Record<string, unknown>>; response: QueryResponse }
+  'Principal/getAvailability': {
+    args: { id: Id; utcStart: string; utcEnd: string; showDetails?: boolean; eventProperties?: string[] | null }
+    response: { list: BusyPeriod[] }
+  }
+}

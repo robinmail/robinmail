@@ -433,6 +433,24 @@ func TestMobileConfig(t *testing.T) {
 	if p := plist(t, c.MobileConfig(`"a<b&c"@example.test`)); p["PayloadContent"].([]any)[0].(map[string]any)["EmailAddress"] != `"a<b&c"@example.test` {
 		t.Error("an odd address is not written as text")
 	}
+	// With a web listener, the profile also sets up CalDAV and CardDAV
+	// (Apple's com.apple.caldav.account and com.apple.carddav.account).
+	c.HTTPS = 8443
+	dav := plist(t, c.MobileConfig("anna@example.test"))["PayloadContent"].([]any)
+	if len(dav) != 3 {
+		t.Fatalf("%d payloads with HTTPS", len(dav))
+	}
+	for i, kind := range []string{"CalDAV", "CardDAV"} {
+		m := dav[i+1].(map[string]any)
+		for key, want := range map[string]any{
+			"PayloadType": "com.apple." + strings.ToLower(kind) + ".account", kind + "HostName": "mail.example.test", kind + "Port": int64(8443),
+			kind + "PrincipalURL": "https://mail.example.test:8443/dav/", kind + "UseSSL": true, kind + "Username": "anna@example.test",
+		} {
+			if m[key] != want {
+				t.Errorf("%s %s: %v, want %v", kind, key, m[key], want)
+			}
+		}
+	}
 }
 
 // The profile and the settings are for the user who is logged in.

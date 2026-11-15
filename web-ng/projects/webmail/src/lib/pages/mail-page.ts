@@ -6,6 +6,7 @@ import { ChangeDetectionStrategy, Component, type OnDestroy, type OnInit, comput
 import { Router, RouterLink } from '@angular/router'
 import { Push, authApi } from '@robinmail/jmap'
 import { auth, compose, loadAccount, store } from '../app'
+import { AppSwitcher } from '../components/app-switcher'
 import { FilterBox } from '../components/filter-box'
 import { MailboxNav } from '../components/mailbox-nav'
 import { MessageList } from '../components/message-list'
@@ -27,7 +28,7 @@ const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl
 
 @Component({
   selector: 'rm-mail-page',
-  imports: [RouterLink, CdkConnectedOverlay, CdkOverlayOrigin, Btn, Badge, Icon, ColorModeButton, FilterBox, MailboxNav, MessageList, QuotaMeter, ThreadView],
+  imports: [RouterLink, CdkConnectedOverlay, CdkOverlayOrigin, AppSwitcher, Btn, Badge, Icon, ColorModeButton, FilterBox, MailboxNav, MessageList, QuotaMeter, ThreadView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block h-full' },
   template: `
@@ -56,6 +57,7 @@ const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl
             </a>
           </div>
           <div class="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3">
+            <rm-app-switcher class="mb-3 block" />
             <button rmBtn type="button" [block]="true" class="mb-3" data-testid="compose" [disabled]="!compose.state.identitiesLoaded" (click)="compose.compose()">
               <rm-icon name="pen-line" class="size-4" />New message
             </button>

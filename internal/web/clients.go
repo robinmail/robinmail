@@ -39,6 +39,9 @@ type MailClients struct {
 	// Submissions have TLS from the first byte (RFC 8314), the other two
 	// STARTTLS.
 	IMAPS, IMAP, Submissions, Submission int
+	// HTTPS is the port of the web listener, where CalDAV and CardDAV are
+	// (/dav/); 0 for none.
+	HTTPS int
 	// Domain reports whether a domain is ours.
 	Domain func(ctx context.Context, domain string) bool
 }
@@ -262,6 +265,14 @@ func profileUUID(parts ...string) string {
 	return strings.ToUpper(fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16]))
 }
 
+// portSuffix is ":port" unless the port is 443.
+func portSuffix(port int) string {
+	if port == 443 {
+		return ""
+	}
+	return ":" + strconv.Itoa(port)
+}
+
 // reverseDNS turns mail.example.org into org.example.mail, the form of a
 // payload identifier.
 func reverseDNS(host string) string {
@@ -315,7 +326,28 @@ func (c *MailClients) MobileConfig(addr string) []byte {
 	str(in2, "PayloadType", "com.apple.mail.managed")
 	str(in2, "PayloadUUID", profileUUID("mail", c.Host, addr))
 	num(in2, "PayloadVersion", 1)
-	b.WriteString("\t\t</dict>\n\t</array>\n")
+	b.WriteString("\t\t</dict>\n")
+	// Calendars and contacts (phase 9): CalDAV and CardDAV on the web
+	// listener, found from /dav/ by current-user-principal (RFC 5397).
+	if c.HTTPS > 0 {
+		for _, kind := range []string{"CalDAV", "CardDAV"} {
+			b.WriteString("\t\t<dict>\n")
+			str(in2, kind+"AccountDescription", addr)
+			str(in2, kind+"HostName", c.Host)
+			num(in2, kind+"Port", c.HTTPS)
+			str(in2, kind+"PrincipalURL", "https://"+c.Host+portSuffix(c.HTTPS)+"/dav/")
+			flag(in2, kind+"UseSSL", true)
+			str(in2, kind+"Username", addr)
+			str(in2, "PayloadDescription", map[string]string{"CalDAV": "Calendars of ", "CardDAV": "Contacts of "}[kind]+addr)
+			str(in2, "PayloadDisplayName", addr)
+			str(in2, "PayloadIdentifier", id+"."+strings.ToLower(kind)+"."+profileUUID(kind, c.Host, addr))
+			str(in2, "PayloadType", "com.apple."+strings.ToLower(kind)+".account")
+			str(in2, "PayloadUUID", profileUUID(kind, c.Host, addr))
+			num(in2, "PayloadVersion", 1)
+			b.WriteString("\t\t</dict>\n")
+		}
+	}
+	b.WriteString("\t</array>\n")
 	str("\t", "PayloadDescription", "Mail account "+addr+" on "+c.Host)
 	str("\t", "PayloadDisplayName", "Mail: "+addr)
 	str("\t", "PayloadIdentifier", id+"."+profileUUID("profile", c.Host, addr))
