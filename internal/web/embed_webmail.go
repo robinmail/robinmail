@@ -1,4 +1,4 @@
-//go:build webmail
+//go:build webmail && !webmail_ng
 
 package web
 
@@ -9,7 +9,8 @@ import (
 
 // dist is the built webmail: "make web" copies web/dist here. The
 // directory is not in git, so this file only compiles after that; without
-// the "webmail" tag the binary has the placeholder page instead.
+// the "webmail" tag the binary has the placeholder page instead. The tag
+// "webmail_ng" puts the Angular webmail in its place (embed_webmail_ng.go).
 //
 // "all:" because Vite names some chunks with a leading underscore, which
 // a plain pattern leaves out.

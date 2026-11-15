@@ -1,4 +1,4 @@
-//go:build webmail
+//go:build webmail || webmail_ng
 
 package web
 
@@ -11,7 +11,9 @@ import (
 
 // The built webmail, as "make" embeds it, served by the real handler: the
 // entry page for every route of the app, its assets cacheable forever, and
-// nothing in the page that the Content-Security-Policy would refuse.
+// nothing in the page that the Content-Security-Policy would refuse. The
+// same holds for the Angular webmail ("make build-ng", tag webmail_ng):
+// its build has the same layout, index.html and assets/.
 func TestEmbeddedWebmail(t *testing.T) {
 	app := Embedded()
 	index, err := fs.ReadFile(app, "index.html")
@@ -32,6 +34,11 @@ func TestEmbeddedWebmail(t *testing.T) {
 	}
 	if regexp.MustCompile(`(?i)(src|href)\s*=\s*["']?(https?:)?//`).MatchString(page) {
 		t.Errorf("index.html loads from another host:\n%s", page)
+	}
+	// The policy says base-uri 'none': a <base> element would be refused,
+	// and the page's relative addresses would then point somewhere else.
+	if regexp.MustCompile(`(?i)<base\b`).MatchString(page) {
+		t.Errorf("index.html has a <base> element")
 	}
 
 	st := newSite(t)

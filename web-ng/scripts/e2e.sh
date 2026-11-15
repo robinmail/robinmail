@@ -3,31 +3,28 @@
 # specs, the same development instance, another binary. Like
 # contrib/dev/e2e.sh, with these differences:
 #
-#   - the server is web-ng/dist/robinmail-ng (scripts/go-build.mjs), built
-#     here when it is missing or older than dist/shell;
+#   - the server is ./robinmail-ng ("make build-ng" in the repository root:
+#     the Go server with web-ng/dist/shell inside), built here when missing;
 #   - it listens on 127.0.0.1:8085 unless ROBINMAIL_E2E_PORT says otherwise,
 #     so a development server on 8080 can stay up;
 #   - the instance is only seeded when ./dev has none yet.
 #
-#   scripts/e2e.sh               all tests
-#   scripts/e2e.sh mail auth     the tests in files with these words in the name
-#   SERVE=1 scripts/e2e.sh       no tests: the server stays up until Ctrl-C
+#   web-ng/scripts/e2e.sh               all tests ("make e2e-ng" builds first)
+#   web-ng/scripts/e2e.sh mail auth     the tests in files with these words in the name
+#   SERVE=1 web-ng/scripts/e2e.sh       no tests: the server stays up until Ctrl-C
 set -eu
 cd "$(dirname "$0")/../.."
 PORT=${ROBINMAIL_E2E_PORT:-8085}
 export ROBINMAIL_E2E_PORT="$PORT"
 
-[ -f web-ng/dist/shell/index.html ] || (cd web-ng && npm run build)
-if [ ! -x web-ng/dist/robinmail-ng ] || [ web-ng/dist/shell/index.html -nt web-ng/dist/robinmail-ng ]; then
-	node web-ng/scripts/go-build.mjs
-fi
+[ -x robinmail-ng ] || make build-ng
 [ -x dev/robinmail ] && [ -f dev/robinmail.json ] || contrib/dev/seed.sh
 [ -x dev/oidc-provider ] || go build -o dev/oidc-provider ./contrib/dev/oidc-provider
 node contrib/dev/e2e-config.mjs
 
 dev/oidc-provider -listen 127.0.0.1:8090 &
 provider=$!
-web-ng/dist/robinmail-ng -config dev/robinmail.e2e.json serve &
+./robinmail-ng -config dev/robinmail.e2e.json serve &
 server=$!
 stop() {
 	kill "$server" "$provider" 2>/dev/null || true

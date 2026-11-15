@@ -4,5 +4,7 @@
 /master.key
 /dev/
 /internal/web/dist/
+/internal/web/dist-ng/
+/robinmail-ng
 /contrib/compose/cluster/secrets/
 /contrib/lab/secrets/

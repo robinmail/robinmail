@@ -12,10 +12,20 @@
 #   make thunderbird-test   only the Thunderbird tests of the lab
 #   make clean
 #
+# The Angular webmail in web-ng/ stands next to the Vue one, which stays
+# the one "make" builds:
+#
+#   make build-ng   the Angular webmail, then ./robinmail-ng with it inside
+#   make web-ng     only that webmail: web-ng/dist/shell, copied to internal/web/dist-ng
+#   make test-ng    its unit tests, and the Go tests of the binary that has it
+#   make e2e-ng     the browser tests of web/e2e against ./robinmail-ng
+#   make dev-ng     like "make dev", with ng serve on http://localhost:4200
+#
 # A plain "go build ./cmd/robinmail" needs no Node and no make: that binary
 # answers with a placeholder page instead of the webmail. The webmail gets
 # in through the build tag "webmail", which embeds internal/web/dist; that
-# directory and web/dist are build output and not in git.
+# directory and web/dist are build output and not in git. The tag
+# "webmail_ng" embeds internal/web/dist-ng, the Angular build, instead.
 #
 # Tests that need rqlite are skipped unless ROBINMAIL_TEST_RQLITE is set:
 #
@@ -54,7 +64,10 @@ GO ?= go
 NPM ?= npm
 WEB_SRC := $(shell find web/src web/public web/index.html web/package.json web/package-lock.json web/vite.config.ts web/tsconfig.json -type f 2>/dev/null)
 
-.PHONY: all build web test test-go test-web e2e dev clean cluster-test lab-test thunderbird-test keycloak-test
+WEB_NG_SRC := $(shell find web-ng/projects web-ng/scripts web-ng/angular.json web-ng/package.json web-ng/package-lock.json web-ng/tsconfig.json web-ng/.postcssrc.json -type f 2>/dev/null)
+
+.PHONY: all build web test test-go test-web e2e dev clean cluster-test lab-test thunderbird-test keycloak-test \
+	build-ng web-ng test-ng e2e-ng dev-ng
 
 all: build
 
@@ -73,6 +86,37 @@ internal/web/dist/index.html: web/node_modules $(WEB_SRC)
 	cd web && $(NPM) run build
 	rm -rf internal/web/dist
 	cp -R web/dist internal/web/dist
+
+# The Angular webmail. "npm run build" builds the two libraries with
+# ng-packagr and the application from them, and moves the files named by
+# their content to assets/, where the server caches them for a year.
+build-ng: internal/web/dist-ng/index.html
+	$(GO) build -tags webmail_ng -o robinmail-ng ./cmd/robinmail
+
+web-ng: internal/web/dist-ng/index.html
+
+web-ng/node_modules: web-ng/package.json web-ng/package-lock.json
+	cd web-ng && $(NPM) ci
+	@touch web-ng/node_modules
+
+internal/web/dist-ng/index.html: web-ng/node_modules $(WEB_NG_SRC)
+	cd web-ng && $(NPM) run build
+	rm -rf internal/web/dist-ng
+	cp -R web-ng/dist/shell internal/web/dist-ng
+
+test-ng: internal/web/dist-ng/index.html
+	cd web-ng && $(NPM) test
+	$(GO) vet -tags webmail_ng ./...
+	$(GO) test -race -tags webmail_ng ./internal/web ./cmd/robinmail
+
+# On 127.0.0.1:8085, so that a development server on 8080 can stay up.
+e2e-ng: build-ng
+	web-ng/scripts/e2e.sh
+
+dev-ng: web-ng/node_modules
+	contrib/dev/seed.sh
+	@trap 'kill 0' EXIT; dev/robinmail -config dev/robinmail.json serve & \
+		cd web-ng && $(NPM) run dev
 
 test: test-go test-web
 
@@ -134,4 +178,4 @@ thunderbird-test:
 		[ -n "$(KEEP)" ] || contrib/lab/lab.sh down; exit $$s
 
 clean:
-	rm -rf robinmail web/dist internal/web/dist
+	rm -rf robinmail web/dist internal/web/dist robinmail-ng web-ng/dist internal/web/dist-ng
