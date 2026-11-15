@@ -113,9 +113,11 @@ type TLSReportSent struct {
 	Outcome string
 }
 
-// TLSReportsSent lists the newest reports this server made.
-func (s *Store) TLSReportsSent(ctx context.Context, limit int) ([]TLSReportSent, error) {
-	res, err := s.query(ctx, "", q(`SELECT day, domain, at, outcome FROM tls_report_sent ORDER BY day DESC, domain LIMIT :limit`, "limit", limit))
+// TLSReportsSent lists the reports this server made for the days from
+// first to last, oldest day first. It asks by day and not for the newest
+// few: a count would let rows of other days push the asked ones out.
+func (s *Store) TLSReportsSent(ctx context.Context, first, last int64) ([]TLSReportSent, error) {
+	res, err := s.query(ctx, "", q(`SELECT day, domain, at, outcome FROM tls_report_sent WHERE day >= :first AND day <= :last ORDER BY day, domain`, "first", first, "last", last))
 	if err != nil {
 		return nil, err
 	}

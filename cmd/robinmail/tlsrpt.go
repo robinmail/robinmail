@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -207,11 +206,10 @@ func (a *app) tlsrptResults(days string) error {
 				clip(c.Domain, 30), p.Type, result, c.Count, clip(strings.TrimSpace(c.MX+" "+c.IP), 60))
 		}
 	}
-	sent, err := a.store.TLSReportsSent(a.ctx, 50)
+	sent, err := a.store.TLSReportsSent(a.ctx, today-int64(n)+1, today)
 	if err != nil {
 		return err
 	}
-	sort.SliceStable(sent, func(i, j int) bool { return sent[i].Day < sent[j].Day })
 	for _, s := range sent {
 		fmt.Fprintf(a.stdout, "report of %s for %s: %s\n", time.Unix(s.Day*86400, 0).UTC().Format("2006-01-02"), clip(s.Domain, 40), clip(s.Outcome, 200))
 	}

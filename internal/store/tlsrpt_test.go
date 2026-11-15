@@ -65,7 +65,7 @@ func TestTLSResults(t *testing.T) {
 	if err := s.NoteTLSReport(ctx, day, domain, "sent to mailto:x@"+domain); err != nil {
 		t.Fatal(err)
 	}
-	sent, err := s.TLSReportsSent(ctx, 1000)
+	sent, err := s.TLSReportsSent(ctx, day, day)
 	found := false
 	for _, r := range sent {
 		found = found || (r.Day == day && r.Domain == domain && r.Outcome == "sent to mailto:x@"+domain)
