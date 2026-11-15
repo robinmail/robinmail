@@ -4,7 +4,7 @@ import { Icon } from './icon'
 const KEY = 'robinmail-color-mode'
 
 // Light or dark: what the user chose here, else what the system says. The
-// choice is the class "dark" on <html> and one word in localStorage.
+// choice is the class "dark" or "light" on <html> and one word in localStorage.
 @Injectable({ providedIn: 'root' })
 export class ColorMode {
   readonly dark = signal(false)
@@ -31,7 +31,9 @@ export class ColorMode {
 
   private apply(dark: boolean): void {
     this.dark.set(dark)
+    // Both classes: "light" is what holds the system's dark colours back.
     document.documentElement.classList.toggle('dark', dark)
+    document.documentElement.classList.toggle('light', !dark)
   }
 }
 

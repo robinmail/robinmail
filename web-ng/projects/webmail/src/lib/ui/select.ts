@@ -32,12 +32,13 @@ export interface SelectOption {
       (backdropClick)="close()" (detach)="open.set(false)" (overlayKeydown)="$event.key === 'Escape' && close()" (attach)="opened()"
     >
       <ul
-        #list cdkListbox [cdkListboxValue]="[value()]" (cdkListboxValueChange)="pick($event.value[0])" [attr.aria-label]="label() || null"
+        #list cdkListbox [cdkListboxValue]="chosen()" (cdkListboxValueChange)="pick($event.value[0])" [attr.aria-label]="label() || null"
+        (keydown.enter)="later()" (keydown.space)="later()"
         class="my-1 flex max-h-72 flex-col overflow-y-auto rounded-md bg-default p-1 text-sm shadow-lg ring ring-default outline-none"
       >
         @for (o of options(); track o.value) {
           <li
-            [cdkOption]="o.value" class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-default outline-none hover:bg-elevated aria-selected:font-medium aria-selected:text-highlighted [&.cdk-option-active]:bg-elevated"
+            [cdkOption]="o.value" (click)="later()" class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-default outline-none hover:bg-elevated aria-selected:font-medium aria-selected:text-highlighted [&.cdk-option-active]:bg-elevated"
           >{{ o.label }}</li>
         }
       </ul>
@@ -58,6 +59,8 @@ export class Select {
   protected readonly open = signal(false)
   protected readonly width = signal(0)
   protected readonly current = computed(() => this.options().find((o) => o.value === this.value()))
+  // What the listbox marks: nothing while the value is none of the options.
+  protected readonly chosen = computed(() => (this.current() ? [this.value()] : []))
   private readonly button = viewChild.required<ElementRef<HTMLButtonElement>>('button')
   private readonly list = viewChild<ElementRef<HTMLElement>>('list')
 
@@ -71,9 +74,15 @@ export class Select {
     this.button().nativeElement.focus()
   }
 
-  // A click on the chosen option leaves the value as it is.
+  // The listbox tells of a change of the choice.
   protected pick(v: unknown): void {
     if (typeof v === 'string' && v !== this.value()) this.valueChange.emit(v)
-    this.close()
+  }
+
+  // A click or Enter on an option closes the list, also on the one that
+  // was chosen already, of which the listbox tells nothing. A moment
+  // later: the listbox handles the same event first.
+  protected later(): void {
+    setTimeout(() => this.open() && this.close())
   }
 }

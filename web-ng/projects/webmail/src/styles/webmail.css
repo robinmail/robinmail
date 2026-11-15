@@ -32,6 +32,9 @@
   --ui-header-height: 4rem;
 }
 
+/* Dark: when the user chose it here (the class "dark" on <html>), and
+   before the script has run, or without a choice, when the system says
+   so: the page is not white for a moment first. */
 .dark {
   color-scheme: dark;
   --ui-primary: var(--color-orange-400);
@@ -51,6 +54,29 @@
   --ui-bg-inverted: var(--color-white);
   --ui-border: var(--color-stone-800);
   --ui-border-accented: var(--color-stone-700);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    color-scheme: dark;
+    --ui-primary: var(--color-orange-400);
+    --ui-error: var(--color-red-400);
+    --ui-warning: var(--color-yellow-400);
+    --ui-success: var(--color-green-400);
+    --ui-text-dimmed: var(--color-stone-500);
+    --ui-text-muted: var(--color-stone-400);
+    --ui-text-toned: var(--color-stone-300);
+    --ui-text: var(--color-stone-200);
+    --ui-text-highlighted: var(--color-white);
+    --ui-text-inverted: var(--color-stone-900);
+    --ui-bg: var(--color-stone-900);
+    --ui-bg-muted: var(--color-stone-800);
+    --ui-bg-elevated: var(--color-stone-800);
+    --ui-bg-accented: var(--color-stone-700);
+    --ui-bg-inverted: var(--color-white);
+    --ui-border: var(--color-stone-800);
+    --ui-border-accented: var(--color-stone-700);
+  }
 }
 
 @theme inline {
