@@ -4,9 +4,11 @@ robinmail is a JMAP-first mail server in Go. It receives mail, stores it, sends
 it, and serves it over JMAP (RFC 8620, RFC 8621) and, for mail clients, over
 IMAP (RFC 3501, RFC 9051). The webmail is a Vue app in
 `web/` that talks JMAP and ships inside the Go binary. Spam filtering and SPF/DKIM/DMARC are delegated to
-Rspamd. Metadata lives in rqlite. Message files live on each node's own disk,
-encrypted, and robinmail copies them between nodes itself, so a cluster can
-run in several availability zones without any other storage service.
+Rspamd. Metadata lives in SQLite, replicated between the nodes with Raft
+inside robinmail (since phase 10; rqlite before). Message files live on
+each node's own disk, encrypted, and robinmail copies them between nodes
+itself, so a cluster can run in several availability zones without any
+other storage service.
 
 It replaces owl (`../owl`), whose per-folder Maildir store does not fit JMAP.
 This is a learning project. There is no production target yet.
@@ -20,7 +22,7 @@ This is a learning project. There is no production target yet.
 | Mail API | JMAP core and mail | One standard API for the webmail, a later app and existing clients. |
 | Metadata | One SQLite database for all accounts, replicated with Raft inside robinmail (phase 10; before it a separate rqlite cluster) | The robinmail nodes are the whole cluster. Strong consistency stays: IMAP UIDs and modseq need one order of writes. Consensus is etcd's Raft library, not code of our own. |
 | Message files | Immutable blobs on the local disk of every node, named by account and SHA-256 of the plaintext | No storage service to run. robinmail replicates blobs itself (phase 4): every node holds every blob, a write is acknowledged once 2 nodes have it, and a background check fetches missing ones. |
-| Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has. What rqlite holds is not encrypted by robinmail: the cached header fields and previews, and since phase 8 the full-text index, from which the words of every message can be read | Protects the blobs against stolen disks and backups. Does not protect against a compromised running server, which holds the master key, nor does it cover rqlite's files: those need an encrypted disk. |
+| Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has. What the database holds is not encrypted by robinmail: the cached header fields and previews, and since phase 8 the full-text index, from which the words of every message can be read | Protects the blobs against stolen disks and backups. Does not protect against a compromised running server, which holds the master key, nor does it cover the database files: those need an encrypted disk. |
 | Access to the database | Embedded since phase 10: no SQL API on any port. Raft travels over the node-to-node mutual TLS; a command on a node reaches its running server over loopback TLS with the node's own key. Before it rqlite was a separate service, locked down in phase 8 | Whoever reached rqlite's HTTP port without a login read and wrote every account. Now the way in is a node's private key or a shell on a node. |
 | Nodes | Not stateless: each node holds the database and the blobs on its own disk. Any node serves any account | No owner per account. The Raft leader orders the writes; a node forwards its writes to it. |
 | Between nodes | Nodes know each other from the Raft membership and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates of members | No CA and no shared secret to distribute. Who may join is decided by `robinmail node add` on a member, which names the newcomer's certificate. |
@@ -29,7 +31,7 @@ This is a learning project. There is no production target yet.
 | Webmail | Since phase 9 the Angular single-page app in `web-ng/` (mail, calendar, contacts); before it the Vue app in `web/` (Vite, Vue Router, Nuxt UI), which stays buildable. Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. |
 | Calendars and contacts | JMAP (Calendars, Contacts, Principals) for the webmail; CalDAV and CardDAV for programs; one store under both, of iCalendar and vCard text | Phones and desktop programs speak only DAV; the webmail speaks only JMAP. Text as clients sent it keeps what JSCalendar has no word for. |
 | Origin | One hostname. robinmail serves the API under `/jmap`, `/.well-known/jmap` and `/auth`, and the embedded webmail everywhere else | Same origin: no CORS, `SameSite=Strict` works. |
-| Web auth | Session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, `__Host-`) plus an `Origin` check on every request to `/auth` and JMAP, and JSON with its content type for everything that changes state. No CSRF token. Sessions are rows in rqlite | The client never holds a token. Any node accepts the cookie. The three checks leave no cross-site request for a token to stop (phase 7). |
+| Web auth | Session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, `__Host-`) plus an `Origin` check on every request to `/auth` and JMAP, and JSON with its content type for everything that changes state. No CSRF token. Sessions are rows in the database | The client never holds a token. Any node accepts the cookie. The three checks leave no cross-site request for a token to stop (phase 7). |
 | Spam and mail auth | Rspamd over HTTP | As in owl, including its lessons (below). |
 | Config | JSON | As in owl. |
 | Passwords | Argon2id, PHC string | As in owl. |
@@ -38,23 +40,24 @@ This is a learning project. There is no production target yet.
 
 Not in scope: POP3, migration tooling. Calendars and contacts came in phase 9.
 
-Accepted trade-off: every write goes through the one rqlite leader, also from
+Accepted trade-off: every write goes through the one Raft leader, also from
 another zone. Fine at this scale. If it ever is not, accounts can be spread
-over several rqlite clusters, because every table is keyed by account.
+over several clusters, because every table is keyed by account.
 
 ## Store
 
 ### Where data lives
 
 ```
-rqlite                                            all tables below
+<data_dir>/db/data.db                             all tables below, on every node (phase 10)
+<data_dir>/db/raft.db                             the Raft log of this node
 <data_dir>/blobs/<account-id>/<2 hex>/<sha256>    raw message or uploaded blob, encrypted, immutable
 master key file                                   wraps the account keys; the same on every node
 ```
 
 The name of a blob is the SHA-256 of its plaintext, which is also the JMAP
 blobId. A node keeps its config, the master key file and its blobs on disk,
-nothing else. ACME account and certificates are on that disk too, in
+and since phase 10 the database. ACME account and certificates are on that disk too, in
 `<data_dir>/acme`; each node gets its own.
 
 ### Tables
@@ -109,14 +112,16 @@ Rules:
   stamps the rows it touched and appends to `changes`. The JMAP state string is
   the `modseq`. `/changes` reads `changes` after the given state. Old rows are
   trimmed after 30 days; an older state gets `cannotCalculateChanges`.
-- **Transactions.** rqlite runs a batch of statements atomically but has no
-  interactive transactions: no read, decide in Go, then write. So each store
+- **Transactions.** A write is a batch of statements that every node
+  applies atomically, in log order (rqlite until phase 10, `internal/raftdb`
+  since); there are no interactive transactions: no read, decide in Go,
+  then write. So each store
   operation is one batch whose statements compute what they need in SQL
   (take the counter, look up the thread, take `uidnext`). A precondition
   ("this mailbox exists", later JMAP `ifInState`) is a guard statement:
   `INSERT INTO guard SELECT 1 WHERE NOT (condition)`. The table only accepts
-  0, so an unmet condition breaks its `CHECK` and rolls the batch back. rqlite
-  reports which statement failed, and the store maps that position to an
+  0, so an unmet condition breaks its `CHECK` and rolls the batch back. The
+  database reports which statement failed, and the store maps that position to an
   error such as `ErrNoMailbox`.
 - **Threads.** Assigned in the delivery batch: the first `thread_ref` hit among
   the message's ids wins, otherwise a new thread. Never changed afterwards. Two
@@ -132,7 +137,7 @@ Rules:
   batch that references them. A crash leaves an unreferenced blob, never a
   row without a blob. A sweeper on every node removes that node's
   unreferenced blob files older than a day. It claims a file by renaming it
-  aside, then looks at its age again and asks rqlite once more, so a
+  aside, then looks at its age again and asks the database once more, so a
   delivery of the same content at that moment keeps its blob. In a cluster
   each node sweeps only its own disk. A delivery on another node rewrites
   the file, and so renews its time, on every node its push reaches, and is
@@ -151,21 +156,30 @@ Rules:
   partial failure makes no second copy (owl did). The key is the SHA-256 of
   the envelope sender and the message as received. It cannot be our queue id:
   a retry gets a new one.
-- **Reads** use rqlite's `weak` consistency: no Raft round trip, and a
-  leader that was just cut off can answer from slightly old data for about
-  a second. The sweeper's "is this blob still referenced" decides a
-  deletion and uses `strong`. The login failure counters use `none` with a
-  freshness bound of 5 seconds, so a login never waits for the leader.
-  The poll that finds changes made on other nodes (`internal/notify`)
-  uses `none` too, for `modseq` and for `auth_seq`.
-- **Writes and retries.** When a leader dies mid-write rqlite cannot say
-  whether the batch was applied. A batch is sent again only if a second run
-  is harmless: a delivery (its `delivered` row refuses the second run as a
-  whole), deletes and trims, rows set to given values. Everything that
-  takes a counter or carries a guard fails with "outcome unknown" instead
-  and the caller decides. The list is at `run` in `internal/store`.
-  Submitting a message is made repeatable by a random key in the row: a
-  second run fails on it as a whole, and the row is read back.
+- **Reads** (since phase 10) at `weak` and `strong` are linearizable:
+  Raft's ReadIndex, one round from the node to the leader and from the
+  leader to a quorum, shared by every read waiting at that moment, and the
+  node answers once it has applied that far. A read on any node sees every
+  write acknowledged before it, on any node. A node cut off from the
+  majority does not answer. The login failure counters and the poll that
+  finds changes made on other nodes (`internal/notify`, `modseq` and
+  `auth_seq`) read `none`: the node's own copy, refused after 5 seconds
+  without a leader. (Until phase 10 `weak` was rqlite's leader read, which
+  a just-deposed leader could answer for a second from old data.)
+- **Writes and retries.** Every batch carries a random id; a node applies
+  an id once and keeps its outcome (`raft_request`), so a batch whose
+  answer was lost is proposed again, with the same id, until 15 seconds
+  have passed; only then is the outcome "unknown" and the caller decides.
+  Until phase 10 rqlite could not deduplicate, and only batches that are
+  harmless twice were sent again; the list at `run` in `internal/store`
+  still says which, and a delivery's key in `delivered` and the random key
+  of a submission still make those harmless above the database too.
+- **Deterministic statements.** Every node applies every batch itself, so
+  no statement may read the clock or chance (`now`, `random()`), and
+  nothing runs `ANALYZE`, `PRAGMA optimize` or `VACUUM`: the store passes
+  times and random ids as parameters (`TestSQLIsDeterministic` reads its
+  SQL for them). Values are normalised to what JSON makes of them before
+  they are proposed, as rqlite stored them.
 
 ## Layout
 
@@ -176,9 +190,10 @@ internal/tlsconf     TLS config, cert reload            port as is
 internal/config      JSON config                        port, new fields
 internal/smtp        ESMTP server and client, AUTH      port as is; client and AUTH new
 internal/rspamd      Rspamd client                      port as is
-internal/users       Argon2id hash and verify; app passwords and recovery codes   port the hashing; storage moves to rqlite
+internal/users       Argon2id hash and verify; app passwords and recovery codes   port the hashing; storage moves to the database
 internal/delivery    recipient to mailbox; submission   port; talks to a store interface, mailbox by role
-internal/rqlite      rqlite HTTP client for a cluster   new
+internal/db          the database interface the store uses: batches, reads at a level   new (phase 10)
+internal/raftdb      SQLite replicated with Raft in the process; raftdbtest for tests   new (phase 10); replaced internal/rqlite
 internal/blob        encrypted blob files on disk, replicated between nodes   new
 internal/cluster     node table, mutual TLS, blob transfer between nodes      new
 internal/clustertest tests against the Docker cluster   new; "make cluster-test"
@@ -208,8 +223,8 @@ web/                 Vue webmail (Vite, Nuxt UI), mail only; e2e holds the brows
 Makefile             web build, binary with the webmail, tests, dev
 Dockerfile           the binary with the webmail in an image
 contrib/rspamd       Rspamd config, DKIM signing        port as is; dkim_signing.conf new
-contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspamd overrides
-                     cluster.yaml, cluster.sh: three rqlite and three robinmail nodes
+contrib/compose      Rspamd and Mailpit for dev         new; with dev-only Rspamd overrides
+                     cluster.yaml, cluster.sh: three robinmail nodes (rqlite until phase 10)
                      keycloak.yaml: a Keycloak with a realm, for "make keycloak-test"
 contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev;
                      e2e.sh and oidc-provider for the browser tests
@@ -220,8 +235,9 @@ internal/labtest     tests against that lab             new
 owl's `internal/fsutil` is not ported: the blob store only needed its
 atomic write, which is now a few lines in `internal/blob`. Ported code
 keeps its tests. Protocol packages know nothing about storage and call
-interfaces that `cmd/robinmail` wires up. Store tests run against a real
-`rqlited` and are skipped when none is available.
+interfaces that `cmd/robinmail` wires up. Store tests run on a real
+database: one node or an in-process cluster in a temporary directory
+(until phase 10 a real `rqlited`, skipped when none was available).
 
 Carried over from owl: the rules for all code (hostile input, size limits and
 deadlines, fuzz tests for parsers, rate-limited logins, no plaintext auth) and
@@ -2674,7 +2690,9 @@ Built as follows:
     scrub has no rate limit. `/metrics` has no histograms: no latencies.
     No alerting; `health` is what a monitor calls.
 
-- **rqlite, locked down.** Added to the phase after the rest: whoever
+- **rqlite, locked down.** History since phase 10: rqlite is gone, the
+  database is inside robinmail and has no port of its own; what follows
+  is how it was until then. Added to the phase after the rest: whoever
   reaches rqlite's HTTP port without a login owns every account (the
   password hashes, the wrapped keys, the index of every message's words,
   the sessions) and, through the `node` table, can admit a node that the
@@ -3093,7 +3111,7 @@ Open questions:
   calendar-proxy): Exchange users expect "send on behalf of" and a
   secretary's access. A phase of its own?
 
-### Phase 10: embedded Raft and SQLite
+### Phase 10: embedded Raft and SQLite — done
 
 rqlite goes. Raft and SQLite run inside the robinmail binary, so three
 robinmail nodes are the whole cluster: no database service next to them
@@ -3134,6 +3152,197 @@ what they pull in themselves. Blob files stay as they are.
   robinmail nodes in Docker; lab, e2e, Thunderbird and JMAP-TestSuite
   keep passing. Delivery and JMAP write latency measured before and
   after.
+
+The user decided on 2026-11-15, during the phase, that older data need not
+be migrated: the migration command was dropped. A config that names rqlite
+is refused with a sentence on why; the development instance starts fresh
+(`contrib/dev/seed.sh` sets the old config aside).
+
+Built as follows:
+
+- **Dependencies.** `go.etcd.io/raft/v3` v3.7.0 (it brings
+  `google.golang.org/protobuf`, used to encode its messages) and
+  `modernc.org/sqlite` v1.61.1 (it brings `modernc.org/libc`, `mathutil`,
+  `memory` and four small helpers). v1.62.0 of the SQLite package was eight
+  days old and not taken. FTS5, which the search index needs, is compiled
+  in.
+- **`internal/db`** is what the store needs: `Execute`,
+  `ExecuteIdempotent`, `Query` at a level, `Backup`, `Load`, with
+  `Statement`, `Result` and `Error` as rqlite had them. The store's SQL did
+  not change. **`internal/raftdb`** implements it; `internal/rqlite` is
+  gone.
+- **Writes.** A batch becomes a log entry (JSON: a random id and the
+  statements, values normalised as rqlite stored them). Every node applies
+  the committed entries of one Raft `Ready` in one SQLite transaction, a
+  savepoint per batch: a refused statement rolls its batch back and is the
+  outcome; an I/O error, a full disk or a damaged file is not an outcome
+  and stops the node instead (it says why; a restart applies again from
+  where it stopped). The applied index is written in the same transaction
+  (`raft_applied`). The outcome of every id is kept for 200 000 entries
+  (`raft_request`, trimmed at fixed indexes, so alike on every node), and
+  an id applied before is not applied again: a proposal without an answer
+  is proposed again, for both `Execute` and `ExecuteIdempotent`, every 3
+  seconds until 15 seconds have passed. A follower proposes through Raft
+  itself (MsgProp to the leader over the node mutual TLS) and waits until
+  it has applied the entry: read-your-write on that node at once. Results
+  are deterministic: `RowsAffected` only for a statement that changed rows
+  (`total_changes()` before and after), `LastInsertID` only for an insert;
+  SQLite's `changes()` and `last_insert_rowid()` are per connection and
+  would otherwise leak from whatever ran before on that node.
+- **Reads.** `weak`, `linearizable` and `strong` by ReadIndex
+  (`ReadOnlySafe`), one round for all reads waiting; argued against a
+  leader lease, which needs the nodes' clocks to run at one pace and saves
+  only the leader's heartbeat round. `none` reads the local copy and is
+  refused after 5 seconds without a leader. Which read uses which is at
+  `query` in `internal/store` (rule "Reads" above). Raft runs with
+  CheckQuorum and PreVote, so a leader cut off from the majority steps
+  down within an election timeout (1 to 2 seconds) instead of answering.
+- **Files.** `<data_dir>/db/data.db` (WAL, synchronous NORMAL: what a
+  crash loses, the log applies again), `raft.db` (entries, HardState,
+  snapshot metadata, the node's Raft id; synchronous FULL, written before
+  anything is sent), `lock` (flock: one process per node).
+- **Snapshots.** `data.db` is the state machine and durable on its own,
+  so a snapshot is a checkpoint and metadata: every 10 000 applied entries
+  the node checkpoints `data.db` (TRUNCATE) and drops the log to 5 000
+  entries behind. When Raft needs a snapshot for a member that is further
+  behind, it is made at that moment at the applied index with that index's
+  configuration (one stored from before a member was added would not name
+  it, and Raft refuses it); the member fetches the sender's `data.db` over
+  the mutual TLS, as an online backup (pages as they are, so rowids stay
+  what they were, which `VACUUM INTO` does not promise), installs it and
+  only then hands the message to Raft. The copy may be of a later index
+  than the snapshot: entries up to its `raft_applied` are skipped. A
+  restart replays the log from the snapshot index: configuration changes
+  go to Raft again, SQL that `data.db` holds is skipped.
+- **Membership.** The Raft id is derived from the node's certificate. A
+  configuration change carries the member (node id, address,
+  certificate) and lands in `raft_member`; that table is who may connect
+  (`internal/cluster` pins to it) and where Raft sends. The `node` table
+  keeps heartbeats, for people. Commands: `node id` on the new node
+  prints id, address and certificate; `node add <id> <address> <cert>` on
+  a member admits it and prints the `node join` line; `node join <address>
+  <cert>` on the new node, whose database must be empty, fetches the
+  members from that member over the pinned TLS and records them, so its
+  server accepts their messages before its admission is applied; `node
+  remove` takes a node out of Raft and the node table; `node list` shows
+  Raft id, leader, how far each member is and the heartbeat. A node that
+  changes its address or gets a node section records it through the log
+  at start. A cluster of one elects itself at once.
+- **Commands while the server runs.** The server holds the database. A
+  command on the same node reaches it over a control listener on
+  `127.0.0.1:0` with TLS that accepts only the node's own certificate
+  (address in `<data_dir>/db/control`); without a server the command opens
+  the database itself, and waits while another command has it. On a node
+  of a cluster of several, a command needs the server running. `db query
+  <sql>` and `db exec <sql>` are a console for the operator (the tests use
+  them instead of rqlite's API).
+- **Backup and restore.** `backup` copies `data.db` after a barrier (all
+  that was committed when it began), online. `restore` loads into a
+  cluster of one node and drops the log up to there, so members added
+  afterwards get the restored database as a snapshot.
+- **No SQL port.** Raft messages, snapshots and the member list are on
+  the node API (`/v1/raft/...` next to the blobs), which takes only
+  members' certificates; the control listener is loopback with the node's
+  own key. Whoever has neither has no way to the database; whoever has a
+  shell on a node with its data directory has it all, as before.
+- **Tests.** `internal/raftdb` (in-process, a memory transport with links
+  that can be cut): a single node with restart, lock, errors and levels;
+  deduplication of a proposal applied three times; normalisation; apply
+  determinism (two nodes with different history give the same results);
+  three nodes with read-your-write on every node; the leader killed and
+  restarted under six writers (every acknowledged write once, the SQL
+  counter without gaps or doubles, all databases equal row for row); a
+  partition (the cut-off leader refuses writes and linearizable reads,
+  `ErrStale` after 5 seconds, catches up when healed); compaction with a
+  node that missed it, and restart of all three; adding a node to a
+  compacted cluster, removing a stopped one, the leader removing itself;
+  backup and load with restart. `internal/store`: `TestSQLIsDeterministic`;
+  the quota, notify and replication tests on real two- and three-node
+  clusters. `cmd/robinmail`: the tests that had two servers on one rqlite
+  make a two-node cluster with `node id`, `node add` and `node join`. All
+  tests that needed `ROBINMAIL_TEST_RQLITE` now always run.
+  `go test -race ./...`: 1021 tests and subtests pass, 25 skip (the
+  lab, the cluster and the two Rspamd tests, each run on its own, and
+  `TestLatency`); phase 9 had 1030 with rqlite, whose client's own tests
+  went with it.
+- **Browser** (`make e2e`, run from a copy of the repository so that the
+  development instance stayed untouched): 33 passed, 14 skipped, as in
+  phase 9. `make e2e` now runs on a data directory of its own
+  (`dev/e2e-data`) and the specs use its config (`ROBINMAIL_E2E_CONFIG`).
+- **Cluster** (`make cluster-test`, three robinmail nodes in Docker, no
+  rqlite, `cluster.sh` forming the cluster with `node id`, `node add` and
+  `node join`): parts a to k pass.
+  - **(a)** now kills the node that leads the database, during deliveries
+    by six senders through all three nodes: 849 delivered before, 2312 in
+    the 15 seconds with two nodes (another leader within about a second),
+    the old leader back in the cluster 3.7 seconds after its start; 4571
+    messages got 250, 0 lost, 0 doubled, all read back through each node;
+    the longest time without a 250 was 1.1 seconds; every mailbox's UIDs
+    without doubles and below `uidnext`, no email's modseq above its
+    account's.
+  - **(b)** a node killed: 3373 got 250, 0 lost or doubled. **(c)** one
+    node of three no longer reads alone (a minority refuses): the wiped
+    node read all 7944 messages with another node down and fetched none.
+    **(f)**, **(g)**, **(h)**, **(i)**, **(j)** as in phases 5 to 8.
+  - **(k)** replaces the rqlite lockdown test: the node API refuses Raft,
+    snapshot, member list, blob and ping to a client without a
+    certificate and to one with a certificate of its own; the control
+    listener is on 127.0.0.1 and cannot be reached from another container.
+  - **(e) throughput** (SMTP deliveries ending with the blob on two nodes
+    and one Raft write; Docker Desktop on a laptop): 179 a second with 3
+    senders, 298 with 12, 376 with 48. Phase 8's last run on rqlite,
+    locked down: 171, 268, 224.
+- **Lab** (`make lab-test`, Postfix, Exim, OpenSMTPD, ImapTest, mbsync,
+  OfflineIMAP, Thunderbird, the DAV clients): every test passes, on
+  robinmail with its database inside (the lab's rqlite container is
+  gone; the tests read and fix rows with `robinmail db`).
+- **JMAP-TestSuite** (`lab.sh suite`): its container now runs on
+  robinmail's node (network namespace and data volume) so that `robinmail
+  user add` reaches the server; before, it reached the shared rqlite. 158
+  files pass, 4 skip (no account pair), 11 fail: the same 7 as after
+  phase 8, and 4 of the calendar, contact and principal files, which
+  skipped (capability not offered) when the output was last recorded,
+  before phase 9: the `foreign-account` files of CalendarEvent,
+  ContactCard and Principal (`queryChanges` answers
+  `cannotCalculateChanges` before it says `accountNotFound`) and
+  `CalendarEvent/set/update`. They are about the phase 9 JMAP methods,
+  not the database; left for a follow-up.
+- **Latency** (`ROBINMAIL_LATENCY`, `internal/store`, 500 operations one
+  after the other on a laptop, p50 / p90 / p99; a delivery includes
+  writing the blob file with fsync, which is most of it):
+
+  | | delivery | keyword change (JMAP `Email/set`) |
+  |---|---|---|
+  | rqlite, one node in Docker | 10.4 / 12.0 / 14.1 ms | 0.94 / 1.29 / 2.9 ms |
+  | embedded, one node | 8.6 / 11.7 / 26.7 ms | 0.49 / 0.60 / 1.79 ms |
+  | rqlite, three nodes in Docker, through a follower | 10.0 / 11.7 / 14.2 ms | 1.73 / 2.21 / 3.79 ms |
+  | rqlite, three nodes, through the leader | 10.3 / 13.4 / 22.8 ms | 1.74 / 2.41 / 3.57 ms |
+  | embedded, three nodes in one process, through a follower | 9.0 / 10.6 / 13.1 ms | 1.28 / 1.81 / 3.75 ms |
+  | embedded, three nodes in one process, through the leader | 8.9 / 10.4 / 13.2 ms | 1.32 / 1.98 / 3.30 ms |
+
+  The three embedded nodes talk through memory, without TLS or a network;
+  rqlite's went through Docker's network. The cluster test's throughput
+  (below) is the comparison over real TLS and a real network.
+- **Not handled.**
+  - No migration from rqlite (decided). A backup made with an older
+    binary restores: the file is SQLite either way.
+  - A node that lost its data directory joins again as a new member
+    (`node remove`, then `node add` with its new certificate); there is
+    no "replace in place".
+  - Membership changes go one at a time (Raft's single-step changes); no
+    joint consensus, no learners first. Adding a node to a cluster of one
+    leaves no quorum until the new node runs.
+  - One node of three alone answers nothing, reads included: the price
+    of linearizable reads. Before phase 10 a robinmail node next to a
+    healthy rqlite could serve alone.
+  - A snapshot is the whole `data.db`, sent at once; a large database
+    takes as long as copying the file. No rate limit, no resume.
+  - The Raft log is not encrypted on disk, nor is `data.db` (as rqlite's
+    files were not).
+  - Raft's messages go over HTTP/2 POSTs, one at a time per peer; a slow
+    peer delays only its own messages.
+  - Five nodes work as far as Raft is concerned; the cluster test uses
+    three.
 
 ## Open questions
 
