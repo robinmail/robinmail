@@ -65,7 +65,7 @@ Both: IMAP4rev1, IMAP4rev2, ENABLE, LITERAL+, IDLE, SASL-IR, BINARY (robinmail: 
 | NOTIFY | Yes | No | no | #12 |
 | METADATA, LIST-METADATA | Yes | No | no | #13 |
 | MULTIAPPEND, REPLACE, WITHIN, SAVEDATE, PREVIEW, CREATE-SPECIAL-USE, APPENDLIMIT, UIDONLY, INPROGRESS, MULTISEARCH | Yes | No | no | #14 |
-| AUTH=SCRAM-*, CRAM-MD5, EXTERNAL | Yes | PLAIN, LOGIN | no | #16, #17 |
+| AUTH=SCRAM-*, CRAM-MD5, EXTERNAL | Yes | IMAP: `AUTHENTICATE PLAIN` and the `LOGIN` command; submission: PLAIN and LOGIN | no | #16, #17 |
 | CHILDREN, QUOTA=RES-MESSAGE | No | Yes | n/a | - |
 | SORT, THREAD, CATENATE, URLAUTH, ACL | No (roadmap) | No | n/a | - |
 | COMPRESS=DEFLATE | Written, switched off | No | n/a | - |

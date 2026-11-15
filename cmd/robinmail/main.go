@@ -93,7 +93,8 @@ commands:
   flag <address> <email> <keyword>...          set keywords such as $seen; -keyword removes one
   rm <address> <email>                         destroy an email
   changes <address> [state]                    show what changed since a state (default: 0)
-  trim                                         remove change log, delivery keys, sessions and auth events past their time
+  trim                                         remove change log, delivery keys, sessions, login failures, auth events
+                                               and vacation replies sent, past their time
   sweep                                        remove this node's blob files that no email refers to
   repair                                       fetch the blobs this node lacks from the other nodes
   scrub                                        check this node's blob files against their hashes; in a cluster
@@ -101,7 +102,8 @@ commands:
   node list                                    list the nodes of the cluster
   node remove <id>                             take a stopped node out of the cluster
   reindex [address]                            read stored messages again and refresh the cached columns
-  dns <domain> [dkim-key-file]                 print the DNS records of a domain (MX, SPF, DKIM, DMARC, MTA-STS);
+  dns <domain> [dkim-key-file]                 print the DNS records of a domain (MX, SPF, DKIM, DMARC, MTA-STS,
+                                               TLS-RPT, autoconfig, SRV for mail clients);
                                                a key file that does not exist is made
 `
 

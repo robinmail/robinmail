@@ -6,7 +6,8 @@
 | `make test-ng` | unit tests of the Angular libraries, Go tests with the Angular tag | Node |
 | `make e2e`, `make e2e-ng` | a webmail in a real browser (Playwright) | compose services |
 | `make cluster-test` | three rqlite and three robinmail nodes; nodes are killed and restarted | Docker |
-| `make lab-test` | SMTP with Postfix, Exim, OpenSMTPD; IMAP with ImapTest, mbsync, OfflineIMAP, Thunderbird; Fastmail's JMAP-TestSuite | Docker |
+| `make lab-test` | SMTP with Postfix, Exim, OpenSMTPD; IMAP with ImapTest, mbsync, OfflineIMAP, Thunderbird | Docker |
+| `contrib/lab/lab.sh suite` | Fastmail's JMAP-TestSuite against the lab's robinmail; not part of `lab-test` | Docker, the lab up |
 | `make thunderbird-test` | only Thunderbird, driven through Marionette | Docker |
 | `make keycloak-test` | the OIDC login against a real Keycloak | Docker |
 

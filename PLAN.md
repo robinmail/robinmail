@@ -53,8 +53,8 @@ master key file                                   wraps the account keys; the sa
 
 The name of a blob is the SHA-256 of its plaintext, which is also the JMAP
 blobId. A node keeps its config, the master key file and its blobs on disk,
-nothing else. ACME account and certificates go into an rqlite table, shared by
-the nodes.
+nothing else. ACME account and certificates are on that disk too, in
+`<data_dir>/acme`; each node gets its own.
 
 ### Tables
 
@@ -89,7 +89,6 @@ Every mail table starts with `account_id`.
 | `tls_result` | day, domain, policy, result, mx, ip, count | TLS reporting (RFC 8460): outbound sessions counted per UTC day, recipient domain, policy and outcome; kept 7 days; not per account |
 | `tls_report_sent` | day, domain, at, outcome | the TLS reports that were made: the row is the claim, so one node makes each; kept 90 days |
 | `tls_report_in` | id, received_at, organization, report_id, domain, start_at, end_at, successful, failed, json | TLS reports other servers sent us; unique per organization and report id; kept 90 days |
-| `acme` | key, value | ACME account and certificates, shared by nodes (not built yet) |
 | `node` | id, address, cert, started_at, seen_at | the robinmail nodes: where the others reach each, the SHA-256 of its certificate, its heartbeat |
 | `login_failure` | key, started, count | failures in a 15 minute window, for all nodes together: `a:` wrong passwords at the web login per address, `m:` wrong secrets from mail clients per address, `t:` wrong TOTP and recovery codes per address, `i:` all of them per IP |
 | `guard` | ok | always empty; how a batch checks a precondition (below) |

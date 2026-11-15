@@ -22,8 +22,10 @@ contrib/dev/seed.sh
 ```
 
 `make` builds `./robinmail` with the Vue webmail inside. The seed script creates the
-instance in `./dev` with one account, `dev@robinmail.test`. Its password is set in
-`contrib/dev/seed.sh` (`ROBINMAIL_DEV_PASSWORD` overrides it).
+instance in `./dev` with two accounts, `dev@robinmail.test` and `other@robinmail.test`.
+The passwords are set in `contrib/dev/seed.sh` (`ROBINMAIL_DEV_PASSWORD` overrides the
+first). The dev config names no Rspamd, so the instance does not scan or sign mail, even
+with Rspamd running.
 
 ## 3. Run
 
@@ -43,8 +45,10 @@ The development instance never sends mail to the internet.
 
 ## A mail program
 
-Create an app password in the webmail under Security, then add the account in
-Thunderbird with the ports above. IMAP and submission use a self-signed certificate, so
+Add the account in Thunderbird with the ports above. The account password works until
+the account has an app password or two-step login; from then on a mail program needs an
+app password (webmail, Security). `auth.require_app_passwords` makes that the rule from
+the start. IMAP and submission use a self-signed certificate, so
 the program asks once to accept it.
 
 ## With live reload
