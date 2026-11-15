@@ -62,6 +62,13 @@ const sqlQuotaRoom = `(SELECT (COALESCE(quota_bytes, :qbytes) = 0 OR used_bytes 
 	AND (COALESCE(quota_count, :qmessages) = 0 OR used_count + 1 <= COALESCE(quota_count, :qmessages))
 	FROM account WHERE id = :a)`
 
+// What an account holds: its emails, and since phase 9 its calendar objects
+// and cards, which count like messages.
+const (
+	sqlUsedBytes = `((SELECT COALESCE(sum(size), 0) FROM email WHERE account_id = :a) + (SELECT COALESCE(sum(size), 0) FROM dav_object WHERE account_id = :a))`
+	sqlUsedCount = `((SELECT count(*) FROM email WHERE account_id = :a) + (SELECT count(*) FROM dav_object WHERE account_id = :a))`
+)
+
 // sqlQuotaRoomBytes is the octet half of sqlQuotaRoom.
 const sqlQuotaRoomBytes = `(SELECT COALESCE(quota_bytes, :qbytes) = 0 OR used_bytes + :size <= COALESCE(quota_bytes, :qbytes)
 	FROM account WHERE id = :a)`
@@ -134,10 +141,8 @@ func (s *Store) RecountQuota(ctx context.Context, account string) (changed bool,
 	b.idempotent() // sets the counters to what the emails say
 	b.guardAccount()
 	b.add(`UPDATE account SET
-			used_bytes = (SELECT COALESCE(sum(size), 0) FROM email WHERE account_id = :a),
-			used_count = (SELECT count(*) FROM email WHERE account_id = :a)
-		WHERE id = :a AND (used_bytes <> (SELECT COALESCE(sum(size), 0) FROM email WHERE account_id = :a)
-			OR used_count <> (SELECT count(*) FROM email WHERE account_id = :a))`)
+			used_bytes = ` + sqlUsedBytes + `, used_count = ` + sqlUsedCount + `
+		WHERE id = :a AND (used_bytes <> ` + sqlUsedBytes + ` OR used_count <> ` + sqlUsedCount + `)`)
 	res, err := s.run(ctx, b)
 	if err != nil {
 		return false, err

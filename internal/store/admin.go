@@ -173,6 +173,9 @@ func (s *Store) RemoveAccount(ctx context.Context, account string) error {
 		b.add(`DELETE FROM "` + asString(row[0]) + `" WHERE account_id = :a`)
 	}
 	b.add(`DELETE FROM alias WHERE target = :address`, "address", address)
+	// What others shared with it.
+	b.add(`DELETE FROM collection_share WHERE sharee = :a`)
+	b.add(`DELETE FROM share_epoch WHERE sharee = :a`)
 	b.add(`DELETE FROM account WHERE id = :a`)
 	if _, err := s.run(ctx, b); err != nil {
 		return err

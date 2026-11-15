@@ -12,7 +12,7 @@ import (
 // schemaVersion goes up with every change to the tables below. Init brings
 // an older database up to date with the statements in migrations and
 // refuses a newer one.
-const schemaVersion = 13
+const schemaVersion = 14
 
 // Every mail table starts with account_id, so accounts could be spread over
 // several rqlite clusters later.
@@ -48,6 +48,8 @@ var schema = []string{
 		password_changed_at INTEGER NOT NULL DEFAULT 0,
 		seq            INTEGER NOT NULL DEFAULT 0,
 		next_sieve     INTEGER NOT NULL DEFAULT 1,
+		next_collection INTEGER NOT NULL DEFAULT 1,
+		next_object    INTEGER NOT NULL DEFAULT 1,
 		quota_bytes    INTEGER,
 		quota_count    INTEGER,
 		used_bytes     INTEGER NOT NULL DEFAULT 0,
@@ -167,6 +169,9 @@ var schema = []string{
 	sqlVacationTable,
 	sqlQuotaInsert, sqlQuotaDelete,
 	sqlTLSResultTable, sqlTLSReportSentTable, sqlTLSReportInTable, sqlTLSReportInID,
+	sqlCollectionTable, sqlCollectionDefault, sqlObjectTable, sqlObjectUID, sqlObjectRange, sqlObjectUIDAll,
+	sqlTombstoneTable, sqlTombstoneAt, sqlShareTable, sqlShareSharee, sqlShareEpochTable,
+	sqlObjectQuotaInsert, sqlObjectQuotaDelete, sqlObjectQuotaUpdate,
 
 	`INSERT INTO schema_version (version) SELECT ` + fmt.Sprint(schemaVersion) + ` WHERE NOT EXISTS (SELECT 1 FROM schema_version)`,
 }
@@ -255,6 +260,15 @@ var migrations = map[int64][]string{
 	},
 	// 13: TLS reporting (RFC 8460).
 	12: {sqlTLSResultTable, sqlTLSReportSentTable, sqlTLSReportInTable, sqlTLSReportInID},
+	// 14: calendars and address books (dav.go). Their objects count in the
+	// quota like messages.
+	13: {
+		`ALTER TABLE account ADD COLUMN next_collection INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE account ADD COLUMN next_object INTEGER NOT NULL DEFAULT 1`,
+		sqlCollectionTable, sqlCollectionDefault, sqlObjectTable, sqlObjectUID, sqlObjectRange, sqlObjectUIDAll,
+		sqlTombstoneTable, sqlTombstoneAt, sqlShareTable, sqlShareSharee, sqlShareEpochTable,
+		sqlObjectQuotaInsert, sqlObjectQuotaDelete, sqlObjectQuotaUpdate,
+	},
 }
 
 const (
@@ -340,6 +354,104 @@ const (
 	END`
 	sqlQuotaDelete = `CREATE TRIGGER IF NOT EXISTS email_quota_delete AFTER DELETE ON email BEGIN
 		UPDATE account SET used_bytes = used_bytes - old.size, used_count = used_count - 1 WHERE id = old.account_id;
+	END`
+
+	// Calendars, address books and the scheduling inbox of an account
+	// (dav.go). At most one of each kind is the default. modseq is that of
+	// the collection's own properties, content_modseq that of the newest
+	// change to a member (the CTag and the base of a sync token).
+	sqlCollectionTable = `CREATE TABLE IF NOT EXISTS collection (
+		account_id     TEXT NOT NULL,
+		id             INTEGER NOT NULL,
+		kind           TEXT NOT NULL,
+		name           TEXT NOT NULL,
+		description    TEXT NOT NULL DEFAULT '',
+		color          TEXT NOT NULL DEFAULT '',
+		sort_order     INTEGER NOT NULL DEFAULT 0,
+		is_default     INTEGER NOT NULL DEFAULT 0,
+		is_subscribed  INTEGER NOT NULL DEFAULT 1,
+		is_visible     INTEGER NOT NULL DEFAULT 1,
+		include_availability TEXT NOT NULL DEFAULT 'all',
+		timezone       TEXT NOT NULL DEFAULT '',
+		components     TEXT NOT NULL DEFAULT '',
+		props          TEXT NOT NULL DEFAULT '',
+		created_at     INTEGER NOT NULL,
+		modseq         INTEGER NOT NULL,
+		content_modseq INTEGER NOT NULL,
+		PRIMARY KEY (account_id, id)
+	) WITHOUT ROWID`
+	sqlCollectionDefault = `CREATE UNIQUE INDEX IF NOT EXISTS collection_default ON collection (account_id, kind) WHERE is_default = 1`
+
+	// One calendar object (the components of one UID) or one vCard, as
+	// text. name is its DAV resource name, etag the SHA-256 of data.
+	// start_at and end_at bound its instances (NULL end: for ever).
+	sqlObjectTable = `CREATE TABLE IF NOT EXISTS dav_object (
+		account_id     TEXT NOT NULL,
+		id             INTEGER NOT NULL,
+		collection_id  INTEGER NOT NULL,
+		kind           TEXT NOT NULL,
+		name           TEXT NOT NULL,
+		uid            TEXT NOT NULL,
+		data           TEXT NOT NULL,
+		etag           TEXT NOT NULL,
+		size           INTEGER NOT NULL,
+		component      TEXT NOT NULL DEFAULT '',
+		start_at       INTEGER,
+		end_at         INTEGER,
+		summary        TEXT NOT NULL DEFAULT '',
+		schedule_tag   TEXT NOT NULL DEFAULT '',
+		created_at     INTEGER NOT NULL,
+		created_modseq INTEGER NOT NULL,
+		modseq         INTEGER NOT NULL,
+		PRIMARY KEY (account_id, id),
+		UNIQUE (account_id, collection_id, name)
+	) WITHOUT ROWID`
+	// RFC 4791 5.3.2.1 and RFC 6352 6.3.2.1: one UID per collection. The
+	// scheduling inbox may hold several messages about one event.
+	sqlObjectUID    = `CREATE UNIQUE INDEX IF NOT EXISTS dav_object_uid ON dav_object (account_id, collection_id, uid) WHERE kind <> 'itip'`
+	sqlObjectUIDAll = `CREATE INDEX IF NOT EXISTS dav_object_uid_all ON dav_object (account_id, uid)`
+	sqlObjectRange  = `CREATE INDEX IF NOT EXISTS dav_object_range ON dav_object (account_id, collection_id, start_at)`
+
+	// Removed objects, for DAV sync (RFC 6578): where it was, and when.
+	sqlTombstoneTable = `CREATE TABLE IF NOT EXISTS dav_tombstone (
+		account_id    TEXT NOT NULL,
+		collection_id INTEGER NOT NULL,
+		name          TEXT NOT NULL,
+		object_id     INTEGER NOT NULL,
+		modseq        INTEGER NOT NULL,
+		at            INTEGER NOT NULL,
+		PRIMARY KEY (account_id, collection_id, name)
+	) WITHOUT ROWID`
+	sqlTombstoneAt = `CREATE INDEX IF NOT EXISTS dav_tombstone_at ON dav_tombstone (at)`
+
+	// A collection shared with another account: read or write.
+	// share_epoch is the owner's modseq when what is shared with a sharee
+	// last changed: a sharee's older state cannot be given changes.
+	sqlShareTable = `CREATE TABLE IF NOT EXISTS collection_share (
+		account_id    TEXT NOT NULL,
+		collection_id INTEGER NOT NULL,
+		sharee        TEXT NOT NULL,
+		rights        TEXT NOT NULL,
+		modseq        INTEGER NOT NULL,
+		PRIMARY KEY (account_id, collection_id, sharee)
+	) WITHOUT ROWID`
+	sqlShareSharee     = `CREATE INDEX IF NOT EXISTS collection_share_sharee ON collection_share (sharee)`
+	sqlShareEpochTable = `CREATE TABLE IF NOT EXISTS share_epoch (
+		account_id TEXT NOT NULL,
+		sharee     TEXT NOT NULL,
+		modseq     INTEGER NOT NULL,
+		PRIMARY KEY (account_id, sharee)
+	) WITHOUT ROWID`
+
+	// Calendar objects and cards count in the quota like messages.
+	sqlObjectQuotaInsert = `CREATE TRIGGER IF NOT EXISTS dav_object_quota_insert AFTER INSERT ON dav_object BEGIN
+		UPDATE account SET used_bytes = used_bytes + new.size, used_count = used_count + 1 WHERE id = new.account_id;
+	END`
+	sqlObjectQuotaDelete = `CREATE TRIGGER IF NOT EXISTS dav_object_quota_delete AFTER DELETE ON dav_object BEGIN
+		UPDATE account SET used_bytes = used_bytes - old.size, used_count = used_count - 1 WHERE id = old.account_id;
+	END`
+	sqlObjectQuotaUpdate = `CREATE TRIGGER IF NOT EXISTS dav_object_quota_update AFTER UPDATE OF size ON dav_object BEGIN
+		UPDATE account SET used_bytes = used_bytes - old.size + new.size WHERE id = new.account_id;
 	END`
 
 	// TLS reporting (tlsrpt.go). tls_result counts the sessions of
