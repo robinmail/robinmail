@@ -18,6 +18,7 @@
 #   10.77.25.5   jmapsuite   Fastmail's JMAP-TestSuite, only with "lab.sh suite"
 #   10.77.25.6   imapclients Dovecot's ImapTest, mbsync and OfflineIMAP, run by the tests
 #   10.77.25.7   thunderbird Thunderbird, started and driven by the tests over Marionette
+#   10.77.25.8   davclients  the Python caldav library and vdirsyncer, run by the tests
 #   10.77.25.10  robinmail   mx.robin.test      robin.test
 #   10.77.25.11  postfix     mx.postfix.test    postfix.test, late.postfix.test
 #   10.77.25.12  exim        mx.exim.test       exim.test, late.exim.test
@@ -164,6 +165,17 @@ services:
     shm_size: 512m
     volumes: *mounts
     networks: {lab: {ipv4_address: 10.77.25.7}}
+
+  # Calendar and contact clients that are not ours: the Python caldav
+  # library and vdirsyncer. The container waits; the tests run them in it.
+  davclients:
+    <<: *peer
+    image: robinmail-lab-davclients
+    build: ./davclients
+    hostname: davclients
+    stop_grace_period: 2s
+    volumes: *mounts
+    networks: {lab: {ipv4_address: 10.77.25.8}}
 
   # Fastmail's JMAP-TestSuite against the lab's robinmail. Not started by
   # "up": "lab.sh suite" builds and runs it.

@@ -466,3 +466,122 @@ async function setUp(email, password, realname) {
   const made = await CreateInBackend.createAccountInBackend(verified);
   return { config: describeConfig(verified), account: made.incomingServer.username + " on " + made.incomingServer.hostname + ":" + made.incomingServer.port };
 }
+
+// ---- Calendars and address books (phase 9) ----
+//
+// Thunderbird's own calendar (CalDAV) and address book (CardDAV), set up
+// as its dialogs do: the password stored for the server's origin and the
+// realm of its Basic challenge, the collection registered by its URL.
+
+async function storeDAVPassword(origin, realm, user, password) {
+  const li = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(Ci.nsILoginInfo);
+  li.init(origin, null, realm, user, password, "", "");
+  await Services.logins.addLoginAsync(li);
+}
+
+function calUtils() {
+  return ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs").cal;
+}
+
+// addCalDAV registers a CalDAV calendar and returns its id.
+function addCalDAV(name, url, user) {
+  const cal = calUtils();
+  const c = cal.manager.createCalendar("caldav", Services.io.newURI(url));
+  c.name = name;
+  c.setProperty("username", user);
+  c.setProperty("cache.enabled", true);
+  c.setProperty("calendar-main-in-composite", true);
+  cal.manager.registerCalendar(c);
+  return c.id;
+}
+
+function calendarById(id) {
+  return calUtils().manager.getCalendarById(id);
+}
+
+// refreshCalendar asks the server for what changed, as the calendar's
+// "Synchronize" does, and waits until the calendar says it loaded.
+async function refreshCalendar(id) {
+  const c = calendarById(id);
+  await new Promise((resolve, reject) => {
+    const observer = {
+      QueryInterface: ChromeUtils.generateQI(["calIObserver"]),
+      onStartBatch() {}, onEndBatch() {}, onAddItem() {}, onModifyItem() {}, onDeleteItem() {}, onPropertyChanged() {}, onPropertyDeleting() {},
+      onLoad() { c.removeObserver(observer); resolve(); },
+      onError(cal, err, msg) { c.removeObserver(observer); reject(new Error("calendar error " + err + ": " + msg)); },
+    };
+    c.addObserver(observer);
+    c.refresh();
+    win.setTimeout(() => { c.removeObserver(observer); resolve(); }, 30000);
+  });
+}
+
+// calendarItems lists the events of a calendar: their titles and starts.
+async function calendarItems(id) {
+  const c = calendarById(id);
+  const items = await c.getItemsAsArray(Ci.calICalendar.ITEM_FILTER_TYPE_EVENT, 0, null, null);
+  return items.map(i => ({ id: i.id, title: i.title, start: i.startDate && i.startDate.icalString, status: i.status,
+    attendees: i.getAttendees().map(a => ({ id: a.id, partstat: a.participationStatus })) }));
+}
+
+// addEvent makes an event in a calendar, as saving the event dialog does.
+async function addEvent(id, title, start, end) {
+  const cal = calUtils();
+  const { CalEvent } = ChromeUtils.importESModule("resource:///modules/CalEvent.sys.mjs");
+  const ev = new CalEvent();
+  ev.title = title;
+  ev.startDate = cal.createDateTime(start);
+  ev.endDate = cal.createDateTime(end);
+  const made = await calendarById(id).addItem(ev);
+  return made.id;
+}
+
+// modifyEvent changes the title of an event.
+async function modifyEvent(id, uid, title) {
+  const c = calendarById(id);
+  const old = await c.getItem(uid);
+  const ev = old.clone();
+  ev.title = title;
+  await c.modifyItem(ev, old);
+}
+
+async function deleteEvent(id, uid) {
+  const c = calendarById(id);
+  await c.deleteItem(await c.getItem(uid));
+}
+
+// addCardDAV makes a CardDAV address book and fetches what is on the
+// server, as the "Add CardDAV Address Book" dialog does.
+async function addCardDAV(name, url, user) {
+  const dirPrefId = MailServices.ab.newAddressBook(name, null, Ci.nsIAbManager.CARDDAV_DIRECTORY_TYPE);
+  const book = MailServices.ab.getDirectoryFromId(dirPrefId);
+  book.setStringValue("carddav.url", url);
+  book.setStringValue("carddav.username", user);
+  await book.wrappedJSObject.fetchAllFromServer();
+  return book.UID;
+}
+
+function bookByUID(uid) {
+  return MailServices.ab.getDirectoryFromUID(uid);
+}
+
+async function syncBook(uid) {
+  await bookByUID(uid).wrappedJSObject.syncWithServer();
+}
+
+function bookCards(uid) {
+  return bookByUID(uid).childCards.map(c => ({ uid: c.UID, name: c.displayName, email: c.primaryEmail }));
+}
+
+// addCard adds a contact, as the contact editor's Save does; Thunderbird
+// sends it to the server on its own.
+async function addCard(uid, first, last, email) {
+  const card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(Ci.nsIAbCard);
+  card.firstName = first;
+  card.lastName = last;
+  card.displayName = first + " " + last;
+  card.primaryEmail = email;
+  const book = bookByUID(uid);
+  const added = book.addCard(card);
+  return added.UID;
+}

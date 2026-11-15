@@ -528,15 +528,27 @@ func (s *Server) jmap(w http.ResponseWriter, r *http.Request) {
 // and contact programs log in with Basic auth (an app password with the
 // "dav" scope, or the account password while the account has none); the
 // webmail's session cookie works too, for its export links.
+//
+// The origin check is for the cookie: calendar programs that are built on
+// a browser engine (Thunderbird) send "Origin: null" from their own code.
+// A request without the cookie may come from anywhere: a page of another
+// site cannot make a browser send one that changes something, because
+// PROPFIND, PUT, DELETE, MOVE and MKCALENDAR need a CORS preflight that
+// this server never grants, and what a GET or POST returns is not readable
+// across origins.
 func (s *Server) dav(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.originAllowed(r) {
+	if _, err := r.Cookie(sessionCookie(r)); err == nil && !s.originAllowed(r) {
 		jsonError(w, http.StatusForbidden, "cross-site request refused")
 		return
 	}
 	acct, status, _ := s.authenticate(w, r, store.ScopeDAV)
 	if status != 0 {
-		if status == http.StatusUnauthorized && r.Header.Get("Sec-Fetch-Site") == "" && r.Header.Get("Origin") == "" {
+		// Always the challenge: Thunderbird's calendar sends what a browser
+		// page would (Origin, Sec-Fetch-Site: same-origin) and gives up on a
+		// 401 without one. A webmail page whose session ended may show the
+		// browser's password dialog for an export link; that is the price.
+		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", `Basic realm="robinmail", charset="UTF-8"`)
 		}
 		http.Error(w, http.StatusText(status), status)
