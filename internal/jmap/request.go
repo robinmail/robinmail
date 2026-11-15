@@ -141,7 +141,7 @@ func init() {
 		"CalendarEvent/changes":       {CapCalendars, calendarEventChanges},
 		"CalendarEvent/set":           {CapCalendars, calendarEventSet},
 		"CalendarEvent/query":         {CapCalendars, calendarEventQuery},
-		"CalendarEvent/queryChanges":  {CapCalendars, queryChangesUnsupported},
+		"CalendarEvent/queryChanges":  {CapCalendars, queryChangesUnsupported(store.KindCalendar)},
 		"CalendarEvent/parse":         {CapCalendarsParse, calendarEventParse},
 		"ParticipantIdentity/get":     {CapCalendars, participantIdentityGet},
 		"ParticipantIdentity/changes": {CapCalendars, participantIdentityChanges},
@@ -153,11 +153,11 @@ func init() {
 		"ContactCard/changes":         {CapContacts, contactCardChanges},
 		"ContactCard/set":             {CapContacts, contactCardSet},
 		"ContactCard/query":           {CapContacts, contactCardQuery},
-		"ContactCard/queryChanges":    {CapContacts, queryChangesUnsupported},
+		"ContactCard/queryChanges":    {CapContacts, queryChangesUnsupported(store.KindAddressBook)},
 		"Principal/get":               {CapPrincipals, principalGet},
 		"Principal/changes":           {CapPrincipals, principalChanges},
 		"Principal/query":             {CapPrincipals, principalQuery},
-		"Principal/queryChanges":      {CapPrincipals, queryChangesUnsupported},
+		"Principal/queryChanges":      {CapPrincipals, queryChangesUnsupported("")},
 		"Principal/getAvailability":   {CapPrincipalsAvail, principalGetAvailability},
 	}
 }

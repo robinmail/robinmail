@@ -1320,9 +1320,32 @@ func eventZone(e *eventData) *time.Location {
 }
 
 // queryChangesUnsupported answers a /queryChanges the server does not
-// calculate (RFC 8620 5.6 allows it).
-func queryChangesUnsupported(c *call, raw json.RawMessage) (any, *methodError) {
-	return nil, mErr("cannotCalculateChanges", "this server does not calculate query changes for this type; query again")
+// calculate (RFC 8620 5.6 allows it), after the checks of the arguments
+// and the account every method makes first (3.6.2): an account the user
+// cannot see is accountNotFound. kind is the collection kind whose
+// accounts the method takes; "" is the user's own account only.
+func queryChangesUnsupported(kind string) func(c *call, raw json.RawMessage) (any, *methodError) {
+	return func(c *call, raw json.RawMessage) (any, *methodError) {
+		var args struct {
+			AccountID string `json:"accountId"`
+			queryChangesArgs
+			Filter json.RawMessage `json:"filter"`
+			Sort   json.RawMessage `json:"sort"`
+		}
+		var e *methodError
+		if kind == "" {
+			e = c.decodeArgs(raw, &args, &args.AccountID)
+		} else {
+			_, e = c.open(raw, &args, &args.AccountID, kind)
+		}
+		if e != nil {
+			return nil, e
+		}
+		if args.SinceQueryState == nil {
+			return nil, invalidArgs("sinceQueryState is required")
+		}
+		return nil, mErr("cannotCalculateChanges", "this server does not calculate query changes for this type; query again")
+	}
 }
 
 // calendarEventParse is CalendarEvent/parse (JMAP Calendars 5.13).

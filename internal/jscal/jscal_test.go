@@ -238,3 +238,49 @@ func TestRFC4791_9_9_Overlap(t *testing.T) {
 		t.Errorf("a zero-length event at the end of the range: %d", len(got))
 	}
 }
+
+// draft-ietf-calext-jscalendar-icalendar 2.2.4 and 2.3.25: one location
+// is a LOCATION, with a JSID parameter when its key is not the derived
+// one; more are a VLOCATION each, keyed by UID, with a
+// LOCATION;DERIVED=TRUE that names the main one. Both come back as they
+// went in.
+func TestJSCalICal_Locations(t *testing.T) {
+	one := mustJS(t, `{"@type":"Event","uid":"loc-1","title":"x","start":"2026-11-20T10:00:00","duration":"PT1H",
+		"locations":{"loc1":{"@type":"Location","name":"Taj Mahal","coordinates":"geo:27.175,78.041944"}}}`)
+	cal, js := roundTrip(t, one)
+	if !reflect.DeepEqual(js["locations"], one["locations"]) {
+		t.Errorf("one location: got %v", js["locations"])
+	}
+	vev := cal.Sub("VEVENT")[0]
+	if p := vev.Get("LOCATION"); p == nil || p.Param("JSID") != "loc1" || p.Text() != "Taj Mahal" {
+		t.Errorf("LOCATION %+v", p)
+	}
+	if p := vev.Get("GEO"); p == nil || p.Value != "27.175;78.041944" || p.Param("JSID") != "loc1" {
+		t.Errorf("GEO %+v", p)
+	}
+
+	two := mustJS(t, `{"@type":"Event","uid":"loc-2","title":"x","start":"2026-11-20T10:00:00","duration":"PT1H",
+		"mainLocationId":"park",
+		"locations":{"bar":{"@type":"Location","name":"Fred's Bar"},
+		"park":{"@type":"Location","name":"XYZ Parking","coordinates":"geo:40.71427,-74.00597"}}}`)
+	cal, js = roundTrip(t, two)
+	if !reflect.DeepEqual(js["locations"], two["locations"]) || js["mainLocationId"] != "park" {
+		t.Errorf("two locations: got %v main %v", js["locations"], js["mainLocationId"])
+	}
+	vev = cal.Sub("VEVENT")[0]
+	if p := vev.Get("LOCATION"); p == nil || p.Param("DERIVED") != "TRUE" || p.Text() != "XYZ Parking" {
+		t.Errorf("derived LOCATION %+v", p)
+	}
+	if v := vev.Sub("VLOCATION"); len(v) != 2 || v[0].Text("UID") != "bar" || v[1].Value("GEO") != "40.71427;-74.00597" {
+		t.Errorf("VLOCATION %v", ical.Encode(cal))
+	}
+
+	// Back to one: the VLOCATIONs of the stored object go.
+	cal2, err := ToICal(one, cal, "-//robinmail//test//EN", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := cal2.Sub("VEVENT")[0].Sub("VLOCATION"); len(v) != 0 {
+		t.Errorf("stale VLOCATION: %v", ical.Encode(cal2))
+	}
+}

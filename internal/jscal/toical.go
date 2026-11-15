@@ -282,10 +282,11 @@ func componentICal(ev Event, prev *ical.Component, now time.Time) (*ical.Compone
 		c = prev.Clone()
 		c.Name = name
 		c.Remove(handled...)
-		// Alarms are rewritten from alerts below.
+		// Alarms and locations are rewritten from alerts and locations
+		// below.
 		var keep []*ical.Component
 		for _, x := range c.Children {
-			if x.Name != "VALARM" {
+			if x.Name != "VALARM" && x.Name != "VLOCATION" {
 				keep = append(keep, x)
 			}
 		}
@@ -484,24 +485,69 @@ func componentICal(ev Event, prev *ical.Component, now time.Time) (*ical.Compone
 	} else if len(kw) > 0 {
 		add(ical.Prop{Name: "CATEGORIES", Value: ical.JoinText(sortedKeys(kw), ",")})
 	}
+	// One location is a LOCATION with GEO; more are a VLOCATION each
+	// (RFC 9073 7.2), keyed by UID, and a LOCATION;DERIVED=TRUE with the
+	// name of the main one for clients without VLOCATION
+	// (draft-ietf-calext-jscalendar-icalendar 2.2.4, 2.3.25).
+	var vlocs []*ical.Component
 	if locs, err := obj(ev, "locations"); err != nil {
 		return nil, err
-	} else {
-		for _, k := range sortedKeys(locs) {
-			l, ok := locs[k].(map[string]any)
-			if !ok {
+	} else if len(locs) > 0 {
+		keys := sortedKeys(locs)
+		for _, k := range keys {
+			if _, ok := locs[k].(map[string]any); !ok {
 				return nil, bad("locations/"+k, "not a Location")
 			}
+		}
+		geo := func(l map[string]any, jsid string) *ical.Prop {
+			g, _ := l["coordinates"].(string)
+			lat, lon, ok := strings.Cut(strings.TrimPrefix(g, "geo:"), ",")
+			if !strings.HasPrefix(g, "geo:") || !ok {
+				return nil
+			}
+			lon, _, _ = strings.Cut(lon, ";")
+			lon, _, _ = strings.Cut(lon, ",") // no coord-c
+			p := ical.Prop{Name: "GEO", Value: lat + ";" + lon}
+			if jsid != "" {
+				p.SetParam("JSID", jsid)
+			}
+			return &p
+		}
+		if len(keys) == 1 {
+			l := locs[keys[0]].(map[string]any)
 			if n, _ := l["name"].(string); n != "" {
-				text("LOCATION", n)
-				if g, _ := l["coordinates"].(string); strings.HasPrefix(g, "geo:") {
-					lat, lon, ok := strings.Cut(strings.TrimPrefix(g, "geo:"), ",")
-					if ok {
-						lon, _, _ = strings.Cut(lon, ";")
-						add(ical.Prop{Name: "GEO", Value: lat + ";" + lon})
-					}
+				p := ical.Prop{Name: "LOCATION", Value: ical.Escape(n)}
+				jsid := ""
+				if keys[0] != shortID("loc", n) {
+					jsid = keys[0]
+					p.SetParam("JSID", jsid)
 				}
-				break // iCalendar has one LOCATION
+				add(p)
+				if g := geo(l, jsid); g != nil {
+					add(*g)
+				}
+			}
+		} else {
+			main := keys[0]
+			if m, _ := ev["mainLocationId"].(string); locs[m] != nil {
+				main = m
+			}
+			if n, _ := locs[main].(map[string]any)["name"].(string); n != "" {
+				p := ical.Prop{Name: "LOCATION", Value: ical.Escape(n)}
+				p.SetParam("DERIVED", "TRUE")
+				add(p)
+			}
+			for _, k := range keys {
+				l := locs[k].(map[string]any)
+				v := &ical.Component{Name: "VLOCATION"}
+				v.SetText("UID", k)
+				if n, _ := l["name"].(string); n != "" {
+					v.SetText("NAME", n)
+				}
+				if g := geo(l, ""); g != nil {
+					v.Add(*g)
+				}
+				vlocs = append(vlocs, v)
 			}
 		}
 	}
@@ -588,6 +634,7 @@ func componentICal(ev Event, prev *ical.Component, now time.Time) (*ical.Compone
 	if err != nil {
 		return nil, err
 	}
+	c.Children = append(c.Children, vlocs...)
 	c.Children = append(c.Children, alarms...)
 	return c, nil
 }

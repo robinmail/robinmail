@@ -369,3 +369,44 @@ func TestJMAPCalendars_Parse(t *testing.T) {
 	}
 	_ = time.Now
 }
+
+// RFC 8620 3.6.2: an accountId the user has no access to is
+// accountNotFound for every method, /queryChanges included, before the
+// method decides whether it can calculate the changes (5.6).
+func TestRFC8620_QueryChangesForeignAccount(t *testing.T) {
+	e, _ := newPIMEnv(t)
+	b := e.other()
+	for _, m := range []string{"CalendarEvent/queryChanges", "ContactCard/queryChanges", "Principal/queryChanges"} {
+		if typ := b.pimFail(m, `{`+e.acc()+`,"sinceQueryState":"0"}`); typ != "accountNotFound" {
+			t.Errorf("%s with another's account: %s", m, typ)
+		}
+		if typ := e.pimFail(m, `{`+e.acc()+`,"sinceQueryState":"0"}`); typ != "cannotCalculateChanges" {
+			t.Errorf("%s with the own account: %s", m, typ)
+		}
+	}
+}
+
+// RFC 8620 5.3: a patch whose pointer's parent exists adds the member;
+// here a location added to the locations of an event (JMAP Calendars 5.3).
+func TestJMAPCalendars_PatchAddsLocation(t *testing.T) {
+	e, _ := newPIMEnv(t)
+	cal := at(t, e.pim("Calendar/get", `{`+e.acc()+`}`), "/list/0/id").(string)
+	set := e.pim("CalendarEvent/set", `{`+e.acc()+`,"create":{"ev":{"calendarIds":{"`+cal+`":true},"title":"Weekly",`+
+		`"start":"2024-05-06T10:00:00","timeZone":"Etc/UTC","duration":"PT1H",`+
+		`"locations":{"room0":{"name":"Original Room"}}}}}`)
+	id := at(t, set, "/created/ev/id").(string)
+	up := e.pim("CalendarEvent/set", `{`+e.acc()+`,"update":{"`+id+`":{"locations/room1":{"name":"Conference Room 1"}}}}`)
+	if _, ok := at(t, up, "/updated").(map[string]any)[id]; !ok {
+		t.Fatalf("update: %s", jsonOf(up))
+	}
+	got := e.pim("CalendarEvent/get", `{`+e.acc()+`,"ids":["`+id+`"],"properties":["locations"]}`)
+	locs, _ := at(t, got, "/list/0/locations").(map[string]any)
+	names := map[string]bool{}
+	for _, l := range locs {
+		n, _ := l.(map[string]any)["name"].(string)
+		names[n] = true
+	}
+	if !names["Original Room"] || !names["Conference Room 1"] {
+		t.Errorf("locations after the patch: %s", jsonOf(got))
+	}
+}

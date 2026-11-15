@@ -45,6 +45,16 @@ func ParseUTC(s string) (time.Time, bool) {
 // shortID makes a stable id for a sub-object from what identifies it, so
 // that the same participant has the same id on every read (JMAP patches
 // address it as "participants/<id>").
+// geoURI is a GEO value as a geo URI (draft-ietf-calext-jscalendar-icalendar
+// 2.3.21), or "".
+func geoURI(g string) string {
+	lat, lon, ok := strings.Cut(g, ";")
+	if !ok {
+		return ""
+	}
+	return "geo:" + strings.TrimPrefix(strings.TrimSpace(lat), "+") + "," + strings.TrimPrefix(strings.TrimSpace(lon), "+")
+}
+
 func shortID(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:6])
@@ -306,15 +316,48 @@ func (o *Object) componentJS(c *ical.Component, isMaster bool) Event {
 			ev["keywords"] = kw
 		}
 	}
-	// Locations: LOCATION, with GEO; CONFERENCE (RFC 7986) are virtual.
-	if p := c.Get("LOCATION"); p != nil && p.Text() != "" {
+	// Locations: LOCATION, with GEO, unless DERIVED, and each VLOCATION
+	// (RFC 9073 7.2), keyed by JSID, else the UID of the VLOCATION
+	// (draft-ietf-calext-jscalendar-icalendar 2.2.4, 2.3.25); CONFERENCE
+	// (RFC 7986) are virtual.
+	locs := map[string]any{}
+	p := c.Get("LOCATION")
+	derived := p != nil && strings.EqualFold(p.Param("DERIVED"), "TRUE")
+	if p != nil && p.Text() != "" && !derived {
 		loc := map[string]any{"@type": "Location", "name": p.Text()}
-		if g := c.Value("GEO"); g != "" {
-			if lat, lon, ok := strings.Cut(g, ";"); ok {
-				loc["coordinates"] = "geo:" + strings.TrimSpace(lat) + "," + strings.TrimSpace(lon)
+		if g := c.Get("GEO"); g != nil {
+			if geo := geoURI(g.Value); geo != "" {
+				loc["coordinates"] = geo
 			}
 		}
-		ev["locations"] = map[string]any{shortID("loc", p.Text()): loc}
+		id := p.Param("JSID")
+		if id == "" {
+			id = shortID("loc", p.Text())
+		}
+		locs[id] = loc
+	}
+	for _, v := range c.Sub("VLOCATION") {
+		loc := map[string]any{"@type": "Location"}
+		if n := v.Text("NAME"); n != "" {
+			loc["name"] = n
+		}
+		if geo := geoURI(v.Value("GEO")); geo != "" {
+			loc["coordinates"] = geo
+		}
+		id := v.Text("JSID")
+		if id == "" {
+			id = v.Text("UID")
+		}
+		if id == "" {
+			id = shortID("loc", v.Text("NAME"))
+		}
+		locs[id] = loc
+		if derived && len(c.Sub("VLOCATION")) > 1 && p.Text() != "" && p.Text() == v.Text("NAME") {
+			ev["mainLocationId"] = id
+		}
+	}
+	if len(locs) > 0 {
+		ev["locations"] = locs
 	}
 	if confs := c.All("CONFERENCE"); len(confs) > 0 {
 		vl := map[string]any{}
