@@ -59,7 +59,7 @@ describe('the mail page', () => {
     expect(router.url).toBe('/mail/m1')
     expect(subjects()).toEqual(['Re: Lunch', 'Report'])
     expect(rows().map((r) => r.hasAttribute('data-unread'))).toEqual([true, false])
-    expect(text(rows()[0]!.querySelector('a'))).toContain('anna@example.org, bert@example.org 2')
+    expect(text(rows()[0]!.querySelector('a'))).toContain('anna@example.org, bert@example.org2')
     expect(text(el.querySelector('a[data-mailbox="inbox"] [data-unread]'))).toBe('2')
     expect(document.title).toBe('(2) Inbox · robinmail')
   })
