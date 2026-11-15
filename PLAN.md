@@ -16,14 +16,14 @@ This is a learning project. There is no production target yet.
 | Topic | Decision | Why |
 |---|---|---|
 | Language | Go, one binary `cmd/robinmail` | As in owl. |
-| Dependencies | Standard library plus `golang.org/x` only | owl's rule, kept. rqlite is reached over HTTP with a small client of our own. |
+| Dependencies | Standard library plus `golang.org/x` only, and since phase 10 `go.etcd.io/raft/v3` and `modernc.org/sqlite` with what they need | owl's rule, kept. The two exceptions replace a separate database service (decided 2026-11-15). |
 | Mail API | JMAP core and mail | One standard API for the webmail, a later app and existing clients. |
-| Metadata | One rqlite cluster (SQLite replicated with Raft), one database for all accounts | Self-hosted, replicated, automatic leader failover. No replication, lease or consensus code of our own. |
+| Metadata | One SQLite database for all accounts, replicated with Raft inside robinmail (phase 10; before it a separate rqlite cluster) | The robinmail nodes are the whole cluster. Strong consistency stays: IMAP UIDs and modseq need one order of writes. Consensus is etcd's Raft library, not code of our own. |
 | Message files | Immutable blobs on the local disk of every node, named by account and SHA-256 of the plaintext | No storage service to run. robinmail replicates blobs itself (phase 4): every node holds every blob, a write is acknowledged once 2 nodes have it, and a background check fetches missing ones. |
 | Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has. What rqlite holds is not encrypted by robinmail: the cached header fields and previews, and since phase 8 the full-text index, from which the words of every message can be read | Protects the blobs against stolen disks and backups. Does not protect against a compromised running server, which holds the master key, nor does it cover rqlite's files: those need an encrypted disk. |
-| Access to rqlite | rqlite stays a separate service, locked down: one rqlite next to each robinmail node with its HTTP API on loopback, a login on that API with only the permissions robinmail needs, and mutual TLS between rqlite nodes (phase 8, "rqlite, locked down") | Whoever reaches rqlite's HTTP port without a login reads and writes every account and can admit a node. Embedding the database in robinmail would take the port away altogether; it was considered and put off, because it needs dependencies beyond the standard library and `golang.org/x` (SQLite and a Raft implementation) and a new proof of replication, which phase 4 gave for rqlite. |
-| Nodes | Not stateless: metadata is in rqlite, blobs are on each node's disk. Any node serves any account | No owner per account and no forwarding. rqlite's leader orders the writes. |
-| Between nodes | Nodes find each other through the `node` table in rqlite and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates whose fingerprint is in that table | No CA and no shared secret to distribute. Who may join is decided by who can write to rqlite, which holds everything anyway. |
+| Access to the database | Embedded since phase 10: no SQL API on any port. Raft travels over the node-to-node mutual TLS; a command on a node reaches its running server over loopback TLS with the node's own key. Before it rqlite was a separate service, locked down in phase 8 | Whoever reached rqlite's HTTP port without a login read and wrote every account. Now the way in is a node's private key or a shell on a node. |
+| Nodes | Not stateless: each node holds the database and the blobs on its own disk. Any node serves any account | No owner per account. The Raft leader orders the writes; a node forwards its writes to it. |
+| Between nodes | Nodes know each other from the Raft membership and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates of members | No CA and no shared secret to distribute. Who may join is decided by `robinmail node add` on a member, which names the newcomer's certificate. |
 | Mailboxes | An Email can be in several mailboxes (labels) | Full JMAP `mailboxIds`. |
 | IMAP | Built in phase 6 on UIDs that exist from day one. A label is a folder; a message with three labels is in three folders | No store migration later. Mail clients only speak IMAP. |
 | Webmail | Since phase 9 the Angular single-page app in `web-ng/` (mail, calendar, contacts); before it the Vue app in `web/` (Vite, Vue Router, Nuxt UI), which stays buildable. Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. |
@@ -3092,6 +3092,48 @@ Open questions:
 - Mailbox delegation and calendar proxies (RFC 3744 groups, Apple's
   calendar-proxy): Exchange users expect "send on behalf of" and a
   secretary's access. A phase of its own?
+
+### Phase 10: embedded Raft and SQLite
+
+rqlite goes. Raft and SQLite run inside the robinmail binary, so three
+robinmail nodes are the whole cluster: no database service next to them
+and no SQL API on any port. Decided by the user on 2026-11-15, after
+comparing rqlite, FoundationDB, YugabyteDB or CockroachDB, and Garage:
+the others add a system instead of replacing one, and Aerogramme showed
+that eventual consistency breaks IMAP UIDs, so Raft and its strong
+consistency stay. Two exceptions to the dependency rule are approved:
+`go.etcd.io/raft/v3` and `modernc.org/sqlite` (pure Go, no cgo), with
+what they pull in themselves. Blob files stay as they are.
+
+- **Store transport.** `internal/store` keeps its SQL. An interface takes
+  the place of the rqlite client: a write is one batch, a read is a set
+  of statements at a consistency level. The embedded implementation
+  proposes a batch to Raft and applies it in one SQLite transaction on
+  every node in log order. Every applied statement is deterministic:
+  nothing that reads the clock or chance on apply; such values are
+  passed in.
+- **Reads.** Linearizable through ReadIndex where the store relies on
+  the leader's view; local where a moment's staleness is fine. Which is
+  which is written down at the store's `query`.
+- **Between nodes.** Raft messages, forwarded writes and snapshots go
+  over the node-to-node mutual TLS of phase 4, pinned through the
+  members. No new listener without TLS.
+- **Membership and snapshots.** The first node starts the cluster;
+  others are added and removed with `robinmail node`. Snapshots with
+  SQLite's online backup, log compaction, restart from snapshot plus
+  log. `backup` and `restore` keep working.
+- **Migration.** A command copies an rqlite database into the embedded
+  one.
+- **rqlite removed** once everything passes: config, compose,
+  `ROBINMAIL_TEST_RQLITE*`. Tests run on in-process nodes and in-process
+  three-node clusters.
+- **Tests.** Apply determinism; a three-node cluster in one process with
+  the leader killed during deliveries (nothing lost or doubled, UIDs and
+  modseq consistent); a partition (the minority refuses writes);
+  snapshot and restart; membership changes. `make cluster-test` on three
+  robinmail nodes in Docker; lab, e2e, Thunderbird and JMAP-TestSuite
+  keep passing. Delivery and JMAP write latency measured before and
+  after.
 
 ## Open questions
 
