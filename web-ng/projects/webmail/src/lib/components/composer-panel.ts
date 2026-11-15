@@ -9,6 +9,7 @@ import { Icon } from '../ui/icon'
 import { Toaster } from '../ui/toast'
 import { fileSize } from '../util/format'
 import { AddressInput } from './address-input'
+import { Select } from '../ui/select'
 import { RichEditor } from './rich-editor'
 
 const names: Record<Composer['kind'], string> = { new: 'New message', reply: 'Reply', replyAll: 'Reply', forward: 'Forward', forwardAttached: 'Forward' }
@@ -16,7 +17,7 @@ const sendKeys = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctr
 
 @Component({
   selector: 'rm-composer-panel',
-  imports: [Btn, Icon, AddressInput, RichEditor],
+  imports: [Btn, Icon, AddressInput, RichEditor, Select],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'contents' },
   template: `
@@ -56,11 +57,7 @@ const sendKeys = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctr
           @if (identities().length > 1) {
             <div class="flex items-center gap-2 py-1">
               <label [for]="uid + '-from'" class="w-12 shrink-0 text-dimmed">From</label>
-              <select #from [id]="uid + '-from'" class="min-w-0 flex-1 bg-transparent py-1 text-sm text-highlighted outline-none" (change)="compose.setIdentity(c, from.value)">
-                @for (i of identities(); track i.value) {
-                  <option [value]="i.value" [selected]="i.value === draft.identityId">{{ i.label }}</option>
-                }
-              </select>
+              <rm-select class="flex-1" [plain]="true" [buttonId]="uid + '-from'" [value]="draft.identityId" [options]="identities()" (valueChange)="compose.setIdentity(c, $event)" />
             </div>
           }
           <div class="flex items-start gap-2">

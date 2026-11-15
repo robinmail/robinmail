@@ -11,12 +11,13 @@ import { SettingsShell } from '../components/settings-shell'
 import { ALERT, Btn, Input, LABEL, SKELETON } from '../ui/controls'
 import { Icon } from '../ui/icon'
 import { Modal } from '../ui/modal'
+import { Select } from '../ui/select'
 
 type Dialog = { kind: 'add' } | { kind: 'edit'; identity: Identity } | { kind: 'remove'; identity: Identity }
 
 @Component({
   selector: 'rm-settings-page',
-  imports: [FormsModule, SettingsShell, Btn, Input, Icon, Modal],
+  imports: [FormsModule, SettingsShell, Btn, Input, Icon, Modal, Select],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block h-full overflow-y-auto' },
   template: `
@@ -91,14 +92,8 @@ type Dialog = { kind: 'add' } | { kind: 'edit'; identity: Identity } | { kind: '
         } @else {
           @if (d?.kind === 'add' && bases().length > 1) {
             <div class="flex flex-col gap-1">
-              <label class="${LABEL}">
-                <span>Send as</span>
-                <select rmInput name="base" data-testid="identity-base" [(ngModel)]="baseAddress">
-                  @for (b of bases(); track b) {
-                    <option [value]="b">{{ b }}</option>
-                  }
-                </select>
-              </label>
+              <label for="identity-base" class="text-sm font-medium text-default">Send as</label>
+              <rm-select buttonId="identity-base" testid="identity-base" [value]="base().address" [options]="baseOptions()" (valueChange)="baseAddress.set($event)" />
               <p class="text-sm text-muted">Your own address, or an alias that delivers to you.</p>
             </div>
           }
@@ -149,6 +144,7 @@ export class SettingsPage implements OnInit {
   private readonly own = computed(() => compose.state.identities.find((i) => !i.mayDelete)?.email ?? auth.account?.username ?? '')
   protected readonly baseAddress = signal('')
   protected readonly bases = computed(() => (this.sendAs().length ? this.sendAs() : [this.own()]))
+  protected readonly baseOptions = computed(() => this.bases().map((b) => ({ label: b, value: b })))
   protected readonly base = computed(() => {
     const chosen = this.bases().includes(this.baseAddress()) ? this.baseAddress() : this.own()
     const at = chosen.lastIndexOf('@')
