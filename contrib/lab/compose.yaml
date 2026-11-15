@@ -14,7 +14,7 @@
 #
 #   10.77.25.2   dns         CoreDNS
 #   10.77.25.3   web         nginx: https://mta-sts.<domain>/ and the gate
-#   10.77.25.5   jmapsuite   Fastmail's JMAP-TestSuite, only with "lab.sh suite"
+#   (robinmail's) jmapsuite  Fastmail's JMAP-TestSuite, only with "lab.sh suite", on robinmail's network and data
 #   10.77.25.6   imapclients Dovecot's ImapTest, mbsync and OfflineIMAP, run by the tests
 #   10.77.25.7   thunderbird Thunderbird, started and driven by the tests over Marionette
 #   10.77.25.8   davclients  the Python caldav library and vdirsyncer, run by the tests
@@ -178,11 +178,13 @@ services:
     image: robinmail-lab-jmapsuite
     build: ./jmapsuite
     depends_on: [robinmail]
+    # On robinmail's node, as a command there is: its data directory and
+    # its loopback, where the server takes the commands of that node.
+    network_mode: "service:robinmail"
     volumes:
       - ./secrets:/lab/secrets:ro
-      - ./dns/resolv.conf:/etc/resolv.conf:ro
       - ./robinmail/robinmail.json:/lab/robinmail.json:ro
-    networks: {lab: {ipv4_address: 10.77.25.5}}
+      - robinmail:/var/lib/robinmail
 
 networks:
   lab:

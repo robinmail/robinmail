@@ -20,8 +20,9 @@ RUN git clone https://github.com/fastmail/JMAP-TestSuite.git /suite \
 WORKDIR /suite
 RUN cpanm --notest --quiet --installdeps . && cpanm --notest --quiet LWP::Protocol::https && rm -rf /root/.cpanm
 # The adapter makes a new user for every test that wants an empty account,
-# with robinmail's own command: it only needs the config, the master key
-# and the database, as on any node.
+# with robinmail's own command, run as on robinmail's node: the container
+# shares robinmail's data directory and loopback, and the command reaches
+# the running server through its control listener.
 COPY --from=robinmail /usr/local/bin/robinmail /usr/local/bin/robinmail
 COPY Robinmail.pm /suite/lib/JMAP/TestSuite/ServerAdapter/Robinmail.pm
 COPY robinmail.json /suite/robinmail.json

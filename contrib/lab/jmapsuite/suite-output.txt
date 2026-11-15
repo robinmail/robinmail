@@ -1,5 +1,3 @@
-# contrib/lab/lab.sh suite -r t   (JMAP-TestSuite 2fa1934, robinmail at the commit of this file)
-# 173 files: 162 ok (43 of them skip inside: capabilities robinmail does not offer), 4 skipped (no account pair), 7 failed
 t/AddressBook/changes/basic.t ................................................ ok
 t/AddressBook/foreign-account.t .............................................. ok
 t/AddressBook/get/basic.t .................................................... ok
@@ -25,17 +23,82 @@ t/Calendar/set/destroy.t ..................................................... o
 t/Calendar/set/update.t ...................................................... ok
 t/CalendarEvent/changes/basic.t .............................................. ok
 t/CalendarEvent/copy/basic.t ................................................. skipped: test requires implementation of pool_account_pair
-t/CalendarEvent/foreign-account.t ............................................ ok
+
+        #   Failed test 'CalendarEvent/queryChanges accountId=OTHER: accountNotFound'
+        #   at t/CalendarEvent/foreign-account.t line 19.
+        # Comparing $data->{"type"} as a string
+        #    got : 'cannotCalculateChanges'
+        # expect : 'accountNotFound'
+        # [
+        #   [
+        #     'error',
+        #     {
+        #       'description' => 'this server does not calculate query changes for this type; query again',
+        #       'type' => 'cannotCalculateChanges'
+        #     },
+        #     'f'
+        #   ]
+        # ]
+
+    # Failed test 'test from t/CalendarEvent/foreign-account.t'
+    # at t/CalendarEvent/foreign-account.t line 29.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/CalendarEvent/foreign-account.t ............................................ 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/CalendarEvent/get/basic.t .................................................. ok
 t/CalendarEvent/query/basic.t ................................................ ok
 t/CalendarEvent/query/expand-recurrences.t ................................... ok
 t/CalendarEvent/queryChanges/basic.t ......................................... ok
 t/CalendarEvent/set/create.t ................................................. ok
 t/CalendarEvent/set/destroy.t ................................................ ok
-t/CalendarEvent/set/update.t ................................................. ok
+
+            #   Failed test 'location with correct name found'
+            #   at t/CalendarEvent/set/update.t line 220.
+
+        # Failed test 'Add location via pointer patch (locations/{id})'
+        # at t/CalendarEvent/set/update.t line 221.
+
+    # Failed test 'test from t/CalendarEvent/set/update.t'
+    # at t/CalendarEvent/set/update.t line 245.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/CalendarEvent/set/update.t ................................................. 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/ContactCard/changes/basic.t ................................................ ok
 t/ContactCard/copy/basic.t ................................................... skipped: test requires implementation of pool_account_pair
-t/ContactCard/foreign-account.t .............................................. ok
+
+        #   Failed test 'ContactCard/queryChanges accountId=OTHER: accountNotFound'
+        #   at t/ContactCard/foreign-account.t line 19.
+        # Comparing $data->{"type"} as a string
+        #    got : 'cannotCalculateChanges'
+        # expect : 'accountNotFound'
+        # [
+        #   [
+        #     'error',
+        #     {
+        #       'description' => 'this server does not calculate query changes for this type; query again',
+        #       'type' => 'cannotCalculateChanges'
+        #     },
+        #     'f'
+        #   ]
+        # ]
+
+    # Failed test 'test from t/ContactCard/foreign-account.t'
+    # at t/ContactCard/foreign-account.t line 28.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/ContactCard/foreign-account.t .............................................. 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/ContactCard/get/basic.t .................................................... ok
 t/ContactCard/query/basic.t .................................................. ok
 t/ContactCard/queryChanges/basic.t ........................................... ok
@@ -82,7 +145,338 @@ t/Email/set/create/created-response-required-properties.t .................... o
 t/Email/set/create/email-body-part-must-be-present.t ......................... ok
 t/Email/set/create/email-body-value-restrictions.t ........................... ok
 t/Email/set/create/empty-set-fields-are-null.t ............................... ok
-t/Email/set/create/header-header-field-name.t ................................
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Sender\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Sender:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'e6'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '8'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Sender:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Reply\-To\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Reply-To:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'e7'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '9'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Reply-To:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Cc\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Cc:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'e8'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '10'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Cc:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Bcc\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Bcc:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'e9'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '11'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Bcc:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Resent\-From\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Resent-From:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'ea'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '12'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Resent-From:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Resent\-Sender\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Resent-Sender:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'eb'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '13'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Resent-Sender:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Resent\-Reply\-To\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Resent-Reply-To:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'ec'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '14'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Resent-Reply-To:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Resent\-To\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Resent-To:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'ed'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '15'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Resent-To:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Resent\-Cc\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Resent-Cc:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'ee'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '16'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Resent-Cc:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:Resent\-Bcc\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:Resent-Bcc:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'ef'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '17'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:Resent-Bcc:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+                #   Failed test 'Sentence for cid 'a' in response to 'Email/get' matches up'
+                #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+                # Comparing $data->{"list"}[0]{"header\:X\-Foo\:asRaw\:all"}[0] as a string
+                #    got : ' Foo bar <foos783@example.net>'
+                # expect : ' "Foo bar" <foos783@example.net>'
+                # [
+                #   [
+                #     'Email/get',
+                #     {
+                #       'accountId' => 'd7x727yjzczryc2j',
+                #       'list' => [
+                #         {
+                #           'header:X-Foo:asRaw:all' => [
+                #             ' Foo bar <foos783@example.net>'
+                #           ],
+                #           'id' => 'eg'
+                #         }
+                #       ],
+                #       'notFound' => [],
+                #       'state' => '18'
+                #     },
+                #     'a'
+                #   ]
+                # ]
+                # Looks like you failed 1 test of 3.
+
+            #   Failed test 'Email/set create with header:X-Foo:asAddresses works as expected'
+            #   at t/Email/set/create/header-header-field-name.t line 76.
+
+        # Failed test 'asAddresses'
+        # at t/Email/set/create/header-header-field-name.t line 82.
+
+    # Failed test 'test from t/Email/set/create/header-header-field-name.t'
+    # at t/Email/set/create/header-header-field-name.t line 149.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/Email/set/create/header-header-field-name.t ................................ 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/Email/set/create/headers-property-forbidden-in-body-structure.t ............ ok
 t/Email/set/create/headers-property-forbidden.t .............................. ok
 t/Email/set/create/html-body-using-blob-id.t ................................. ok
@@ -92,7 +486,53 @@ t/Email/set/create/no-charset-with-partid.t .................................. o
 t/Email/set/create/no-content-headers-top-level.t ............................ ok
 t/Email/set/create/no-date-server-provides-one.t ............................. ok
 t/Email/set/create/no-duplicate-header-representations.t ..................... ok
-t/Email/set/create/no-duplicate-structural-representations.t .................
+
+            #   Failed test 'Sentence for cid 'a' in response to 'Email/set' matches up'
+            #   at /suite/lib/JMAP/TestSuite/JMAP/Tester/WithSugarRole.pm line 145.
+            # Comparing $data->{"notCreated"}{"new"}{"properties"}[0] as a string
+            #    got : 'attachments'
+            # expect : 'textBody'
+            # [
+            #   [
+            #     'Email/set',
+            #     {
+            #       'accountId' => 'lftdmrwjiyonbspk',
+            #       'created' => undef,
+            #       'destroyed' => undef,
+            #       'newState' => '2',
+            #       'notCreated' => {
+            #         'new' => {
+            #           'description' => 'these properties cannot be used to create an email as given',
+            #           'properties' => [
+            #             'attachments',
+            #             'htmlBody',
+            #             'textBody'
+            #           ],
+            #           'type' => 'invalidProperties'
+            #         }
+            #       },
+            #       'notDestroyed' => undef,
+            #       'notUpdated' => undef,
+            #       'oldState' => '2',
+            #       'updated' => undef
+            #     },
+            #     'a'
+            #   ]
+            # ]
+            # Looks like you failed 1 test of 3.
+
+        #   Failed test 'got invalidProperties error'
+        #   at t/Email/set/create/no-duplicate-structural-representations.t line 19.
+
+    # Failed test 'test from t/Email/set/create/no-duplicate-structural-representations.t'
+    # at t/Email/set/create/no-duplicate-structural-representations.t line 70.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/Email/set/create/no-duplicate-structural-representations.t ................. 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/Email/set/create/no-message-id-server-provides-one.t ....................... ok
 t/Email/set/create/no-size-with-partid.t ..................................... ok
 t/Email/set/create/only-one-part-in-html-body.t .............................. ok
@@ -117,19 +557,567 @@ t/Identity/set/basic.t ....................................................... o
 t/MDN/foreign-account.t ...................................................... ok
 t/MDN/parse/basic.t .......................................................... ok
 t/Mailbox/changes/cannot-calculate-changes.t ................................. ok
-t/Mailbox/changes/changed-properties.t .......................................
+
+            #   Failed test 'Response looks good'
+            #   at t/Mailbox/changes/changed-properties.t line 30.
+            # Comparing $data->{"updatedProperties"} as a Bag
+            # got    : undef
+            # expect : An array to use as a Bag
+            # [
+            #   [
+            #     'Mailbox/changes',
+            #     {
+            #       'accountId' => '3gm4vdi4obmgao62',
+            #       'created' => [],
+            #       'destroyed' => [],
+            #       'hasMoreChanges' => bless( do{\(my $o = 0)}, 'JSON::PP::Boolean' ),
+            #       'newState' => '4',
+            #       'oldState' => '3',
+            #       'updated' => [
+            #         'm6'
+            #       ],
+            #       'updatedProperties' => undef
+            #     },
+            #     'h'
+            #   ]
+            # ]
+
+        # Failed test 'Only counts changed, should get updatedProperties'
+        # at t/Mailbox/changes/changed-properties.t line 49.
+
+    # Failed test 'test from t/Mailbox/changes/changed-properties.t'
+    # at t/Mailbox/changes/changed-properties.t line 94.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/Mailbox/changes/changed-properties.t ....................................... 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/Mailbox/changes/container-state-tracking.t ................................. ok
 t/Mailbox/changes/max-changes-has-more-changes.t ............................. ok
 t/Mailbox/changes/no-changes.t ............................................... ok
 t/Mailbox/changes/with-changes.t ............................................. ok
 t/Mailbox/foreign-account.t .................................................. ok
-t/Mailbox/get/limiting-properties-in-response.t ..............................
+
+            #   Failed test 'Our mailbox looks good'
+            #   at t/Mailbox/get/limiting-properties-in-response.t line 42.
+            # Comparing (Part 2 of 2 in $data->{"isSubscribed"}) as a boolean
+            #    got : true (JSON::PP::Boolean=SCALAR(0xaaaade4dcef0))
+            # expect : false ('0')
+            # [
+            #   [
+            #     'Mailbox/get',
+            #     {
+            #       'accountId' => 'eaacrj3nsjkgvgd5',
+            #       'list' => [
+            #         {
+            #           'id' => 'm6',
+            #           'isSubscribed' => bless( do{\(my $o = 1)}, 'JSON::PP::Boolean' ),
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Folder 0 at 1794776639.1187',
+            #           'parentId' => undef,
+            #           'role' => undef,
+            #           'sortOrder' => 0,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         }
+            #       ],
+            #       'notFound' => [],
+            #       'state' => '2'
+            #     },
+            #     'c'
+            #   ]
+            # ]
+
+        # Failed test 'properties => null gives us all properties'
+        # at t/Mailbox/get/limiting-properties-in-response.t line 56.
+
+    # Failed test 'test from t/Mailbox/get/limiting-properties-in-response.t'
+    # at t/Mailbox/get/limiting-properties-in-response.t line 92.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/Mailbox/get/limiting-properties-in-response.t .............................. 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/Mailbox/get/no-existing-entities.t ......................................... ok
-t/Mailbox/get/some-entities.t ................................................
+
+            #   Failed test 'Our mailbox looks good'
+            #   at t/Mailbox/get/some-entities.t line 54.
+            # Comparing (Part 2 of 2 in $data->{"isSubscribed"}) as a boolean
+            #    got : true (JSON::PP::Boolean=SCALAR(0xaaaadd51c5a0))
+            # expect : false ('0')
+            # [
+            #   [
+            #     'Mailbox/get',
+            #     {
+            #       'accountId' => '4vqsct6puya45fxv',
+            #       'list' => [
+            #         {
+            #           'id' => 'm6',
+            #           'isSubscribed' => bless( do{\(my $o = 1)}, 'JSON::PP::Boolean' ),
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Folder 0 at 1794776640.1206',
+            #           'parentId' => undef,
+            #           'role' => undef,
+            #           'sortOrder' => 0,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm7',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Folder 1 at 1794776640.1206',
+            #           'parentId' => undef,
+            #           'role' => undef,
+            #           'sortOrder' => 0,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm1',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => bless( do{\(my $o = 0)}, 'JSON::PP::Boolean' ),
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Inbox',
+            #           'parentId' => undef,
+            #           'role' => 'inbox',
+            #           'sortOrder' => 1,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm2',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[2]{'myRights'}{'mayDelete'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Drafts',
+            #           'parentId' => undef,
+            #           'role' => 'drafts',
+            #           'sortOrder' => 2,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm3',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[2]{'myRights'}{'mayDelete'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Sent',
+            #           'parentId' => undef,
+            #           'role' => 'sent',
+            #           'sortOrder' => 3,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm4',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[2]{'myRights'}{'mayDelete'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Junk',
+            #           'parentId' => undef,
+            #           'role' => 'junk',
+            #           'sortOrder' => 4,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm5',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[2]{'myRights'}{'mayDelete'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Trash',
+            #           'parentId' => undef,
+            #           'role' => 'trash',
+            #           'sortOrder' => 5,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         }
+            #       ],
+            #       'notFound' => [],
+            #       'state' => '3'
+            #     },
+            #     'e'
+            #   ]
+            # ]
+
+        # Failed test 'No arguments'
+        # at t/Mailbox/get/some-entities.t line 68.
+
+            #   Failed test 'Our mailbox looks good'
+            #   at t/Mailbox/get/some-entities.t line 54.
+            # Comparing (Part 2 of 2 in $data->{"isSubscribed"}) as a boolean
+            #    got : true (JSON::PP::Boolean=SCALAR(0xaaaadd51c5a0))
+            # expect : false ('0')
+            # [
+            #   [
+            #     'Mailbox/get',
+            #     {
+            #       'accountId' => '4vqsct6puya45fxv',
+            #       'list' => [
+            #         {
+            #           'id' => 'm6',
+            #           'isSubscribed' => bless( do{\(my $o = 1)}, 'JSON::PP::Boolean' ),
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Folder 0 at 1794776640.1206',
+            #           'parentId' => undef,
+            #           'role' => undef,
+            #           'sortOrder' => 0,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm7',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Folder 1 at 1794776640.1206',
+            #           'parentId' => undef,
+            #           'role' => undef,
+            #           'sortOrder' => 0,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm1',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => bless( do{\(my $o = 0)}, 'JSON::PP::Boolean' ),
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Inbox',
+            #           'parentId' => undef,
+            #           'role' => 'inbox',
+            #           'sortOrder' => 1,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm2',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[2]{'myRights'}{'mayDelete'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Drafts',
+            #           'parentId' => undef,
+            #           'role' => 'drafts',
+            #           'sortOrder' => 2,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm3',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[2]{'myRights'}{'mayDelete'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Sent',
+            #           'parentId' => undef,
+            #           'role' => 'sent',
+            #           'sortOrder' => 3,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm4',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[2]{'myRights'}{'mayDelete'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Junk',
+            #           'parentId' => undef,
+            #           'role' => 'junk',
+            #           'sortOrder' => 4,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         },
+            #         {
+            #           'id' => 'm5',
+            #           'isSubscribed' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[2]{'myRights'}{'mayDelete'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Trash',
+            #           'parentId' => undef,
+            #           'role' => 'trash',
+            #           'sortOrder' => 5,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         }
+            #       ],
+            #       'notFound' => [],
+            #       'state' => '3'
+            #     },
+            #     'f'
+            #   ]
+            # ]
+
+        # Failed test 'null ids'
+        # at t/Mailbox/get/some-entities.t line 68.
+
+            #   Failed test 'Our mailbox looks good'
+            #   at t/Mailbox/get/some-entities.t line 92.
+            # Comparing (Part 2 of 2 in $data->{"isSubscribed"}) as a boolean
+            #    got : true (JSON::PP::Boolean=SCALAR(0xaaaadd51c5a0))
+            # expect : false ('0')
+            # [
+            #   [
+            #     'Mailbox/get',
+            #     {
+            #       'accountId' => '4vqsct6puya45fxv',
+            #       'list' => [
+            #         {
+            #           'id' => 'm6',
+            #           'isSubscribed' => bless( do{\(my $o = 1)}, 'JSON::PP::Boolean' ),
+            #           'myRights' => {
+            #             'mayAddItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayCreateChild' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayDelete' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayReadItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRemoveItems' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'mayRename' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetKeywords' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySetSeen' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'},
+            #             'maySubmit' => $VAR1->[0][1]{'list'}[0]{'isSubscribed'}
+            #           },
+            #           'name' => 'Folder 0 at 1794776640.1206',
+            #           'parentId' => undef,
+            #           'role' => undef,
+            #           'sortOrder' => 0,
+            #           'totalEmails' => 0,
+            #           'totalThreads' => 0,
+            #           'unreadEmails' => 0,
+            #           'unreadThreads' => 0
+            #         }
+            #       ],
+            #       'notFound' => [],
+            #       'state' => '3'
+            #     },
+            #     'g'
+            #   ]
+            # ]
+
+        # Failed test 'Limit by id'
+        # at t/Mailbox/get/some-entities.t line 106.
+
+    # Failed test 'test from t/Mailbox/get/some-entities.t'
+    # at t/Mailbox/get/some-entities.t line 126.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/Mailbox/get/some-entities.t ................................................ 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/Mailbox/query/filtering-with-filter-conditions.t ........................... ok
-t/Mailbox/query/filtering-with-filter-operators.t ............................
+
+            #   Failed test 'sorted as expected'
+            #   at /suite/lib/JMAP/TestSuite/Tester.pm line 84.
+            # Comparing ${$data->{"ids"}[0]} as a string
+            #    got : 'm6'
+            # expect : 'm2'
+            # Looks like you failed 1 test of 3.
+
+        #   Failed test 'OR - two conditions, diff conds'
+        #   at t/Mailbox/query/filtering-with-filter-operators.t line 155.
+
+    # Failed test 'test from t/Mailbox/query/filtering-with-filter-operators.t'
+    # at t/Mailbox/query/filtering-with-filter-operators.t line 208.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/Mailbox/query/filtering-with-filter-operators.t ............................ 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/Mailbox/query/no-existing-entities.t ....................................... ok
-t/Mailbox/query/sorting-and-limiting.t .......................................
+
+            #   Failed test 'sorted as expected'
+            #   at /suite/lib/JMAP/TestSuite/Tester.pm line 84.
+            # Comparing $data->{"position"} as a string
+            #    got : '11'
+            # expect : '0'
+            # Looks like you failed 1 test of 3.
+
+        #   Failed test 'sort by name, explicit ascending order, explicit position too high'
+        #   at t/Mailbox/query/sorting-and-limiting.t line 179.
+
+    # Failed test 'test from t/Mailbox/query/sorting-and-limiting.t'
+    # at t/Mailbox/query/sorting-and-limiting.t line 276.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/Mailbox/query/sorting-and-limiting.t ....................................... 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/Mailbox/queryChanges/basic.t ............................................... ok
 t/Mailbox/set/create/all-settable-fields-provided.t .......................... ok
 t/Mailbox/set/create/defaults-omitted.t ...................................... ok
@@ -145,7 +1133,32 @@ t/Mailbox/set/destroy/on-destroy-remove-messages-true-mail-only-here.t ....... o
 t/Mailbox/set/if-in-state.t .................................................. ok
 t/Mailbox/set/nonexistent-id.t ............................................... ok
 t/Mailbox/set/update/basic.t ................................................. ok
-t/Principal/foreign-account.t ................................................ ok
+
+        #   Failed test 'Principal/queryChanges accountId=OTHER: accountNotFound'
+        #   at t/Principal/foreign-account.t line 19.
+        # Comparing $data->{"type"} as a string
+        #    got : 'cannotCalculateChanges'
+        # expect : 'accountNotFound'
+        # [
+        #   [
+        #     'error',
+        #     {
+        #       'description' => 'this server does not calculate query changes for this type; query again',
+        #       'type' => 'cannotCalculateChanges'
+        #     },
+        #     'f'
+        #   ]
+        # ]
+
+    # Failed test 'test from t/Principal/foreign-account.t'
+    # at t/Principal/foreign-account.t line 29.
+
+# Failed test 'tests'
+# at /usr/local/lib/perl5/site_perl/5.42.3/Test/Routine/Runner.pm line 102.
+# Looks like you failed 1 test of 1.
+t/Principal/foreign-account.t ................................................ 
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests 
 t/Principal/get/basic.t ...................................................... ok
 t/Principal/getAvailability/basic.t .......................................... ok
 t/Quota/foreign-account.t .................................................... ok
@@ -173,22 +1186,42 @@ t/core/upload.t .............................................................. o
 t/getMessageUpdates-sinceState.t ............................................. ok
 t/getMessages-htmlBody.t ..................................................... ok
 t/previews.t ................................................................. ok
+
 Test Summary Report
 -------------------
+t/CalendarEvent/foreign-account.t                                          (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
+t/CalendarEvent/set/update.t                                               (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
+t/ContactCard/foreign-account.t                                            (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
 t/Email/set/create/header-header-field-name.t                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
 t/Email/set/create/no-duplicate-structural-representations.t               (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
 t/Mailbox/changes/changed-properties.t                                     (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
 t/Mailbox/get/limiting-properties-in-response.t                            (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
 t/Mailbox/get/some-entities.t                                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
 t/Mailbox/query/filtering-with-filter-operators.t                          (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
 t/Mailbox/query/sorting-and-limiting.t                                     (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
-Files=173, Tests=169, 77 wallclock secs ( 0.27 usr  0.14 sys + 67.78 cusr  9.52 csys = 77.71 CPU)
+  Failed test:  1
+  Non-zero exit status: 1
+t/Principal/foreign-account.t                                              (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
+Files=173, Tests=169, 71 wallclock secs ( 0.22 usr  0.11 sys + 59.63 cusr  6.02 csys = 65.98 CPU)
 Result: FAIL
 
-# skipped inside, by capability:
-   3 SKIP server does not support urn:ietf:params:jmap:blob
-   3 SKIP server does not support urn:ietf:params:jmap:blob2
-  16 SKIP server does not support urn:ietf:params:jmap:calendars
-  16 SKIP server does not support urn:ietf:params:jmap:contacts
-   2 SKIP server does not support urn:ietf:params:jmap:mdn
-   3 SKIP server does not support urn:ietf:params:jmap:principals
