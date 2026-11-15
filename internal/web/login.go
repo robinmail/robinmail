@@ -196,7 +196,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, `the body must be {"username": "...", "password": "..."}`)
 		return
 	}
-	acct, status, wait := s.passwordLogin(r.Context(), clientIP(r), *req.Username, *req.Password)
+	acct, status, wait := s.passwordLogin(r, *req.Username, *req.Password)
 	switch status {
 	case 0:
 	case http.StatusTooManyRequests:
@@ -230,6 +230,7 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, acct store.
 	if _, ok := s.startSession(w, r, acct, store.StageFull, method, remember, oldSession(r)); !ok {
 		return
 	}
+	s.rememberDevice(w, r, acct.Address)
 	s.event(r.Context(), EventLogin, acct, acct.Address, clientIP(r), "web: "+method)
 	s.Logger.Info("login", "address", acct.Address, "ip", clientIP(r), "method", method)
 	done()
@@ -348,6 +349,7 @@ func (s *Server) loginTOTP(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.startSession(w, r, acct, store.StageFull, method, pending.Remember, hash); !ok {
 		return
 	}
+	s.rememberDevice(w, r, acct.Address)
 	s.setCookie(w, r, pendingCookie(r), "", -1)
 	s.event(r.Context(), EventLogin, acct, acct.Address, clientIP(r), "web: "+method)
 	s.Logger.Info("login", "address", acct.Address, "ip", clientIP(r), "method", method)

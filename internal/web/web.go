@@ -103,6 +103,11 @@ type Server struct {
 	// submission and Basic auth for every account, also those without an
 	// app password.
 	RequireAppPasswords bool
+	// DeviceKeys sign the known-device cookies of the web login (device.go),
+	// the current key first; keys of master keys replaced since follow.
+	// Without them there are no such cookies, and anybody can lock an
+	// address out of the web login with wrong passwords.
+	DeviceKeys [][]byte
 	// Hosts, when set, returns the handler for another host name this
 	// server answers under (mta-sts.<domain>, autoconfig.<domain>), or
 	// nil for a name that is not ours.
@@ -156,6 +161,7 @@ type Server struct {
 	byAddress  *limiter // wrong account passwords at the web login
 	byMail     *limiter // wrong secrets from mail clients
 	byCode     *limiter // wrong TOTP and recovery codes
+	byDevice   *limiter // wrong passwords from a known device
 	byIP       *limiter
 	turns      keyLocks // attempts under one limit take turns (turn)
 	usedMu     sync.Mutex
@@ -226,6 +232,7 @@ func (s *Server) init() {
 		s.byAddress = newLimiter(maxFailsPerAddr, loginWindow, s.Now)
 		s.byMail = newLimiter(maxFailsPerAddr, loginWindow, s.Now)
 		s.byCode = newLimiter(maxFailsPerCode, loginWindow, s.Now)
+		s.byDevice = newLimiter(maxFailsPerAddr, loginWindow, s.Now)
 		s.byIP = newLimiter(maxFailsPerIP, loginWindow, s.Now)
 		s.used = map[string]time.Time{}
 		s.hashing = make(chan struct{}, maxHashing)

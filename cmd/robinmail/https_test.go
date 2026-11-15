@@ -102,9 +102,11 @@ func TestServeHTTPS(t *testing.T) {
 	resp.Body.Close()
 	var session *http.Cookie
 	for _, ck := range resp.Cookies() {
-		session = ck
+		if ck.Name == "__Host-robinmail" {
+			session = ck
+		}
 	}
-	if resp.StatusCode != 200 || session == nil || session.Name != "__Host-robinmail" || !session.Secure || !session.HttpOnly ||
+	if resp.StatusCode != 200 || session == nil || !session.Secure || !session.HttpOnly ||
 		session.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("login: %d, cookie %+v", resp.StatusCode, session)
 	}

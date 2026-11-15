@@ -317,10 +317,18 @@ func (s *Server) lookup(ctx context.Context, addr address.Address, isAddress boo
 // login, with the rate limits. It returns the account, or an HTTP status
 // that says why not (401 wrong, 429 too many failures, 503 cannot tell
 // right now) and how long the client should wait.
-func (s *Server) passwordLogin(ctx context.Context, ip, username, password string) (store.Account, int, time.Duration) {
+//
+// A request from a browser that logged in as the address before (a
+// known-device cookie, device.go) is counted under that cookie instead of
+// under the address, so that others cannot lock the owner out (issue 41).
+func (s *Server) passwordLogin(r *http.Request, username, password string) (store.Account, int, time.Duration) {
 	s.init()
+	ctx, ip := r.Context(), clientIP(r)
 	key, addr, isAddress := limiterKey(username)
 	byAddr, byIP := s.limitWeb(key), s.limitIP(ip)
+	if tag := s.knownDevice(r, key); tag != "" {
+		byAddr = s.limitDevice(tag)
+	}
 	done, ok := s.turn(ctx, byIP, byAddr)
 	if !ok {
 		return store.Account{}, http.StatusServiceUnavailable, 0
@@ -345,6 +353,8 @@ func (s *Server) passwordLogin(ctx context.Context, ip, username, password strin
 		s.Logger.Warn("login failed", "door", "web", "address", key, "ip", ip)
 		return store.Account{}, http.StatusUnauthorized, 0
 	}
+	// From a known device this clears the device's failures, not the
+	// address's: what strangers tried stays counted.
 	s.cleared(ctx, shared, byAddr)
 	return acct, 0, 0
 }

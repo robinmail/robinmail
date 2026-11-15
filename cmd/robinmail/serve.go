@@ -172,6 +172,7 @@ func (a *app) serve(stop func()) error {
 		Audit:               a.store,
 		AuthChanges:         authHub,
 		RequireAppPasswords: a.cfg.Auth.RequireAppPasswords,
+		DeviceKeys:          a.master.DeriveAll("robinmail web device", 32),
 		SendAs:              a.store.SendAddresses,
 		Clients:             clients,
 		Health:              a.healthy,
