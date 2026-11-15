@@ -45,10 +45,10 @@ func TestRFC9425Quota(t *testing.T) {
 	// names ... to which this quota applies".
 	same(t, "both quotas", got["list"], `[
 		{"id": "octets", "resourceType": "octets", "used": `+jsonOf(used)+`, "hardLimit": 5000, "scope": "account", "name": "Storage",
-		 "types": ["Email"], "warnLimit": null, "softLimit": null,
-		 "description": "The size of all messages in the account, in octets. Each message counts once, whatever number of mailboxes it is in."},
+		 "types": ["Email", "CalendarEvent", "ContactCard"], "warnLimit": null, "softLimit": null,
+		 "description": "The size of all messages, events and contacts in the account, in octets. Each message counts once, whatever number of mailboxes it is in."},
 		{"id": "count", "resourceType": "count", "used": 2, "hardLimit": 3, "scope": "account", "name": "Messages",
-		 "types": ["Email"], "warnLimit": null, "softLimit": null, "description": "The number of messages in the account."}]`)
+		 "types": ["Email", "CalendarEvent", "ContactCard"], "warnLimit": null, "softLimit": null, "description": "The number of messages, events and contacts in the account."}]`)
 	some := e.quota("Quota/get", `{"accountId": "$A", "ids": ["count", "nonesuch"], "properties": ["used", "hardLimit"]}`)
 	same(t, "by id", []any{some["list"], some["notFound"]}, `[[{"id": "count", "used": 2, "hardLimit": 3}], ["nonesuch"]]`)
 

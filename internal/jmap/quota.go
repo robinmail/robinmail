@@ -32,12 +32,12 @@ func quotaObjects(q store.Quota) []map[string]any {
 		}
 		out = append(out, map[string]any{
 			"id": id, "resourceType": id, "used": used, "hardLimit": limit, "scope": "account", "name": name,
-			// The quota is about mail: Emails are what counts.
-			"types": []string{"Email"}, "warnLimit": nil, "softLimit": nil, "description": description,
+			// Emails, and since phase 9 calendar events and cards, count.
+			"types": []string{"Email", "CalendarEvent", "ContactCard"}, "warnLimit": nil, "softLimit": nil, "description": description,
 		})
 	}
-	add(quotaOctets, "Storage", "The size of all messages in the account, in octets. Each message counts once, whatever number of mailboxes it is in.", q.UsedBytes, q.Bytes)
-	add(quotaCount, "Messages", "The number of messages in the account.", q.UsedMessages, q.Messages)
+	add(quotaOctets, "Storage", "The size of all messages, events and contacts in the account, in octets. Each message counts once, whatever number of mailboxes it is in.", q.UsedBytes, q.Bytes)
+	add(quotaCount, "Messages", "The number of messages, events and contacts in the account.", q.UsedMessages, q.Messages)
 	return out
 }
 
