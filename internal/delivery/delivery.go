@@ -77,9 +77,9 @@ func (d *Deliverer) now() time.Time {
 }
 
 // acceptedDomains reads the domain table. Nothing is cached: every node
-// asks rqlite each time, so a domain added or removed on any node counts
+// asks the database each time, so a domain added or removed on any node counts
 // for the next RCPT everywhere. It is one small read next to the account
-// lookup every RCPT does anyway. When rqlite does not answer, the mail is
+// lookup every RCPT does anyway. When the database does not answer, the mail is
 // deferred, as it would be at the account lookup a line later.
 func (d *Deliverer) acceptedDomains(ctx context.Context) ([]string, error) {
 	return d.Store.Domains(ctx)

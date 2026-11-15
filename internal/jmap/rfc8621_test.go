@@ -9,14 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/robinmail/robinmail/internal/address"
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/raftdb/raftdbtest"
 	"github.com/robinmail/robinmail/internal/store"
 )
 
@@ -43,14 +42,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	db, err := rqlite.New(base, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := raftdbtest.Open(t)
 	master, err := blob.NewMasterKey(bytes.Repeat([]byte{0x42}, 32))
 	if err != nil {
 		t.Fatal(err)

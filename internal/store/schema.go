@@ -15,7 +15,7 @@ import (
 const schemaVersion = 14
 
 // Every mail table starts with account_id, so accounts could be spread over
-// several rqlite clusters later.
+// several clusters later.
 var schema = []string{
 	`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`,
 

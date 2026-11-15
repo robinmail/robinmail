@@ -2,11 +2,6 @@
   "hostname": "mail.robinmail.test",
   "data_dir": "/var/lib/robinmail",
   "master_key_file": "/etc/robinmail/secrets/master.key",
-  "rqlite": {
-    "url": "https://rqlite-3-db:4001",
-    "auth_file": "/etc/robinmail/secrets/rqlite.auth",
-    "ca_file": "/etc/robinmail/secrets/rqlite/ca.crt"
-  },
   "node": {
     "id": "n3",
     "listen": ":7443",

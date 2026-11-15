@@ -16,7 +16,7 @@ import (
 // Calendars and address books (phase 9). A collection is a calendar, an
 // address book, or the scheduling inbox of RFC 6638 (one per account). An
 // object is one calendar object (the VEVENTs of one UID, RFC 4791 4.1) or
-// one vCard, stored as the text a client sent or JMAP made: once, in rqlite,
+// one vCard, stored as the text a client sent or JMAP made: once, in the database,
 // with a few columns taken from it for queries. Like mail, every write is
 // one batch that moves the account's modseq and logs the change; that log
 // gives JMAP its /changes, and with the tombstones of removed objects it

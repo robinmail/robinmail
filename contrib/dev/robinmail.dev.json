@@ -2,9 +2,6 @@
   "hostname": "mail.robinmail.test",
   "data_dir": "data",
   "master_key_file": "master.key",
-  "rqlite": {
-    "url": "http://127.0.0.1:4005"
-  },
   "tls": {
     "cert_file": "tls.crt",
     "key_file": "tls.key"

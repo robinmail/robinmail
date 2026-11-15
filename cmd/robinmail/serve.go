@@ -60,6 +60,7 @@ const shutdownGrace = 30 * time.Second
 // happens on SIGINT or SIGTERM. stop gives the signals their default action
 // back, so a second one ends the process without waiting.
 func (a *app) serve(stop func()) error {
+	defer a.close()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	// The names of our domains this server also answers under.
@@ -366,26 +367,20 @@ func (a *app) serve(stop func()) error {
 		onListen(l.Addr())
 	}
 
-	// The other nodes: a listener for their blobs, a heartbeat in the node
-	// table, and the pass that fetches what this disk lacks.
-	var peerServer *http.Server
+	// The other nodes: open listens for their blobs and Raft messages
+	// already; here the heartbeat in the node table, and the pass that
+	// fetches what this disk lacks.
 	upkeep := make(chan struct{})
 	if a.node == nil {
 		close(upkeep)
 	} else {
 		a.node.Logger, a.replicated.Logger = log, log
-		pl, err := tls.Listen("tcp", a.cfg.Node.Listen, a.node.ServerTLS())
-		if err != nil {
-			return err
-		}
-		peerServer = a.node.HTTPServer(a.local, a.store.VerifyBlob)
 		members, _ := a.node.Members(a.ctx)
-		log.Info("node listening", "id", a.node.ID, "addr", pl.Addr().String(), "address", a.node.Address,
+		log.Info("node listening", "id", a.node.ID, "addr", a.peerAddr.String(), "address", a.node.Address,
 			"cert", a.node.Identity.Fingerprint[:16], "nodes", members)
 		if onNodeListen != nil {
-			onNodeListen(pl.Addr())
+			onNodeListen(a.peerAddr)
 		}
-		go func() { webErr <- peerServer.Serve(pl) }()
 		interval := time.Duration(a.cfg.Node.RepairIntervalSeconds) * time.Second
 		if interval == 0 {
 			interval = 5 * time.Minute
@@ -396,18 +391,8 @@ func (a *app) serve(stop func()) error {
 			repairLoop(a.ctx, a.store, log, interval)
 		}()
 	}
-
-	// Whoever reaches rqlite without a login owns every account and can
-	// admit a node. Say so when that is how this node reaches it.
-	{
-		ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
-		link := a.rqliteLink(ctx)
-		cancel()
-		if p := link.problem(); p != "" {
-			log.Warn("the connection to rqlite is not locked down", "link", link.String(), "problem", p)
-		} else {
-			log.Info("rqlite", "link", link.String())
-		}
+	if line, err := a.clusterLine(a.ctx); err == nil {
+		log.Info("database", "cluster", line)
 	}
 
 	// The metrics, for a collector on this machine.
@@ -489,13 +474,11 @@ func (a *app) serve(stop func()) error {
 	<-webDone
 	<-trimmed
 	<-upkeep
-	if peerServer != nil {
+	if a.replicated != nil {
 		// Last: until here a delivery that was finishing could still push.
 		a.replicated.Wait()
-		if err := peerServer.Shutdown(sctx); err != nil {
-			peerServer.Close()
-		}
 	}
+	a.close()
 	return nil
 }
 

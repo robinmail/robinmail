@@ -148,9 +148,9 @@ func (s *Server) limitIP(ip string) limit {
 // also returns what the shared counters hold, for cleared.
 //
 // The shared counters are the ones that count: this node's own, in memory,
-// are what is left when rqlite does not answer, and then the limits hold
-// per node. The cost for a login is one read that the nearest rqlite node
-// answers from its own copy (store.LoginFailures). Only a failure writes.
+// are what is left when the database does not answer, and then the limits
+// hold per node. The cost for a login is one read that this node answers
+// from its own copy of the database (store.LoginFailures). Only a failure writes.
 func (s *Server) blocked(ctx context.Context, limits ...limit) (map[string]store.LoginFailure, time.Duration, bool) {
 	for _, l := range limits {
 		if wait, blocked := l.mem.blocked(l.key); blocked {
@@ -546,8 +546,8 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, scope stri
 
 // limiter counts failures per key in a fixed window and blocks a key that
 // reached the maximum until its window ends. It lives in memory: per node,
-// and gone at a restart. The counters all nodes share are in rqlite
-// (blocked); this one is the fallback for when rqlite is away.
+// and gone at a restart. The counters all nodes share are in the
+// database (blocked); this one is the fallback for when it does not answer.
 type limiter struct {
 	mu     sync.Mutex
 	max    int

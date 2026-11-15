@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/x509"
 	"encoding/json"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -61,18 +60,14 @@ func (c *jmapClient) upload(account, typ, content string) string {
 //     ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003 \
 //     go test -v -run TestSieveEndToEnd ./cmd/robinmail
 func TestSieveEndToEnd(t *testing.T) {
-	baseA, baseB := os.Getenv("ROBINMAIL_TEST_RQLITE"), os.Getenv("ROBINMAIL_TEST_RQLITE_B")
-	if baseA == "" || baseB == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE and ROBINMAIL_TEST_RQLITE_B are not both set")
-	}
 	world := newSendNet()
 	setup := func(w *queue.Worker, in *instance) {
 		w.Resolver = world
 		w.Dial = world.dial
 		w.RootCAs = x509.NewCertPool()
 	}
-	b := startInstance(t, baseB, "b", setup)
-	a := startInstance(t, baseA, "a", setup)
+	b := startInstance(t, "b", setup)
+	a := startInstance(t, "a", setup)
 	world.host(a.domain, a.host, "192.0.2.1", a.smtp)
 	world.host(b.domain, b.host, "192.0.2.2", b.smtp)
 	anna, bob, carol := a.user("anna"), b.user("bob"), b.user("carol")

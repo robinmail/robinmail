@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -30,14 +29,10 @@ func freePort(t *testing.T) string {
 // hostname, with the ports of the listeners in the config, and Outlook's
 // Autodiscover. The formats are tested in internal/web.
 func TestAutoconfigServed(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
 	const host = "mail.example.test"
 	certFile, keyFile, _ := selfSigned(t, t.TempDir(), host)
 	imaps, submission := freePort(t), freePort(t)
-	c := newCLI(t, base, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"web":{"listen":"127.0.0.1:0"},"tls":{"cert_file":%q,"key_file":%q},
+	c := newCLI(t, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"web":{"listen":"127.0.0.1:0"},"tls":{"cert_file":%q,"key_file":%q},
 		"imap":{"listen_tls":"127.0.0.1:%s"},"submission":{"listen":"127.0.0.1:%s"},"tls_rpt":{"disabled":true},`,
 		certFile, keyFile, imaps, submission))
 	domain := "auto-" + randomHex() + ".test"

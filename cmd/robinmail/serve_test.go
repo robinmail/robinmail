@@ -23,7 +23,6 @@ type server struct {
 // startServe runs serve on a free port with the given extra config.
 func startServe(t *testing.T, c *cli) *server {
 	t.Helper()
-	forgetLoopbackFailures(t)
 	listening := make(chan net.Addr, 1)
 	onListen = func(a net.Addr) { listening <- a }
 	webAddr := make(chan net.Addr, 1)
@@ -158,9 +157,9 @@ const (
 //	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RSPAMD=http://127.0.0.1:11333 \
 //	  go test -v -run TestServeEndToEnd ./cmd/robinmail
 func TestServeEndToEnd(t *testing.T) {
-	base, scanner := os.Getenv("ROBINMAIL_TEST_RQLITE"), os.Getenv("ROBINMAIL_TEST_RSPAMD")
-	if base == "" || scanner == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE and ROBINMAIL_TEST_RSPAMD are not both set")
+	scanner := os.Getenv("ROBINMAIL_TEST_RSPAMD")
+	if scanner == "" {
+		t.Skip("ROBINMAIL_TEST_RSPAMD is not set")
 	}
 	hc := &http.Client{Timeout: 5 * time.Second}
 	if resp, err := hc.Get(scanner + "/ping"); err != nil {
@@ -169,7 +168,7 @@ func TestServeEndToEnd(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	c := newCLI(t, base, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"rspamd":{"url":%q,"timeout_seconds":60},`, scanner))
+	c := newCLI(t, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"rspamd":{"url":%q,"timeout_seconds":60},`, scanner))
 	domain := "e2e-" + randomHex() + ".test"
 	user, pm := "mike@"+domain, "postmaster@"+domain
 	c.ok("", "key", "generate")
@@ -252,10 +251,6 @@ func TestServeEndToEnd(t *testing.T) {
 // When Rspamd cannot be reached the sender is told to retry (451) and
 // nothing is stored, unless fail_open says to deliver unscanned.
 func TestServeRspamdDown(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
 	// A port nothing listens on.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -266,7 +261,7 @@ func TestServeRspamdDown(t *testing.T) {
 
 	for _, failOpen := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fail_open=%v", failOpen), func(t *testing.T) {
-			c := newCLI(t, base, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"rspamd":{"url":%q,"fail_open":%v,"timeout_seconds":5},`, dead, failOpen))
+			c := newCLI(t, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"rspamd":{"url":%q,"fail_open":%v,"timeout_seconds":5},`, dead, failOpen))
 			domain := "down-" + randomHex() + ".test"
 			user := "mike@" + domain
 			c.ok("", "key", "generate")
@@ -296,24 +291,38 @@ func TestServeRspamdDown(t *testing.T) {
 	}
 }
 
-// forgetLoopbackFailures removes the shared counter of failed logins from
-// 127.0.0.1 in the test databases. Every test logs in from that address
-// and the databases outlive a run: the tests that try wrong passwords
-// would, a few runs within fifteen minutes later, have locked all of them
-// out (50 failures per IP).
-func forgetLoopbackFailures(t *testing.T) {
+
+// freeAddr returns a loopback address whose port was free a moment ago.
+func freeAddr(t *testing.T) string {
 	t.Helper()
-	for _, env := range []string{"ROBINMAIL_TEST_RQLITE", "ROBINMAIL_TEST_RQLITE_B"} {
-		base := os.Getenv(env)
-		if base == "" {
-			continue
-		}
-		resp, err := http.Post(base+"/db/execute", "application/json",
-			strings.NewReader(`["DELETE FROM login_failure WHERE key IN ('i:127.0.0.1', 'i:::1')"]`))
-		if err != nil {
-			t.Logf("forgetting loopback login failures: %v", err)
-			continue
-		}
-		resp.Body.Close()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer l.Close()
+	return l.Addr().String()
+}
+
+// nodeSection is the node member of a config for a node on loopback,
+// followed by a comma.
+func nodeSection(t *testing.T, id string) string {
+	addr := freeAddr(t)
+	return fmt.Sprintf(`"node":{"id":%q,"listen":%q,"address":%q},`, id, addr, addr)
+}
+
+// joinNode admits the node of b to the cluster of a, whose server runs,
+// the way an operator does: "node id" on b, "node add" on a, "node join"
+// on b. Start b's server next.
+func joinNode(t *testing.T, a, b *cli) {
+	t.Helper()
+	f := strings.Fields(b.ok("", "node", "id"))
+	if len(f) != 3 {
+		t.Fatalf("node id: %v", f)
+	}
+	out := a.ok("", "node", "add", f[0], f[1], f[2])
+	m := regexp.MustCompile(`node join (\S+) (\S+)`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("node add said %q", out)
+	}
+	b.expect(b.ok("", "node", "join", m[1], m[2]), `^ready to join 2 members`)
 }

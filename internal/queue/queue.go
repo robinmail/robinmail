@@ -5,7 +5,7 @@
 // all (RFC 3464).
 //
 // Every node of a cluster runs a Worker on the same table. A row is worked
-// on by the node that holds its claim, a guarded update in rqlite that
+// on by the node that holds its claim, a guarded update in the database that
 // lasts two minutes and is renewed while the work goes on. A node that
 // dies leaves a claim that runs out, and another node takes the row.
 //
@@ -34,7 +34,7 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/message"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 	"github.com/robinmail/robinmail/internal/smtp"
 	"github.com/robinmail/robinmail/internal/store"
 	"github.com/robinmail/robinmail/internal/tlsrpt"
@@ -466,8 +466,8 @@ func (w *Worker) work(ctx context.Context, ref store.SubmissionRef) bool {
 	return true
 }
 
-// save writes the result of an attempt and ends the claim. When rqlite
-// cannot say whether the write was applied, the row tells: without our
+// save writes the result of an attempt and ends the claim. When the
+// database cannot say whether the write was applied, the row tells: without our
 // claim on it, it was.
 func (w *Worker) save(ctx context.Context, sub store.Submission, token string, next time.Time, log *slog.Logger) {
 	// The result is written even when the worker is being stopped.
@@ -479,7 +479,7 @@ func (w *Worker) save(ctx context.Context, sub store.Submission, token string, n
 		switch {
 		case err == nil, errors.Is(err, store.ErrNotClaimed):
 			return
-		case errors.Is(err, rqlite.ErrUnknownOutcome):
+		case errors.Is(err, db.ErrUnknownOutcome):
 			if now, rerr := w.Store.Submission(ctx, sub.Account, sub.ID); rerr == nil && now.ClaimedBy != token ||
 				errors.Is(rerr, store.ErrNoSubmission) {
 				return

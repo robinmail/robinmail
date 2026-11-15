@@ -166,9 +166,9 @@ func verifyDKIM(t *testing.T, msg []byte, pub *rsa.PublicKey) map[string]string 
 //	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RSPAMD=http://127.0.0.1:11333 \
 //	ROBINMAIL_TEST_DKIM_DIR=$PWD/contrib/compose/rspamd/dkim go test -v -run TestOutgoingMailIsSignedByRspamd ./cmd/robinmail
 func TestOutgoingMailIsSignedByRspamd(t *testing.T) {
-	base, scanner, keyDir := os.Getenv("ROBINMAIL_TEST_RQLITE"), os.Getenv("ROBINMAIL_TEST_RSPAMD"), os.Getenv("ROBINMAIL_TEST_DKIM_DIR")
-	if base == "" || scanner == "" || keyDir == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE, ROBINMAIL_TEST_RSPAMD and ROBINMAIL_TEST_DKIM_DIR are not all set")
+	scanner, keyDir := os.Getenv("ROBINMAIL_TEST_RSPAMD"), os.Getenv("ROBINMAIL_TEST_DKIM_DIR")
+	if scanner == "" || keyDir == "" {
+		t.Skip("ROBINMAIL_TEST_RSPAMD and ROBINMAIL_TEST_DKIM_DIR are not both set")
 	}
 	hc := &http.Client{Timeout: 5 * time.Second}
 	if resp, err := hc.Get(scanner + "/ping"); err != nil {
@@ -177,7 +177,7 @@ func TestOutgoingMailIsSignedByRspamd(t *testing.T) {
 		resp.Body.Close()
 	}
 	world := newSendNet()
-	a := startInstanceWith(t, base, "dkim", fmt.Sprintf(`"rspamd":{"url":%q,"timeout_seconds":60},`, scanner), func(w *queue.Worker, _ *instance) {
+	a := startInstanceWith(t, "dkim", fmt.Sprintf(`"rspamd":{"url":%q,"timeout_seconds":60},`, scanner), func(w *queue.Worker, _ *instance) {
 		w.Resolver, w.Dial = world, world.dial
 	})
 	caught, addr := startCatcher(t)

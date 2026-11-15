@@ -219,8 +219,8 @@ func SchemaVersion() int { return schemaVersion }
 // ---- backup and restore ----
 
 // BackupDatabase writes the whole database to w as one SQLite file: a
-// copy rqlite makes at one point of its log, so every table in it is from
-// the same moment.
+// copy of this node's database once it holds every write committed when
+// the backup began, so every table in it is from the same moment.
 func (s *Store) BackupDatabase(ctx context.Context, w io.Writer) error {
 	if err := s.db.Backup(ctx, w); err != nil {
 		return fmt.Errorf("store: %w", err)

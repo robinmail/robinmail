@@ -2,12 +2,6 @@
   "hostname": "mail.example.test",
   "data_dir": "data",
   "master_key_file": "master.key",
-  "rqlite": {
-    "url": "http://127.0.0.1:4001",
-    "urls": [],
-    "auth_file": "",
-    "ca_file": ""
-  },
   "node": {
     "id": "",
     "listen": "",

@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +13,7 @@ import (
 
 	"github.com/robinmail/robinmail/internal/blob"
 	"github.com/robinmail/robinmail/internal/ical"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/raftdb/raftdbtest"
 	"github.com/robinmail/robinmail/internal/store"
 )
 
@@ -35,14 +34,7 @@ type fixture struct {
 
 func setup(t *testing.T) *fixture {
 	t.Helper()
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	db, err := rqlite.New(base, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := raftdbtest.Open(t)
 	master, _ := blob.NewMasterKey(bytes.Repeat([]byte{0x42}, 32))
 	st := store.New(db, blob.NewLocal(t.TempDir()), master)
 	if err := st.Init(ctx); err != nil {

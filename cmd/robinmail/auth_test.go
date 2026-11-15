@@ -22,36 +22,36 @@ import (
 	"github.com/robinmail/robinmail/internal/totp"
 )
 
-// authNode is one of two servers on the same database.
+// authNode is one of the two nodes of a cluster.
 type authNode struct {
 	*instance
 	imapTLS string
 }
 
-// twoAuthNodes starts two "serve" in this process on one database, master
-// key and blob directory, each with web, IMAP and submission listeners:
-// two nodes of a cluster, as far as logins are concerned. extra is put
-// into both configs.
-func twoAuthNodes(t *testing.T, base, name, extra string) (a, b authNode) {
+// twoAuthNodes starts two "serve" in this process, the two nodes of a
+// cluster with one master key, each with web, IMAP and submission
+// listeners. extra is put into both configs.
+func twoAuthNodes(t *testing.T, name, extra string) (a, b authNode) {
 	t.Helper()
 	const imapConfig = `"imap":{"listen_tls":"127.0.0.1:0","listen":"127.0.0.1:0"},`
 	t.Cleanup(func() { onIMAPListen = nil })
 
 	onIMAPListen = func(_, implicit net.Addr) { a.imapTLS = implicit.String() }
-	a.instance = startInstanceWith(t, base, name, imapConfig+extra, func(*queue.Worker, *instance) {})
+	a.instance = startInstanceWith(t, name, imapConfig+extra+nodeSection(t, "a"), func(*queue.Worker, *instance) {})
 
 	dirB := t.TempDir()
 	cert, key, _ := selfSigned(t, dirB, a.host)
 	cfgB := filepath.Join(dirB, "robinmail.json")
-	body := fmt.Sprintf(`{"hostname":%q,"data_dir":%q,"master_key_file":%q,"rqlite":{"url":%q},`+imapConfig+extra+`
+	body := fmt.Sprintf(`{"hostname":%q,"data_dir":"data","master_key_file":%q,`+imapConfig+extra+nodeSection(t, "b")+`
 		"tls":{"cert_file":%q,"key_file":%q},"smtp":{"listen":"127.0.0.1:0"},
 		"submission":{"listen":"127.0.0.1:0","listen_tls":"127.0.0.1:0","undo_seconds":0},
 		"web":{"http_listen":"127.0.0.1:0"}}`,
-		a.host, filepath.Join(a.dir, "data"), filepath.Join(a.dir, "master.key"), base, cert, key)
+		a.host, filepath.Join(a.dir, "master.key"), cert, key)
 	if err := os.WriteFile(cfgB, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	b.instance = &instance{t: t, cli: &cli{t: t, dir: dirB, cfg: cfgB}, domain: a.domain, host: a.host, pool: a.pool}
+	joinNode(t, a.cli, b.cli)
 	onIMAPListen = func(_, implicit net.Addr) { b.imapTLS = implicit.String() }
 	onSubmissionListen = func(plain, implicit net.Addr) { b.submission, b.implicit = plain.String(), implicit.String() }
 	t.Cleanup(func() { onSubmissionListen = nil })
@@ -175,11 +175,7 @@ func (c *jmapClient) post(method, url, body string, out any) int {
 //
 //     ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test -v -run TestAuthEndToEnd ./cmd/robinmail
 func TestAuthEndToEnd(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	a, b := twoAuthNodes(t, base, "auth", "")
+	a, b := twoAuthNodes(t, "auth", "")
 	anna := a.user("anna")
 	const password = "correct horse"
 	const bye = "* BYE this login was revoked; log in again"
@@ -517,11 +513,7 @@ func TestAuthEndToEnd(t *testing.T) {
 // auth.require_app_passwords: the account password never opens a mail
 // protocol, also for an account that has no app password yet.
 func TestRequireAppPasswords(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	a, _ := twoAuthNodes(t, base, "require", `"auth":{"require_app_passwords":true},`)
+	a, _ := twoAuthNodes(t, "require", `"auth":{"require_app_passwords":true},`)
 	anna := a.user("anna")
 	if _, got := imapLogin(t, "pw", a.imapTLS, anna, "correct horse"); !strings.HasPrefix(got, "NO [AUTHENTICATIONFAILED]") {
 		t.Errorf("IMAP with the account password: %s", got)
@@ -545,13 +537,9 @@ func TestRequireAppPasswords(t *testing.T) {
 // "serve" runs it and its config naming the provider. The session the
 // callback on node A makes is good on node B.
 func TestOIDCLoginEndToEnd(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
 	op := oidctest.New()
 	defer op.Close()
-	a, b := twoAuthNodes(t, base, "oidc", fmt.Sprintf(`"auth":{"oidc":[{"name":"test","label":"Test provider","issuer":%q,
+	a, b := twoAuthNodes(t, "oidc", fmt.Sprintf(`"auth":{"oidc":[{"name":"test","label":"Test provider","issuer":%q,
 		"client_id":%q,"client_secret":%q}]},`, op.Issuer, op.ClientID, op.ClientSecret))
 	anna := a.user("anna")
 	op.Lock()

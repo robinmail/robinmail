@@ -27,13 +27,9 @@ import (
 // has (RFC 8461 3.2 and 3.3), under that name and for nothing else, and
 // "robinmail dns" prints the records that go with it.
 func TestMTASTSPolicyServed(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
 	const host = "mail.example.test"
 	certFile, keyFile, _ := selfSigned(t, t.TempDir(), host)
-	c := newCLI(t, base, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"web":{"listen":"127.0.0.1:0"},"tls":{"cert_file":%q,"key_file":%q},
+	c := newCLI(t, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"web":{"listen":"127.0.0.1:0"},"tls":{"cert_file":%q,"key_file":%q},
 		"imap":{"listen_tls":"127.0.0.1:1993"},"submission":{"listen":"127.0.0.1:1587","listen_tls":"127.0.0.1:1465"},
 		"mta_sts":{"mode":"enforce","max_age_seconds":604800,"mx":["mail.example.test","*.backup.example.test"]},"tls_rpt":{"disabled":true},`,
 		certFile, keyFile))
@@ -72,10 +68,11 @@ func TestMTASTSPolicyServed(t *testing.T) {
 	t.Cleanup(func() { ownDomainsFor = old })
 	// The submission and IMAP ports of this config are fixed and may be
 	// taken on this machine: serve without them.
-	c2 := newCLI(t, base, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"web":{"listen":"127.0.0.1:0"},"tls":{"cert_file":%q,"key_file":%q},
+	c2 := newCLI(t, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"web":{"listen":"127.0.0.1:0"},"tls":{"cert_file":%q,"key_file":%q},
 		"mta_sts":{"mode":"enforce","max_age_seconds":604800,"mx":["mail.example.test","*.backup.example.test"]},"tls_rpt":{"disabled":true},`,
 		certFile, keyFile))
 	os.Rename(c.dir+"/master.key", c2.dir+"/master.key")
+	os.Rename(c.dir+"/data", c2.dir+"/data")
 	srv := startServe(t, c2)
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	// The certificate of the test is for the hostname only; whether the
@@ -142,11 +139,7 @@ func TestMTASTSPolicyServed(t *testing.T) {
 // which goes to the rua of the domain's record, by mail and over HTTPS;
 // the mail arrives at a robinmail (this one), which keeps the report.
 func TestTLSReports(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	in := startInstanceWith(t, base, "rpt", `"tls_rpt":{"disabled":true},`, func(*queue.Worker, *instance) {})
+	in := startInstanceWith(t, "rpt", `"tls_rpt":{"disabled":true},`, func(*queue.Worker, *instance) {})
 	postmaster := in.user("postmaster")
 	cfg, err := config.Load(in.cfg)
 	if err != nil {

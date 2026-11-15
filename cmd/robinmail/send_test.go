@@ -137,16 +137,16 @@ type instance struct {
 	web        string
 }
 
-// startInstance makes a server for a new domain on the rqlite at base and
-// starts it. setup configures its outbound worker.
-func startInstance(t *testing.T, base, name string, setup func(*queue.Worker, *instance)) *instance {
+// startInstance makes a server for a new domain, with a database of its
+// own, and starts it. setup configures its outbound worker.
+func startInstance(t *testing.T, name string, setup func(*queue.Worker, *instance)) *instance {
 	t.Helper()
-	return startInstanceWith(t, base, name, "", setup)
+	return startInstanceWith(t, name, "", setup)
 }
 
 // startInstanceWith is startInstance with more members for the config,
 // each followed by a comma.
-func startInstanceWith(t *testing.T, base, name, extra string, setup func(*queue.Worker, *instance)) *instance {
+func startInstanceWith(t *testing.T, name, extra string, setup func(*queue.Worker, *instance)) *instance {
 	t.Helper()
 	in := &instance{t: t, domain: name + "-" + randomHex() + ".test"}
 	in.host = "mail." + in.domain
@@ -154,11 +154,11 @@ func startInstanceWith(t *testing.T, base, name, extra string, setup func(*queue
 	cert, key, pool := selfSigned(t, dir, in.host)
 	in.pool = pool
 	cfg := filepath.Join(dir, "robinmail.json")
-	body := fmt.Sprintf(`{"hostname":%q,"data_dir":"data","master_key_file":"master.key","rqlite":{"url":%q},`+extra+`
+	body := fmt.Sprintf(`{"hostname":%q,"data_dir":"data","master_key_file":"master.key",`+extra+`
 		"tls":{"cert_file":%q,"key_file":%q},
 		"smtp":{"listen":"127.0.0.1:0"},
 		"submission":{"listen":"127.0.0.1:0","listen_tls":"127.0.0.1:0","undo_seconds":0},
-		"web":{"http_listen":"127.0.0.1:0"}}`, in.host, base, cert, key)
+		"web":{"http_listen":"127.0.0.1:0"}}`, in.host, cert, key)
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +202,7 @@ func (in *instance) purge(addr string) {
 	if err != nil {
 		return
 	}
+	defer a.close()
 	if acct, err := a.store.Account(ctx, addr); err == nil {
 		a.store.PurgeSubmissions(ctx, acct.ID)
 	}
@@ -218,6 +219,7 @@ func (in *instance) purgeSystem() {
 	defer cancel()
 	if a, err := open(ctx, cfg, false); err == nil {
 		a.store.PurgeSubmissions(ctx, store.SystemAccountID(in.domain))
+		a.close()
 	}
 }
 
@@ -307,10 +309,6 @@ func (c *jmapClient) call(calls string) []any {
 //	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003 \
 //	  go test -v -run TestSendBetweenTwoServers ./cmd/robinmail
 func TestSendBetweenTwoServers(t *testing.T) {
-	baseA, baseB := os.Getenv("ROBINMAIL_TEST_RQLITE"), os.Getenv("ROBINMAIL_TEST_RQLITE_B")
-	if baseA == "" || baseB == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE and ROBINMAIL_TEST_RQLITE_B are not both set")
-	}
 	world := newSendNet()
 	var a, b *instance
 	// The policy host of MTA-STS: one HTTPS server for every domain, with
@@ -346,8 +344,8 @@ func TestSendBetweenTwoServers(t *testing.T) {
 			}}}
 	}
 	// B first, so that A's worker can be given B's certificate to trust.
-	b = startInstance(t, baseB, "b", setup)
-	a = startInstance(t, baseA, "a", setup)
+	b = startInstance(t, "b", setup)
+	a = startInstance(t, "a", setup)
 	policySrv.StartTLS()
 	defer policySrv.Close()
 	world.host(a.domain, a.host, "192.0.2.1", a.smtp)
@@ -605,10 +603,6 @@ func copyAll(dst, src net.Conn) {
 // tried again and again, later each time, and after five days it comes
 // back to the sender.
 func TestSendRetriesThenBounces(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
 	world := newSendNet()
 	var mu sync.Mutex
 	offset := time.Duration(0)
@@ -617,7 +611,7 @@ func TestSendRetriesThenBounces(t *testing.T) {
 		defer mu.Unlock()
 		return time.Now().Add(offset)
 	}
-	a := startInstance(t, base, "retry", func(w *queue.Worker, _ *instance) {
+	a := startInstance(t, "retry", func(w *queue.Worker, _ *instance) {
 		w.Resolver, w.Dial, w.Now = world, world.dial, now
 	})
 	world.host("down.test", "mx.down.test", "192.0.2.9", "") // nobody listens

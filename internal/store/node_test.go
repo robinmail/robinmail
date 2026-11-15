@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/raftdb/raftdbtest"
 )
 
 func randomID(prefix string) string {
@@ -232,22 +232,15 @@ func (ls links) Peers(gocontext.Context) ([]blob.Peer, error) {
 	return out, nil
 }
 
-// cluster3 is three stores on one rqlite, each with a blob directory of its
-// own, replicating to the other two.
+// cluster3 is three stores on the three nodes of one cluster, each with a
+// blob directory of its own, replicating to the other two.
 func cluster3(t *testing.T) (stores [3]*Store, ls [3]*link) {
 	t.Helper()
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	open(t) // schema and domain
+	dbs := raftdbtest.Cluster(t, 3)
 	master, _ := blob.NewMasterKey(testMasterKey)
 	var reps [3]*blob.Replicated
 	for i := range stores {
-		db, err := rqlite.New(base, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		db := dbs[i]
 		local := blob.NewLocal(t.TempDir())
 		reps[i] = &blob.Replicated{Local: local, Pause: time.Millisecond}
 		stores[i] = New(db, reps[i], master)
@@ -257,6 +250,12 @@ func cluster3(t *testing.T) (stores [3]*Store, ls [3]*link) {
 	}
 	for i := range stores {
 		reps[i].Peers = links{ls[(i+1)%3], ls[(i+2)%3]}
+	}
+	if err := stores[0].Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := stores[0].AddDomain(ctx, "example.test"); err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		for i, s := range stores {

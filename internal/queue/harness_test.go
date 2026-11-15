@@ -14,14 +14,13 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/raftdb/raftdbtest"
 	"github.com/robinmail/robinmail/internal/smtp"
 	"github.com/robinmail/robinmail/internal/store"
 )
@@ -335,14 +334,7 @@ func (x *world) advance(d time.Duration) {
 
 func openStore(t *testing.T) *store.Store {
 	t.Helper()
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	db, err := rqlite.New(base, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := raftdbtest.Open(t)
 	master, err := blob.NewMasterKey(bytes.Repeat([]byte{0x42}, 32))
 	if err != nil {
 		t.Fatal(err)

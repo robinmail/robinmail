@@ -56,13 +56,9 @@ func selfSigned(t *testing.T, dir, host string) (certFile, keyFile string, pool 
 // session cookie then is Secure with the __Host- prefix, HSTS is sent, and
 // the connection is HTTP/2.
 func TestServeHTTPS(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
 	const host = "mail.example.test" // the hostname of newCLI's config
 	certFile, keyFile, pool := selfSigned(t, t.TempDir(), host)
-	c := newCLI(t, base, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"web":{"listen":"127.0.0.1:0"},"tls":{"cert_file":%q,"key_file":%q},`,
+	c := newCLI(t, fmt.Sprintf(`"smtp":{"listen":"127.0.0.1:0"},"web":{"listen":"127.0.0.1:0"},"tls":{"cert_file":%q,"key_file":%q},`,
 		certFile, keyFile))
 	domain := "tls-" + randomHex() + ".test"
 	user := "mike@" + domain

@@ -155,10 +155,6 @@ func hasLine(lines []string, want string) bool {
 //
 //	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test -v -run TestIMAPAndJMAPOnTwoNodes ./cmd/robinmail
 func TestIMAPAndJMAPOnTwoNodes(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
 	type node struct {
 		*instance
 		imapTLS, imapPlain string
@@ -172,21 +168,22 @@ func TestIMAPAndJMAPOnTwoNodes(t *testing.T) {
 
 	// Node A makes the master key and the domain.
 	listen(&a)
-	a.instance = startInstanceWith(t, base, "imap", imapConfig, func(*queue.Worker, *instance) {})
+	a.instance = startInstanceWith(t, "imap", imapConfig+nodeSection(t, "a"), func(*queue.Worker, *instance) {})
 	anna := a.user("anna")
 
-	// Node B: the same database, master key and blobs, its own listeners.
+	// Node B: the second node of the cluster, with the same master key.
 	dirB := t.TempDir()
 	cert, key, _ := selfSigned(t, dirB, a.host)
 	cfgB := filepath.Join(dirB, "robinmail.json")
-	body := fmt.Sprintf(`{"hostname":%q,"data_dir":%q,"master_key_file":%q,"rqlite":{"url":%q},`+imapConfig+`
+	body := fmt.Sprintf(`{"hostname":%q,"data_dir":"data","master_key_file":%q,`+imapConfig+nodeSection(t, "b")+`
 		"tls":{"cert_file":%q,"key_file":%q},"smtp":{"listen":"127.0.0.1:0"},"web":{"http_listen":"127.0.0.1:0"}}`,
-		a.host, filepath.Join(a.dir, "data"), filepath.Join(a.dir, "master.key"), base, cert, key)
+		a.host, filepath.Join(a.dir, "master.key"), cert, key)
 	if err := os.WriteFile(cfgB, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	listen(&b)
 	b.instance = &instance{t: t, cli: &cli{t: t, dir: dirB, cfg: cfgB}, domain: a.domain, host: a.host}
+	joinNode(t, a.cli, b.cli)
 	srvB := startServe(t, b.cli)
 	b.smtp, b.web = srvB.addr, srvB.web
 	if a.imapTLS == "" || b.imapTLS == "" || a.imapTLS == b.imapTLS {

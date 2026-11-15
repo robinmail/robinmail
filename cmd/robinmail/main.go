@@ -7,15 +7,20 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode"
@@ -26,7 +31,7 @@ import (
 	"github.com/robinmail/robinmail/internal/blob"
 	"github.com/robinmail/robinmail/internal/cluster"
 	"github.com/robinmail/robinmail/internal/config"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/raftdb"
 	"github.com/robinmail/robinmail/internal/store"
 	"github.com/robinmail/robinmail/internal/users"
 	"github.com/robinmail/robinmail/internal/web"
@@ -99,8 +104,14 @@ commands:
   repair                                       fetch the blobs this node lacks from the other nodes
   scrub                                        check this node's blob files against their hashes; in a cluster
                                                replace a corrupt one from another node
-  node list                                    list the nodes of the cluster
+  node list                                    list the members of the cluster: leader, how far each is, heartbeat
+  node id                                      print this node's id, address and certificate, for node add
+  node add <id> <address> <certificate>        admit a node to the cluster (run on a member)
+  node join <address> <certificate>            on a new node with an empty database: join the cluster of the
+                                               member at address, which shows that certificate; then serve
   node remove <id>                             take a stopped node out of the cluster
+  db query <sql>                               run a read on the database, one JSON row per line
+  db exec <sql>                                run a write through the log on every node, for repairs by hand
   reindex [address]                            read stored messages again and refresh the cached columns
   dns <domain> [dkim-key-file]                 print the DNS records of a domain (MX, SPF, DKIM, DMARC, MTA-STS,
                                                TLS-RPT, autoconfig, SRV for mail clients);
@@ -141,6 +152,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		fmt.Fprintf(stdout, "wrote %s\nBack it up and give every node the same file: without it the stored mail cannot be read.\n", cfg.MasterKeyFile)
 		return nil
 	}
+	// Before the database is opened: opening an empty one would start a
+	// cluster of its own.
+	if len(args) == 3 && args[0] == "node" && args[1] == "join" || len(args) == 4 && args[0] == "node" && args[1] == "join" {
+		ctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		return nodeJoin(ctx, cfg, stdout, args[2], optional(args, 3, ""))
+	}
+	if len(args) == 2 && args[0] == "node" && args[1] == "id" {
+		return nodeID(cfg, stdout)
+	}
 	if len(args) == 1 && args[0] == "serve" {
 		// The server runs until it is told to stop; only starting is bounded.
 		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -168,6 +189,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return err
 	}
 	a.ctx, a.stdin, a.stdout = ctx, stdin, stdout
+	defer a.close()
 	// A command may leave pushes to other nodes running when enough of
 	// them have a blob. They finish before the process ends.
 	defer a.wait()
@@ -285,6 +307,12 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return a.nodeList()
 	case cmd == "node" && n == 2 && args[0] == "remove":
 		return a.nodeRemove(args[1])
+	case cmd == "db" && n == 2 && args[0] == "query":
+		return a.dbQuery(args[1])
+	case cmd == "db" && n == 2 && args[0] == "exec":
+		return a.dbExec(args[1])
+	case cmd == "node" && n == 4 && args[0] == "add":
+		return a.nodeAdd(args[1], args[2], args[3])
 	case cmd == "dns" && (n == 1 || n == 2):
 		return a.dns(args[0], optional(args, 1, ""))
 	case cmd == "reindex" && (n == 0 || n == 1):
@@ -301,87 +329,145 @@ func optional(args []string, i int, def string) string {
 	return def
 }
 
-// open loads the master key, connects the store to rqlite and the blob
-// directory, and creates the schema in an empty database. With a node
-// section in the config it also makes this process a member of the
-// cluster: blobs are replicated to the other nodes and fetched from them.
-// serving is true for the server, which announces itself as running; a
-// command only makes sure the other nodes know its certificate.
+// open loads the master key, opens the database (or reaches the server
+// that has it open) and the blob directory, and creates the schema in an
+// empty database. With a node section in the config it also makes this
+// process a member of the cluster: blobs are replicated to the other nodes
+// and fetched from them. serving is true for the server: it also listens
+// for the other nodes at once, since the database needs them to write,
+// and for the commands of this node.
 func open(ctx context.Context, cfg *config.Config, serving bool) (*app, error) {
-	db, err := openRqlite(cfg)
-	if err != nil {
-		return nil, err
-	}
 	master, err := blob.LoadMasterKey(cfg.MasterKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("%w (make one with \"robinmail key generate\")", err)
-	}
-	a := &app{cfg: cfg, db: db, local: blob.NewLocal(cfg.BlobDir()), master: master}
-	limits := store.Limits{Bytes: cfg.Quota.DefaultBytes, Messages: cfg.Quota.DefaultMessages}
-	if cfg.Node.ID == "" {
-		a.store = store.New(db, a.local, master)
-		a.store.DefaultQuota = limits
-		return a, a.store.Init(ctx)
 	}
 	identity, err := cluster.LoadOrCreateIdentity(cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
-	a.replicated = &blob.Replicated{Local: a.local, Copies: cfg.Node.BlobCopies}
-	a.store = store.New(db, a.replicated, master)
-	a.store.DefaultQuota = limits
-	if err := a.store.Init(ctx); err != nil {
-		return nil, err
+	a := &app{cfg: cfg, local: blob.NewLocal(cfg.BlobDir()), master: master, identity: identity}
+	level := slog.LevelWarn
+	if serving {
+		level = slog.LevelInfo
 	}
-	a.node = &cluster.Node{ID: cfg.Node.ID, Address: cfg.Node.Address, Identity: identity, Dir: a.store}
-	a.replicated.Peers = a.node
-	a.replicated.Verify = a.store.VerifyBlob
-	if err := a.node.Register(ctx, serving); err != nil {
-		return nil, err
+	a.log = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	if cfg.Node.ID != "" {
+		a.node = &cluster.Node{ID: cfg.Node.ID, Address: cfg.Node.Address, Identity: identity, Logger: a.log}
 	}
-	return a, nil
-}
-
-// openRqlite makes the client for the rqlite of the config: with the
-// credentials of rqlite.auth_file and the CA of rqlite.ca_file when those
-// are set.
-func openRqlite(cfg *config.Config) (*rqlite.Client, error) {
-	db, err := rqlite.NewCluster(cfg.Rqlite.Nodes(), nil)
+	a.db, a.raft, err = openDatabase(ctx, cfg, identity, a.node, serving, a.log)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Rqlite.AuthFile != "" {
-		user, password, err := rqlite.LoadCredentials(cfg.Rqlite.AuthFile)
-		if err != nil {
-			return nil, err
+	ok := false
+	defer func() {
+		if !ok {
+			a.close()
 		}
-		db.SetCredentials(user, password)
+	}()
+	limits := store.Limits{Bytes: cfg.Quota.DefaultBytes, Messages: cfg.Quota.DefaultMessages}
+	if a.node == nil {
+		a.store = store.New(a.db, a.local, master)
+	} else {
+		a.replicated = &blob.Replicated{Local: a.local, Copies: cfg.Node.BlobCopies, Logger: a.log}
+		a.store = store.New(a.db, a.replicated, master)
+		a.node.Dir = memberDirectory{db: a.db, local: a.raft, store: a.store}
+		a.replicated.Peers = a.node
+		a.replicated.Verify = a.store.VerifyBlob
+		if serving {
+			a.node.Raft = a.raft.Handler()
+			if err := a.listenNodes(); err != nil {
+				return nil, err
+			}
+		}
 	}
-	if cfg.Rqlite.CAFile != "" {
-		pool, err := rqlite.LoadCA(cfg.Rqlite.CAFile)
-		if err != nil {
-			return nil, err
+	a.store.DefaultQuota = limits
+	if serving {
+		// The address or id of the node section may have changed since
+		// the node joined, or a node that ran alone got a node section:
+		// the members learn it through the log.
+		self := raftdb.Member{ID: a.raft.Self().ID, Node: cfg.Node.ID, Address: cfg.Node.Address, Cert: identity.Fingerprint}
+		for _, m := range a.raft.Members() {
+			if m.ID == self.ID && m != self && (self.Address != "" || m.Address == "") {
+				if err := a.raft.AddMember(ctx, self); err != nil {
+					return nil, fmt.Errorf("recording this node's address in the cluster: %w", err)
+				}
+			}
 		}
-		if err := db.TrustCA(pool); err != nil {
+	}
+	if err := a.store.Init(ctx); err != nil {
+		return nil, err
+	}
+	if a.node != nil {
+		if err := a.node.Register(ctx, serving); err != nil {
 			return nil, err
 		}
 	}
-	return db, nil
+	if serving {
+		if a.control, err = serveControl(cfg, identity, a.raft, a.log); err != nil {
+			return nil, err
+		}
+	}
+	ok = true
+	return a, nil
+}
+
+// listenNodes starts the listener for the other nodes: blobs and the
+// database's Raft messages, over mutual TLS.
+func (a *app) listenNodes() error {
+	pl, err := tls.Listen("tcp", a.cfg.Node.Listen, a.node.ServerTLS())
+	if err != nil {
+		return err
+	}
+	a.peerServer = a.node.HTTPServer(a.local, a.store.VerifyBlob)
+	a.peerAddr = pl.Addr()
+	go a.peerServer.Serve(pl)
+	return nil
 }
 
 type app struct {
-	ctx    context.Context
-	cfg    *config.Config
-	db     *rqlite.Client
-	store  *store.Store
-	master *blob.MasterKey
-	stdin  io.Reader
-	stdout io.Writer
+	ctx      context.Context
+	cfg      *config.Config
+	log      *slog.Logger
+	db       raftdb.Admin
+	raft     *raftdb.DB // nil when the server has the database and this is a command
+	store    *store.Store
+	master   *blob.MasterKey
+	identity *cluster.Identity
+	stdin    io.Reader
+	stdout   io.Writer
 	// local is this node's blob directory. node and replicated are nil
 	// unless the config has a node section.
 	local      *blob.Local
 	node       *cluster.Node
 	replicated *blob.Replicated
+	// The server's listeners of open: for the other nodes and for the
+	// commands of this node.
+	peerServer *http.Server
+	peerAddr   net.Addr
+	control    *http.Server
+	closed     sync.Once
+}
+
+// close stops the listeners of open and closes the database.
+func (a *app) close() {
+	a.closed.Do(a.doClose)
+}
+
+func (a *app) doClose() {
+	if a.control != nil {
+		a.control.Close()
+		os.Remove(controlFile(a.cfg))
+	}
+	if a.peerServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := a.peerServer.Shutdown(ctx); err != nil {
+			a.peerServer.Close()
+		}
+		cancel()
+	}
+	if a.raft != nil {
+		a.raft.Close()
+	}
 }
 
 func (a *app) wait() {
@@ -915,35 +1001,6 @@ func (a *app) repair() error {
 	}
 	fmt.Fprintf(a.stdout, "%d blobs were missing here, fetched %d\n", res.Missing, res.Fetched)
 	return err
-}
-
-func (a *app) nodeList() error {
-	nodes, err := a.store.Nodes(a.ctx)
-	if err != nil {
-		return err
-	}
-	for _, n := range nodes {
-		seen := "never ran"
-		if n.SeenAt.Unix() > 0 {
-			seen = "seen " + time.Since(n.SeenAt).Round(time.Second).String() + " ago"
-		}
-		fmt.Fprintf(a.stdout, "%-12s  %-28s  %s  %s\n", n.ID, n.Address, n.Cert[:min(16, len(n.Cert))], seen)
-	}
-	return nil
-}
-
-// nodeRemove takes a node out of the node table. The others then stop
-// counting it as a place a blob should be.
-func (a *app) nodeRemove(id string) error {
-	ok, err := a.store.RemoveNode(a.ctx, id)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("%s: no such node", id)
-	}
-	fmt.Fprintf(a.stdout, "removed %s\n", id)
-	return nil
 }
 
 // sweep removes the blob files on this node that no email refers to and

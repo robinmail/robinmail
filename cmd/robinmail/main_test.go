@@ -15,13 +15,8 @@ import (
 
 // TestCommands walks through phase 1's exit: deliver from the command line,
 // move and label a message, and see the ids hold and the change log fill.
-// It needs a real rqlite, see internal/store.
 func TestCommands(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	c := newCLI(t, base, "")
+	c := newCLI(t, "")
 	do, ok, expect, dir := c.do, c.ok, c.expect, c.dir
 	// A domain of its own, so the test can add and remove it.
 	domain := "cli-" + randomHex() + ".test"
@@ -170,14 +165,13 @@ type cli struct {
 	cfg string
 }
 
-// newCLI writes a config for the rqlite at base. extra is more JSON members
-// for the config, each followed by a comma.
-func newCLI(t *testing.T, base, extra string) *cli {
+// newCLI writes a config with a database of its own. extra is more JSON
+// members for the config, each followed by a comma.
+func newCLI(t *testing.T, extra string) *cli {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "robinmail.json")
-	body := fmt.Sprintf(`{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key",
-		%s"rqlite":{"url":%q}}`, extra, base)
+	body := fmt.Sprintf(`{%s"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key"}`, extra)
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

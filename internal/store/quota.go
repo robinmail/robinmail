@@ -15,7 +15,7 @@ import (
 // account row carries used_bytes and used_count, and two triggers on the
 // email table move them with every insert and delete, inside whatever
 // batch does it. The limit is a guard of the batch that stores an Email
-// (Deliver): rqlite runs batches one after another, so the guard always
+// (Deliver): the Raft log orders the batches, so the guard always
 // sees what the batches before it left, on whatever node they came from.
 
 // ErrOverQuota is returned when storing an Email would take the account

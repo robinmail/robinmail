@@ -82,6 +82,7 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/db"
+	"github.com/robinmail/robinmail/internal/metrics"
 	"go.etcd.io/raft/v3"
 	pb "go.etcd.io/raft/v3/raftpb"
 	"google.golang.org/protobuf/proto"
@@ -933,13 +934,28 @@ func (d *DB) snapshotMeta() (*pb.SnapshotMetadata, error) {
 
 // Execute implements db.DB. See the package comment on retries.
 func (d *DB) Execute(ctx context.Context, stmts ...db.Statement) ([]db.Result, error) {
-	return d.execute(ctx, stmts)
+	res, err := d.execute(ctx, stmts)
+	count(err)
+	return res, err
 }
 
 // ExecuteIdempotent implements db.DB. It is Execute: every proposal is
 // deduplicated.
 func (d *DB) ExecuteIdempotent(ctx context.Context, stmts ...db.Statement) ([]db.Result, error) {
-	return d.execute(ctx, stmts)
+	return d.Execute(ctx, stmts...)
+}
+
+// count records the outcome of a call in /metrics.
+func count(err error) {
+	var e *db.Error
+	switch {
+	case err == nil:
+		metrics.DBRequests.Inc("ok")
+	case errors.As(err, &e):
+		metrics.DBRequests.Inc("error")
+	default:
+		metrics.DBRequests.Inc("failed")
+	}
 }
 
 func newID() string {
@@ -1044,6 +1060,12 @@ func (d *DB) execute(ctx context.Context, stmts []db.Statement) ([]db.Result, er
 
 // Query implements db.DB.
 func (d *DB) Query(ctx context.Context, level db.Level, stmts ...db.Statement) ([]db.Result, error) {
+	res, err := d.query(ctx, level, stmts)
+	count(err)
+	return res, err
+}
+
+func (d *DB) query(ctx context.Context, level db.Level, stmts []db.Statement) ([]db.Result, error) {
 	if len(stmts) == 0 {
 		return nil, nil
 	}

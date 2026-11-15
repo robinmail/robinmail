@@ -2,9 +2,6 @@
   "hostname": "mx.robin.test",
   "data_dir": "/var/lib/robinmail",
   "master_key_file": "/lab/secrets/master.key",
-  "rqlite": {
-    "url": "http://rqlite.lab.test:4001"
-  },
   "tls": {
     "cert_file": "/lab/secrets/mx.robin.test.crt",
     "key_file": "/lab/secrets/mx.robin.test.key"

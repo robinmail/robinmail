@@ -17,29 +17,17 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/raftdb/raftdbtest"
 )
 
-// The tests below need a real rqlite:
-//
-//	docker compose -f contrib/compose/compose.yaml up -d
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test ./internal/store
-//
-// They share the database with each other and with whatever else is in it:
-// every test works in accounts of its own with random addresses.
+// Every test gets a database of its own, one node in a temporary
+// directory (internal/raftdb/raftdbtest).
 
 var ctx = context.Background()
 
 func open(t *testing.T) *Store {
 	t.Helper()
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	db, err := rqlite.New(base, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := raftdbtest.Open(t)
 	master, err := blob.NewMasterKey(testMasterKey)
 	if err != nil {
 		t.Fatal(err)

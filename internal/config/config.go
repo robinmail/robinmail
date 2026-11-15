@@ -18,29 +18,32 @@ import (
 type Config struct {
 	// Hostname is the name the server announces and requests certificates for.
 	Hostname string `json:"hostname"`
-	// DataDir holds this node's blobs, encrypted, in <data_dir>/blobs. A
+	// DataDir holds this node's database, in <data_dir>/db, its blobs,
+	// encrypted, in <data_dir>/blobs, and its node key and certificate. A
 	// relative path is resolved against the directory of the config file.
 	DataDir string `json:"data_dir"`
 	// MasterKeyFile holds the key that wraps the account keys blobs are
 	// encrypted with. Make one with "robinmail key generate"; every node of
 	// a cluster needs the same file. Relative paths as for DataDir.
-	MasterKeyFile string     `json:"master_key_file"`
-	Rqlite        Rqlite     `json:"rqlite"`
-	Node          Node       `json:"node"`
-	TLS           TLS        `json:"tls"`
-	SMTP          SMTP       `json:"smtp"`
-	Web           Web        `json:"web"`
-	Rspamd        Rspamd     `json:"rspamd"`
-	Submission    Submission `json:"submission"`
-	Outbound      Outbound   `json:"outbound"`
-	IMAP          IMAP       `json:"imap"`
-	Auth          Auth       `json:"auth"`
-	Quota         Quota      `json:"quota"`
-	MTASTS        MTASTS     `json:"mta_sts"`
-	Metrics       Metrics    `json:"metrics"`
-	Scrub         Scrub      `json:"scrub"`
-	TLSRPT        TLSRPT     `json:"tls_rpt"`
-	Dev           Dev        `json:"dev"`
+	MasterKeyFile string `json:"master_key_file"`
+	// Rqlite was where the metadata lived until phase 10. A config that
+	// still has the block is refused with a word on why.
+	Rqlite     json.RawMessage `json:"rqlite"`
+	Node       Node            `json:"node"`
+	TLS        TLS             `json:"tls"`
+	SMTP       SMTP            `json:"smtp"`
+	Web        Web             `json:"web"`
+	Rspamd     Rspamd          `json:"rspamd"`
+	Submission Submission      `json:"submission"`
+	Outbound   Outbound        `json:"outbound"`
+	IMAP       IMAP            `json:"imap"`
+	Auth       Auth            `json:"auth"`
+	Quota      Quota           `json:"quota"`
+	MTASTS     MTASTS          `json:"mta_sts"`
+	Metrics    Metrics         `json:"metrics"`
+	Scrub      Scrub           `json:"scrub"`
+	TLSRPT     TLSRPT          `json:"tls_rpt"`
+	Dev        Dev             `json:"dev"`
 }
 
 // Metrics configures the listener that serves /metrics in the text format
@@ -177,38 +180,11 @@ type Dev struct {
 // The domains the server accepts mail for are not in this file: the nodes of
 // a cluster share them through the domain table ("robinmail domain add").
 
-// Rqlite is where all metadata lives.
-type Rqlite struct {
-	// URL of one rqlite node, for example "http://127.0.0.1:4001". Basic
-	// auth credentials may be given as "http://user:password@host:4001".
-	URL string `json:"url"`
-	// URLs lists several nodes of the same rqlite cluster instead. The
-	// first is tried first, so put the nearest one there; when it stops
-	// answering the others are used.
-	URLs []string `json:"urls"`
-	// AuthFile holds the user and password robinmail gives rqlite, as one
-	// line "user:password", readable by its owner only. It is the way to
-	// give credentials: a URL with a password ends up in process lists and
-	// shell histories. The user needs rqlite's permissions execute and
-	// query, and backup and load for the commands of those names.
-	AuthFile string `json:"auth_file"`
-	// CAFile holds the CA certificate (PEM) that signed the certificates
-	// of the rqlite nodes, for https URLs. Empty: the system's CAs.
-	CAFile string `json:"ca_file"`
-}
-
-// Nodes returns the configured rqlite URLs, nearest first.
-func (r Rqlite) Nodes() []string {
-	if r.URL != "" {
-		return append([]string{r.URL}, r.URLs...)
-	}
-	return r.URLs
-}
-
 // Node makes this robinmail a member of a cluster. Without an id it runs
-// alone: blobs stay on its own disk and nothing listens for other nodes.
-// In a cluster every node needs this section, the same master key file and
-// the same rqlite cluster.
+// alone: its database and blobs stay on its own disk and nothing listens
+// for other nodes. In a cluster every node needs this section and the
+// same master key file; the database is replicated over the node
+// listener (see internal/raftdb).
 type Node struct {
 	// ID names the node in the node table: lowercase letters, digits and
 	// "-". It must be unique in the cluster and should not change.
@@ -351,13 +327,8 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: invalid hostname %q", path, c.Hostname)
 	}
 
-	if len(c.Rqlite.Nodes()) == 0 {
-		return nil, fmt.Errorf("%s: rqlite url (or urls) is required", path)
-	}
-	for _, u := range c.Rqlite.Nodes() {
-		if !httpURL(u) {
-			return nil, fmt.Errorf("%s: rqlite url must be an http:// or https:// URL", path)
-		}
+	if len(c.Rqlite) > 0 {
+		return nil, fmt.Errorf("%s: the rqlite block is no longer used: robinmail keeps its database itself, in data_dir/db, replicated between the nodes of the node section; remove the block", path)
 	}
 	if n := c.Node; n.ID == "" {
 		if n.Listen != "" || n.Address != "" || n.BlobCopies != 0 || n.RepairIntervalSeconds != 0 {
@@ -395,12 +366,6 @@ func Load(path string) (*Config, error) {
 		return nil, errors.New(path + ": tls needs both cert_file and key_file")
 	}
 	// Like the other files the config names, relative to the config file.
-	if c.Rqlite.AuthFile != "" && !filepath.IsAbs(c.Rqlite.AuthFile) {
-		c.Rqlite.AuthFile = filepath.Join(dir, c.Rqlite.AuthFile)
-	}
-	if c.Rqlite.CAFile != "" && !filepath.IsAbs(c.Rqlite.CAFile) {
-		c.Rqlite.CAFile = filepath.Join(dir, c.Rqlite.CAFile)
-	}
 	if c.TLS.CertFile != "" && !filepath.IsAbs(c.TLS.CertFile) {
 		c.TLS.CertFile = filepath.Join(dir, c.TLS.CertFile)
 	}
@@ -595,3 +560,6 @@ func httpURL(s string) bool {
 
 // BlobDir is where this node keeps its blob files.
 func (c *Config) BlobDir() string { return filepath.Join(c.DataDir, "blobs") }
+
+// DBDir is where the database is: data.db, the Raft log, the lock.
+func (c *Config) DBDir() string { return filepath.Join(c.DataDir, "db") }

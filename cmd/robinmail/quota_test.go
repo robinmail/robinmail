@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"testing"
 
@@ -20,14 +19,10 @@ import (
 //
 //	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test -v -run TestQuotaEndToEnd ./cmd/robinmail
 func TestQuotaEndToEnd(t *testing.T) {
-	base := os.Getenv("ROBINMAIL_TEST_RQLITE")
-	if base == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
 	var imapAddr string
 	onIMAPListen = func(_, implicit net.Addr) { imapAddr = implicit.String() }
 	t.Cleanup(func() { onIMAPListen = nil })
-	in := startInstanceWith(t, base, "q", `"quota":{"default_messages":3},"imap":{"listen_tls":"127.0.0.1:0"},`, func(*queue.Worker, *instance) {})
+	in := startInstanceWith(t, "q", `"quota":{"default_messages":3},"imap":{"listen_tls":"127.0.0.1:0"},`, func(*queue.Worker, *instance) {})
 	anna, bob := in.user("anna"), in.user("bob")
 
 	mail := func(n int) string {

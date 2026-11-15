@@ -2,7 +2,7 @@
 // becomes tokens, how a query string becomes terms, and how a snippet with
 // the matches marked is cut from a text.
 //
-// The index itself is an FTS5 table in rqlite (internal/store). Its
+// The index itself is an FTS5 table of the database (internal/store). Its
 // tokenizer is SQLite's unicode61 with diacritics removed; Tokens here
 // follows the same rule closely enough: a token is a run of letters and
 // digits, compared without case and without diacritics. Where the two

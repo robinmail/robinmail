@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -22,53 +21,6 @@ import (
 )
 
 // rqliteImage is the rqlite of contrib/compose/compose.yaml.
-const rqliteImage = "rqlite/rqlite:10.7.1"
-
-// privateRqlite starts an rqlite of its own for a test, in a container
-// that is removed when the test ends, and returns its URL. The tests of
-// operations need one: they replace master keys, load a whole database
-// and look at every account, which the database the other tests share
-// (thousands of accounts under as many master keys) cannot be used for.
-// Without Docker the test is skipped.
-func privateRqlite(t *testing.T) string {
-	t.Helper()
-	if os.Getenv("ROBINMAIL_TEST_RQLITE") == "" {
-		t.Skip("ROBINMAIL_TEST_RQLITE is not set")
-	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker is not installed: this test starts an rqlite of its own")
-	}
-	name := "robinmail-test-" + randomHex()
-	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name, "-p", "127.0.0.1::4001", rqliteImage).CombinedOutput()
-	if err != nil {
-		t.Skipf("docker run %s: %v: %s", rqliteImage, err, bytes.TrimSpace(out))
-	}
-	t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
-	var base string
-	deadline := time.Now().Add(60 * time.Second)
-	for {
-		if base == "" {
-			if out, err := exec.Command("docker", "port", name, "4001/tcp").Output(); err == nil {
-				if _, port, err := net.SplitHostPort(strings.TrimSpace(strings.Split(string(out), "\n")[0])); err == nil {
-					base = "http://127.0.0.1:" + port
-				}
-			}
-		}
-		if base != "" {
-			if resp, err := http.Get(base + "/readyz"); err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == 200 {
-					return base
-				}
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the rqlite container %s did not become ready", name)
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-}
-
 // appOf opens the store of a cli's config, as a command does.
 func appOf(t *testing.T, c *cli) *app {
 	t.Helper()
@@ -81,18 +33,26 @@ func appOf(t *testing.T, c *cli) *app {
 		t.Fatal(err)
 	}
 	a.ctx, a.stdout = context.Background(), io.Discard
+	// The commands the test runs meanwhile reach the database through
+	// it, as they would through a running server.
+	if a.raft != nil {
+		if a.control, err = serveControl(cfg, a.identity, a.raft, a.log); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(a.close)
 	return a
 }
 
 // sibling is a second node on the same disk as c: the same database and
 // blob directory, a master key file of its own, which starts as a copy of
 // the given one.
-func sibling(t *testing.T, c *cli, base, name, keyFrom string) (*cli, string) {
+func sibling(t *testing.T, c *cli, name, keyFrom string) (*cli, string) {
 	t.Helper()
 	keyFile := filepath.Join(c.dir, name+".key")
 	copyFile(t, keyFrom, keyFile)
 	cfg := filepath.Join(c.dir, name+".json")
-	body := fmt.Sprintf(`{"hostname":"mail.example.test","data_dir":"data","master_key_file":%q,"rqlite":{"url":%q}}`, name+".key", base)
+	body := fmt.Sprintf(`{"hostname":"mail.example.test","data_dir":"data","master_key_file":%q}`, name+".key")
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +76,7 @@ func copyFile(t *testing.T, from, to string) {
 // step behind reads everything at every step; stopping in the middle and
 // two nodes rotating at once leave nothing unreadable.
 func TestKeyRotation(t *testing.T) {
-	base := privateRqlite(t)
-	c := newCLI(t, base, "")
+	c := newCLI(t, "")
 	domain := "rotate.test"
 	anna := "anna@" + domain
 	c.ok("", "key", "generate")
@@ -158,7 +117,7 @@ func TestKeyRotation(t *testing.T) {
 	readable(c, "after key add")
 	// "Copy the file to every node": a second node, whose file stays one
 	// step behind from here on.
-	node2, node2Key := sibling(t, c, base, "node2", filepath.Join(c.dir, "master.key"))
+	node2, node2Key := sibling(t, c, "node2", filepath.Join(c.dir, "master.key"))
 	readable(node2, "on the second node after key add")
 
 	// Step 2: the new key becomes current here and wraps every account.
@@ -193,7 +152,7 @@ func TestKeyRotation(t *testing.T) {
 	readable(c, "after key prune")
 	readable(node2, "on a node that still has both keys after key prune")
 	// The old key alone opens nothing any more.
-	stale, _ := sibling(t, c, base, "stale", original)
+	stale, _ := sibling(t, c, "stale", original)
 	if out, err := stale.do("", "cat", anna, "e1"); err == nil || !strings.Contains(err.Error(), "does not unwrap") {
 		t.Errorf("the old key reads mail after the rotation: %v\n%s", err, out)
 	}
@@ -332,9 +291,8 @@ func jmapView(t *testing.T, web, user string) map[string]any {
 // shows of every account is the same afterwards, to the byte and to the
 // state string.
 func TestBackupRestore(t *testing.T) {
-	base := privateRqlite(t)
 	const web = `"smtp":{"listen":"127.0.0.1:0"},"web":{"http_listen":"127.0.0.1:0"},"scrub":{"disabled":true},`
-	c := newCLI(t, base, web)
+	c := newCLI(t, web)
 	domain := "backup.test"
 	anna, bob := "anna@"+domain, "bob@"+domain
 	c.ok("", "key", "generate")
@@ -414,8 +372,7 @@ func TestBackupRestore(t *testing.T) {
 	srv.stop()
 
 	// The empty server: another rqlite, another directory.
-	base2 := privateRqlite(t)
-	r := newCLI(t, base2, web)
+	r := newCLI(t, web)
 	// Without a key file nothing runs; with another key the restore
 	// refuses before it touches anything.
 	if _, err := r.do("", "restore", dir); err == nil || !strings.Contains(err.Error(), "master key") {
@@ -487,8 +444,7 @@ func TestBackupRestore(t *testing.T) {
 
 	// A backup that lacks a blob the database refers to: the restore says
 	// which, the rest is there, and restore-blobs fills it in later.
-	base3 := privateRqlite(t)
-	r3 := newCLI(t, base3, web)
+	r3 := newCLI(t, web)
 	copyFile(t, filepath.Join(c.dir, "master.key"), filepath.Join(r3.dir, "master.key"))
 	partial := filepath.Join(t.TempDir(), "partial")
 	if err := os.CopyFS(partial, os.DirFS(dir)); err != nil {
@@ -524,8 +480,7 @@ func TestBackupRestore(t *testing.T) {
 // status and health, /healthz, the metrics listener, the queue commands,
 // showing and removing an account, and a scrub that finds a damaged file.
 func TestOperations(t *testing.T) {
-	base := privateRqlite(t)
-	c := newCLI(t, base, `"smtp":{"listen":"127.0.0.1:0"},"web":{"http_listen":"127.0.0.1:0"},"metrics":{"listen":"127.0.0.1:0"},"scrub":{"disabled":true},`)
+	c := newCLI(t, `"smtp":{"listen":"127.0.0.1:0"},"web":{"http_listen":"127.0.0.1:0"},"metrics":{"listen":"127.0.0.1:0"},"scrub":{"disabled":true},`)
 	domain := "ops.test"
 	anna, bob := "anna@"+domain, "bob@"+domain
 	c.ok("", "key", "generate")
@@ -587,7 +542,9 @@ func TestOperations(t *testing.T) {
 		}
 	}
 
-	// The server, with its metrics listener.
+	// The server, with its metrics listener. It opens the database, so
+	// the test's own hold on it goes first.
+	a.close()
 	metricsAddr := make(chan net.Addr, 1)
 	onMetricsListen = func(a net.Addr) { metricsAddr <- a }
 	t.Cleanup(func() { onMetricsListen = nil })
@@ -644,7 +601,7 @@ func TestOperations(t *testing.T) {
 	for _, want := range []string{
 		"# TYPE robinmail_smtp_connections_total counter\n", "# TYPE robinmail_queue_messages gauge\n",
 		`(?m)^robinmail_smtp_connections_total [1-9]\d*$`, `(?m)^robinmail_delivered_total ([2-9]|[1-9]\d+)$`,
-		`(?m)^robinmail_http_requests_total\{code="2xx"\} [1-9]\d*$`, `(?m)^robinmail_rqlite_requests_total\{result="ok"\} [1-9]\d*$`,
+		`(?m)^robinmail_http_requests_total\{code="2xx"\} [1-9]\d*$`, `(?m)^robinmail_db_requests_total\{result="ok"\} [1-9]\d*$`,
 		`(?m)^robinmail_healthy 1$`, `(?m)^robinmail_accounts 2$`, `(?m)^robinmail_domains 1$`, `(?m)^robinmail_emails 3$`,
 		`(?m)^robinmail_queue_messages\{state="sending"\} 1$`, `(?m)^robinmail_queue_messages\{state="due"\} 0$`,
 		`(?m)^robinmail_queue_oldest_seconds \d`, `(?m)^robinmail_start_time_seconds 1\.\d+e\+09$`,
@@ -695,6 +652,7 @@ func TestOperations(t *testing.T) {
 	c.expect(c.ok("", "audit"), `account-removed +anna@ops\.test +- +account \S+, 2 messages, by an administrator`)
 	// Nothing of the account is left in any table but the audit log, and
 	// the other account is whole.
+	a = appOf(t, c)
 	left, err := a.store.BlobCatalog(a.ctx)
 	if _, has := left[acct.ID]; err != nil || has || len(left) != 1 {
 		t.Errorf("blob references after the removal: %v %v", left, err)
@@ -725,7 +683,7 @@ func TestOperations(t *testing.T) {
 	}
 
 	// The metrics listener is for this machine only.
-	bad := newCLI(t, base, `"metrics":{"listen":"0.0.0.0:9150"},`)
+	bad := newCLI(t, `"metrics":{"listen":"0.0.0.0:9150"},`)
 	if _, err := bad.do("", "status"); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Errorf("metrics on every interface: %v", err)
 	}

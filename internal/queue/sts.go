@@ -225,7 +225,7 @@ func stsClient(publicOnly bool) *http.Client {
 // means a fetch. When the record or the fetch fails, a cached policy that
 // has not expired keeps applying (RFC 8461 3.3, 5.1): otherwise an
 // attacker who can break DNS or HTTPS for a moment could switch the
-// protection off. The cache is a table in rqlite, so all nodes share it.
+// protection off. The cache is a table of the database, so all nodes share it.
 func (w *Worker) policy(ctx context.Context, domain string) *store.STSPolicy {
 	now := w.now()
 	cached, have, err := w.Store.STSPolicy(ctx, domain)

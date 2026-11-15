@@ -17,7 +17,7 @@ func load(t *testing.T, body string) (*Config, error) {
 }
 
 func TestLoad(t *testing.T) {
-	c, err := load(t, `{"hostname":"Mail.Example.Test","data_dir":"data","master_key_file":"master.key", "rqlite":{"url":"http://127.0.0.1:4001"}}`)
+	c, err := load(t, `{"hostname":"Mail.Example.Test","data_dir":"data","master_key_file":"master.key"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestLoad(t *testing.T) {
 		t.Errorf("master key file %s", c.MasterKeyFile)
 	}
 
-	c, err = load(t, `{"hostname":"mail.example.test","data_dir":"/var/lib/robinmail","master_key_file":"/etc/robinmail/master.key", "rqlite":{"url":"http://127.0.0.1:4001"}}`)
+	c, err = load(t, `{"hostname":"mail.example.test","data_dir":"/var/lib/robinmail","master_key_file":"/etc/robinmail/master.key"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,16 +44,15 @@ func TestLoadRejects(t *testing.T) {
 	const head = `{"hostname":"mail.example.test",`
 	const paths = `"data_dir":"data","master_key_file":"master.key",`
 	for name, body := range map[string]string{
-		"no rqlite":      head + paths + `"smtp":{}}`,
-		"bad rqlite url": head + paths + `"rqlite":{"url":"127.0.0.1:4001"}}`,
-		"no data dir":    head + `"master_key_file":"k","rqlite":{"url":"http://x:4001"}}`,
-		"no key file":    head + `"data_dir":"data","rqlite":{"url":"http://x:4001"}}`,
-		"unknown field":  head + paths + `"rqlite":{"url":"http://x:4001"},"blob":{"backend":"s3"}}`,
+		"rqlite":        head + paths + `}`,
+		"no data dir":   head + `"master_key_file":"k"}`,
+		"no key file":   head + `"data_dir":"data"}`,
+		"unknown field": head + paths + `"blob":{"backend":"s3"}}`,
 		// The accepted domains moved to the domain table.
-		"domains":         head + paths + `"domains":["example.test"],"rqlite":{"url":"http://x:4001"}}`,
-		"bad hostname":    `{"hostname":"exa mple",` + paths + `"rqlite":{"url":"http://x:4001"}}`,
-		"half a tls pair": head + paths + `"rqlite":{"url":"http://x:4001"},"tls":{"cert_file":"c"}}`,
-		"negative limit":  head + paths + `"rqlite":{"url":"http://x:4001"},"smtp":{"max_recipients":-1}}`,
+		"domains":         head + paths + `"domains":["example.test"]}`,
+		"bad hostname":    `{"hostname":"exa mple",` + paths + `}`,
+		"half a tls pair": head + paths + `"tls":{"cert_file":"c"}}`,
+		"negative limit":  head + paths + `"smtp":{"max_recipients":-1}}`,
 	} {
 		if _, err := load(t, body); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -67,7 +66,7 @@ func TestLoadRejects(t *testing.T) {
 // (for excessive recipients) with fewer than 100 RCPT commands is a
 // violation of this specification." A config cannot set less.
 func TestRFC5321_4_5_3_1_MinimumLimits(t *testing.T) {
-	const head = `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://x:4001"},"smtp":`
+	const head = `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","smtp":`
 	for body, ok := range map[string]bool{
 		`{"max_message_bytes":65536,"max_recipients":100}`: true,
 		`{"max_message_bytes":0,"max_recipients":0}`:       true, // the defaults, 25 MiB and 100
@@ -84,7 +83,7 @@ func TestRFC5321_4_5_3_1_MinimumLimits(t *testing.T) {
 // The web listeners: HTTPS needs a certificate, plain HTTP only exists on a
 // loopback address, and a dev origin is an origin, not a URL.
 func TestWeb(t *testing.T) {
-	const head = `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://x:4001"},`
+	const head = `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key",`
 	for body, ok := range map[string]bool{
 		`"web":{}`:                               true,
 		`"web":{"http_listen":"127.0.0.1:8080"}`: true,
@@ -110,29 +109,25 @@ func TestWeb(t *testing.T) {
 	}
 }
 
-// A node section makes the instance a cluster member; several rqlite URLs
-// may be given, alone or next to url.
-func TestNodeAndRqliteURLs(t *testing.T) {
+// A node section makes the instance a cluster member. A config that still
+// has the rqlite block of before phase 10 is refused with a word on why.
+func TestNode(t *testing.T) {
 	head := `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"k",`
-	c, err := load(t, head+`"rqlite":{"urls":["http://a:4001","http://b:4001"]},
-		"node":{"id":"n1","listen":":7443","address":"n1.internal:7443","blob_copies":3,"repair_interval_seconds":60}}`)
+	c, err := load(t, head+`"node":{"id":"n1","listen":":7443","address":"n1.internal:7443","blob_copies":3,"repair_interval_seconds":60}}`)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got := c.Rqlite.Nodes(); len(got) != 2 || got[0] != "http://a:4001" {
-		t.Errorf("Nodes = %v", got)
 	}
 	if c.Node.ID != "n1" || c.Node.BlobCopies != 3 {
 		t.Errorf("node = %+v", c.Node)
 	}
-	c, err = load(t, head+`"rqlite":{"url":"http://near:4001","urls":["http://far:4001"]}}`)
-	if err != nil || len(c.Rqlite.Nodes()) != 2 || c.Rqlite.Nodes()[0] != "http://near:4001" || c.Node.ID != "" {
-		t.Errorf("url and urls: %v, %+v", err, c)
+	if !strings.HasSuffix(c.DBDir(), "/data/db") {
+		t.Errorf("db dir %s", c.DBDir())
 	}
-	rq := `"rqlite":{"url":"http://x:4001"},`
+	if _, err := load(t, head+`"rqlite":{"urls":["http://127.0.0.1:4001"]}}`); err == nil || !strings.Contains(err.Error(), "rqlite block is no longer used") {
+		t.Errorf("old config: %v", err)
+	}
+	rq := ``
 	for name, body := range map[string]string{
-		"no rqlite at all":       head + `"rqlite":{}}`,
-		"bad url in urls":        head + `"rqlite":{"urls":["http://a:4001","b:4001"]}}`,
 		"node without id":        head + rq + `"node":{"listen":":7443","address":"n1:7443"}}`,
 		"bad node id":            head + rq + `"node":{"id":"Node 1","listen":":7443","address":"n1:7443"}}`,
 		"node without listen":    head + rq + `"node":{"id":"n1","address":"n1:7443"}}`,
@@ -148,7 +143,7 @@ func TestNodeAndRqliteURLs(t *testing.T) {
 
 // The sections for sending: defaults, and what is refused.
 func TestSubmissionAndOutbound(t *testing.T) {
-	const base = `"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://127.0.0.1:4001"}`
+	const base = `"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key"`
 	c, err := load(t, `{`+base+`}`)
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +182,7 @@ func TestSubmissionAndOutbound(t *testing.T) {
 // The dev section, for labs: off unless asked for, and the config of the
 // interoperability lab loads.
 func TestDev(t *testing.T) {
-	const base = `"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://127.0.0.1:4001"}`
+	const base = `"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key"`
 	c, err := load(t, `{`+base+`}`)
 	if err != nil || c.Dev.RetrySeconds != 0 || c.Dev.SMTPTrace {
 		t.Errorf("without a dev section: %+v, %v", c, err)
@@ -210,7 +205,7 @@ func TestDev(t *testing.T) {
 
 // The auth section: defaults, and what an OIDC provider must have.
 func TestAuth(t *testing.T) {
-	const base = `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key","rqlite":{"url":"http://x:4001"}`
+	const base = `{"hostname":"mail.example.test","data_dir":"data","master_key_file":"master.key"`
 	c, err := load(t, base+`}`)
 	if err != nil || c.Auth.RequireAppPasswords || c.Auth.AuditRetentionDays != 90 || len(c.Auth.OIDC) != 0 {
 		t.Fatalf("defaults: %+v %v", c, err)

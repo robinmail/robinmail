@@ -9,10 +9,9 @@
 //   - A write made on another node is found by polling: while an account
 //     has listeners here, Run reads its modseq once per Interval, for all
 //     such accounts in one query, and wakes the listeners of every account
-//     whose modseq moved. The read is at rqlite's level "none", so the
-//     nearest rqlite node answers from its own copy and the leader is not
-//     asked; a copy that is a moment behind shows the change on the next
-//     round.
+//     whose modseq moved. The read is at level "none": this node answers
+//     from its own copy of the database and the leader is not asked; a
+//     copy that is a moment behind shows the change on the next round.
 //
 // Nodes do not tell each other about writes. A nudge over the node channel
 // would cut the delay from a second to milliseconds, but the writer does not

@@ -1,9 +1,10 @@
 // Package store holds all mail state: accounts, mailboxes, emails, threads
-// and the change log in rqlite, and the raw messages as encrypted files in a
-// blob store.
+// and the change log in the database (internal/db, internal/raftdb), and the
+// raw messages as encrypted files in a blob store.
 //
-// rqlite has no interactive transactions, so every write here is one batch of
-// statements that rqlite runs atomically. A batch cannot read, decide in Go
+// The database has no interactive transactions, so every write here is one
+// batch of statements that every node applies atomically, in the order of
+// the Raft log. A batch cannot read, decide in Go
 // and then write: it computes what it needs in SQL (take the counter, look up
 // the thread, take uidnext). Preconditions are "guard" statements that fail,
 // and so roll the batch back, when a row is missing.
@@ -77,7 +78,7 @@ const (
 
 // Store is safe for concurrent use. Its only state is a cache of account
 // keys, which never change, so any number of nodes can work on the same
-// rqlite.
+// database.
 type Store struct {
 	db     db.DB
 	blobs  blob.Store
@@ -153,8 +154,7 @@ type batch struct {
 	base  map[string]any
 	stmts []db.Statement
 	fail  map[int]error // statement index -> what its failure means
-	// again marks a batch that may be sent a second time when rqlite did
-	// not say whether the first was applied. See run.
+	// again marks a batch that is safe to run a second time. See run.
 	again bool
 	// bumped marks a batch that moves the account's modseq.
 	bumped bool
@@ -198,7 +198,7 @@ func (b *batch) add(sql string, kv ...any) {
 
 // guard makes the batch fail with err unless cond, a SQL expression, holds.
 // The guard table only accepts ok = 0, so inserting a 1 breaks its CHECK
-// constraint and rqlite rolls the batch back. The table stays empty.
+// constraint and the batch is rolled back. The table stays empty.
 func (b *batch) guard(err error, cond string, kv ...any) {
 	b.fail[len(b.stmts)] = err
 	b.add(`INSERT INTO guard (ok) SELECT 1 WHERE NOT (`+cond+`)`, kv...)
@@ -242,13 +242,15 @@ func (b *batch) change(typ, sel string, kv ...any) {
 
 // run executes the batch and translates a failed statement.
 //
-// When a leader dies in the middle of a write, rqlite cannot say whether the
-// batch was applied. Most batches here are not safe to send again: they take
-// a counter and bump the modseq, so a second run would do the work twice, or
-// they carry a guard ("no mailbox of that name yet", ifInState) that a
-// second run would trip over its own first run and report as a refusal.
-// Those fail with db.ErrUnknownOutcome and the caller's caller decides:
-// a JMAP client gets serverFail and syncs, a command prints the error.
+// When a leader dies in the middle of a write, the proposer may not hear
+// whether the batch was applied. internal/raftdb proposes it again with the
+// same id, and applies an id once, so every batch is retried safely until
+// its Wait has passed; only then does it fail with db.ErrUnknownOutcome and
+// the caller's caller decides: a JMAP client gets serverFail and syncs, a
+// command prints the error. The marks below are from rqlite, which did not
+// deduplicate: they still say which batches would be harmless to send
+// twice by other means (a delivery key, a random key in the row), which
+// stays true and is what callers above the database rely on.
 //
 // The batches marked idempotent are sent again. How each write qualifies:
 //
@@ -324,26 +326,29 @@ func (s *Store) run(ctx context.Context, b *batch) ([]db.Result, error) {
 	return nil, fmt.Errorf("store: %w", err)
 }
 
-// query runs read-only statements with weak consistency: the leader answers
-// after checking, locally, that it still is the leader.
+// query runs read-only statements at level weak, which internal/raftdb
+// makes linearizable: the node asks the leader for its commit index (Raft's
+// ReadIndex; the leader confirms with a quorum that it still leads) and
+// answers from its own copy once it has applied that far. One round serves
+// every read waiting at that moment. A read on any node sees every write
+// acknowledged before it began, also writes made through another node.
 //
 // Read consistency, per kind of read:
 //
 //	weak    everything a user or a delivery reads: accounts, sessions,
-//	        domains, mailboxes, emails, changes, the node list. It costs no
-//	        Raft round trip. A leader that was just cut off from the others
-//	        can still answer for about a second (until its lease runs out)
-//	        from data that misses the newest writes. Nothing breaks on
-//	        that: JMAP state strings make a client catch up, a delivery's
-//	        own checks are guards inside its write batch, and a logged-out
-//	        session or a removed domain is honoured a second late.
-//	strong  the one read that decides a deletion: the blob sweeper's
-//	        "is this still referenced". It goes through the Raft log, so
-//	        only a leader that still has a quorum answers.
-//	none    the login failure counters: any node answers from its own copy,
-//	        without asking the leader, unless it lost the leader more than
-//	        5 seconds ago. A count that is a moment old is good enough for a
-//	        rate limit, and it keeps a login from waiting on the leader.
+//	        domains, mailboxes, emails, changes, the node list. One round
+//	        to the leader and from it to a quorum; nothing when this node
+//	        is the only one. A node cut off from the majority does not
+//	        answer: logins and JMAP fail with 503 there, nothing is served
+//	        from a copy that may be old.
+//	strong  the same as weak; kept for the reads that decide a deletion
+//	        (the blob sweeper's "is this still referenced"), so that they
+//	        say so.
+//	none    this node's own copy, without asking anybody: the login
+//	        failure counters (a login does not wait on the leader) and the
+//	        poll of internal/notify for changes made on other nodes. A copy
+//	        a moment behind is good enough for both. A node that has been
+//	        without a leader for 5 seconds refuses (db.ErrStale).
 func (s *Store) query(ctx context.Context, account string, stmts ...[]any) ([]db.Result, error) {
 	b := &batch{base: map[string]any{"a": account}}
 	for _, st := range stmts {
@@ -358,7 +363,7 @@ func (s *Store) query(ctx context.Context, account string, stmts ...[]any) ([]db
 
 func q(sql string, kv ...any) []any { return append([]any{sql}, kv...) }
 
-// Column helpers. rqlite returns integers as int64 and text as string.
+// Column helpers. The database returns integers as int64 and text as string.
 func asInt(v any) int64 {
 	switch n := v.(type) {
 	case int64:

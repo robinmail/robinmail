@@ -3,26 +3,25 @@
 //
 // # Membership
 //
-// A node has an id and an address from its config. It writes both, with
-// the fingerprint of its certificate, into the node table in rqlite when
-// it starts, and renews seen_at every few seconds while it runs. The table
-// is the member list: every node reads it from there. A node that stops
-// stays in it, so the others keep counting it as a place a blob should be,
-// until "robinmail node remove".
+// The members are those of the database's Raft cluster (internal/raftdb):
+// each with its node id, address and the fingerprint of its certificate,
+// admitted with "robinmail node add" on a member and taken out with "node
+// remove". A node also writes a row into the node table when it starts and
+// renews seen_at every few seconds while it runs, for people to see; who
+// may connect is decided by the membership alone.
 //
-// # Authentication: mutual TLS, pinned through the node table
+// # Authentication: mutual TLS, pinned through the membership
 //
 // Each node makes its own key and self-signed certificate once and keeps
 // them in its data directory. There is no CA and no shared secret. Calls
 // between nodes use TLS 1.3 with a certificate on both sides, and each
-// side accepts exactly the certificates whose SHA-256 is in the node
-// table: the server refuses a client that shows none or an unknown one,
-// the client refuses a server that does not show the certificate
-// registered for the node it meant to call. So who may join is decided by
-// who can write to rqlite, which already holds every account and key; the
-// node table adds no new secret to guard or distribute. An unknown
-// certificate makes a node read the table again (at most once a second)
-// before it refuses, so a node that just registered is let in.
+// side accepts exactly the certificates of members: the server refuses a
+// client that shows none or an unknown one, the client refuses a server
+// that does not show the certificate the member it meant to call joined
+// with. So who may join is decided by whoever runs "robinmail node add" on
+// a member, which needs a shell there. An unknown certificate makes a node
+// read the membership again (at most once a second) before it refuses, so
+// a node that was just admitted is let in.
 //
 // # Protocol
 //
@@ -39,6 +38,9 @@
 //	    404  this node does not have it
 //	GET /v1/ping
 //	    204
+//	/v1/raft/...
+//	    the database's Raft messages, snapshots and member list, served
+//	    by internal/raftdb (Node.Raft)
 //
 // Everything else is 404 or 405. The files are the ones internal/blob
 // writes; nothing is re-encrypted for the wire.
@@ -59,6 +61,7 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/raftdb"
 	"github.com/robinmail/robinmail/internal/store"
 )
 
@@ -91,11 +94,15 @@ type Node struct {
 	Heartbeat time.Duration
 	// MaxBlobBytes bounds a pushed file. [MaxBlobBytes]
 	MaxBlobBytes int64
+	// Raft, when set, serves /v1/raft/ for the other members: the
+	// database's Raft messages and snapshots (internal/raftdb).
+	Raft http.Handler
 
 	mu      sync.Mutex
 	nodes   []store.Node
 	readAt  time.Time
 	clients map[string]*http.Client // by peer certificate
+	long    map[string]*http.Client // the same, without a limit on the wait for an answer
 }
 
 // How old the cached node table may be: for ordinary use, and when a
@@ -113,7 +120,7 @@ func (n *Node) log() *slog.Logger {
 }
 
 // list returns the node table, read again when the copy is older than
-// maxAge. When rqlite does not answer, an older copy is used: the nodes
+// maxAge. When the membership cannot be read, an older copy is used: the nodes
 // that were members a moment ago still are.
 func (n *Node) list(ctx context.Context, maxAge time.Duration) ([]store.Node, error) {
 	n.mu.Lock()
@@ -297,6 +304,52 @@ func (n *Node) client(fingerprint string) *http.Client {
 	return c
 }
 
+// longClient is client without the 60 seconds for an answer: a Raft
+// snapshot is answered once it is copied or installed, which takes as
+// long as the database is large. The caller's context bounds it.
+func (n *Node) longClient(fingerprint string) *http.Client {
+	base := n.client(fingerprint)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if c, ok := n.long[fingerprint]; ok {
+		return c
+	}
+	if n.long == nil || len(n.long) > 64 {
+		n.long = map[string]*http.Client{}
+	}
+	t := base.Transport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = 0
+	c := &http.Client{Transport: t}
+	n.long[fingerprint] = c
+	return c
+}
+
+// Do implements raftdb.Transport: a request to a member over the mutual
+// TLS, pinned to the certificate the member joined with.
+func (n *Node) Do(ctx context.Context, to raftdb.Member, method, path string, body io.Reader) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "https://"+to.Address+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/octet-stream")
+	}
+	c := n.client(to.Cert)
+	if strings.HasSuffix(path, "/snapshot") || method == http.MethodPost {
+		c = n.longClient(to.Cert)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		resp.Body.Close()
+		return nil, fmt.Errorf("node %s answered %d: %s", to.Node, resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	return resp.Body, nil
+}
+
 // peer is one other node. It implements blob.Peer.
 type peer struct {
 	node              *Node
@@ -355,6 +408,9 @@ func (n *Node) Handler(local *blob.Local, verify blob.Verifier) http.Handler {
 		limit = MaxBlobBytes
 	}
 	mux := http.NewServeMux()
+	if n.Raft != nil {
+		mux.Handle("/v1/raft/", n.Raft)
+	}
 	mux.HandleFunc("GET /v1/ping", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})

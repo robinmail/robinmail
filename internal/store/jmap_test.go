@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // The store operations behind the JMAP methods of phase 3.
@@ -49,7 +49,7 @@ func TestDeliverCachesHeaders(t *testing.T) {
 	want(t, "hasAttachment", e.HasAttachment, true)
 
 	// Reindex writes the same columns from the stored message.
-	if _, err := s.db.Execute(ctx, rqlite.Stmt(`UPDATE email SET sender = '', recipients = '', cc = '', subject = '',
+	if _, err := s.db.Execute(ctx, db.Stmt(`UPDATE email SET sender = '', recipients = '', cc = '', subject = '',
 		sent_at = 0, preview = '', has_attachment = 0 WHERE account_id = ? AND id = ?`, a.ID, e.ID)); err != nil {
 		t.Fatal(err)
 	}

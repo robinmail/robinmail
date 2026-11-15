@@ -218,7 +218,7 @@ var (
 	QueueRecipients = Default.Counter("robinmail_queue_recipients_total", "Recipients of outbound mail by what an attempt made of them.", "result")
 	HTTPRequests    = Default.Counter("robinmail_http_requests_total", "Requests the web listeners answered, by status class.", "code")
 	AuthEvents      = Default.Counter("robinmail_auth_events_total", "Auth events written to the audit log, by event.", "event")
-	DBRequests      = Default.Counter("robinmail_rqlite_requests_total", "Requests to rqlite by outcome: ok, error (a statement failed), failed (no answer).", "result")
+	DBRequests      = Default.Counter("robinmail_db_requests_total", "Writes and reads of the database by outcome: ok, error (a statement failed), failed (no answer, no leader).", "result")
 	ScrubChecked    = Default.Counter("robinmail_blob_scrub_checked_total", "Blob files a scrub read on this node.")
 	ScrubCorrupt    = Default.Counter("robinmail_blob_scrub_corrupt_total", "Blob files a scrub found corrupt on this node.")
 	ScrubRepaired   = Default.Counter("robinmail_blob_scrub_repaired_total", "Corrupt blob files a scrub replaced from another node.")

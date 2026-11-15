@@ -142,8 +142,8 @@ func (s *Store) State(ctx context.Context, account string) (int64, error) {
 
 // ModSeqs returns the current modseq of each of the given accounts; one
 // that does not exist is left out. It is what internal/notify polls to find
-// changes made on other nodes, and is read at level none: the rqlite node
-// that is asked answers from its own copy, without the leader. A copy that
+// changes made on other nodes, and is read at level none: this node answers
+// from its own copy of the database, without the leader. A copy that
 // is behind shows a change one poll later.
 func (s *Store) ModSeqs(ctx context.Context, accounts []string) (map[string]int64, error) {
 	return s.seqs(ctx, "modseq", accounts)

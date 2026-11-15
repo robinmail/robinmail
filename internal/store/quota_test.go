@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 func quotaOf(t *testing.T, s *Store, a Account) Quota {
@@ -73,7 +73,7 @@ func TestQuotaCounting(t *testing.T) {
 	want(t, "after a refused and a repeated delivery", []int64{quotaOf(t, s, a).UsedBytes, quotaOf(t, s, a).UsedMessages}, []int64{four.Size, 1})
 
 	// Counters that were changed behind the store's back are put right.
-	if _, err := s.db.Execute(ctx, rqlite.Stmt(`UPDATE account SET used_bytes = 5, used_count = 9 WHERE id = ?`, a.ID)); err != nil {
+	if _, err := s.db.Execute(ctx, db.Stmt(`UPDATE account SET used_bytes = 5, used_count = 9 WHERE id = ?`, a.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if changed, err := s.RecountQuota(ctx, a.ID); err != nil || !changed {
@@ -164,7 +164,7 @@ func TestQuotaLimits(t *testing.T) {
 // room for ten messages: ten are stored, the rest refused, and the
 // counters say ten.
 func TestQuotaUnderConcurrency(t *testing.T) {
-	s1, s2 := open(t), open(t)
+	s1, s2 := twoNodes(t)
 	a := account(t, s1)
 	const limit, senders, each = 10, 8, 5
 	raw := msg("c@x", "concurrent")

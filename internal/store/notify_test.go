@@ -2,28 +2,31 @@ package store
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
 	"github.com/robinmail/robinmail/internal/notify"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/raftdb/raftdbtest"
 )
 
-// secondNode is another store on the same rqlite, as a second robinmail
-// node has it: its own blob directory, the same master key.
-func secondNode(t *testing.T) *Store {
+// twoNodes is two stores on the two nodes of one cluster, as two robinmail
+// nodes have them: a blob directory each, the same master key.
+func twoNodes(t *testing.T) (*Store, *Store) {
 	t.Helper()
-	db, err := rqlite.New(os.Getenv("ROBINMAIL_TEST_RQLITE"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbs := raftdbtest.Cluster(t, 2)
 	master, err := blob.NewMasterKey(testMasterKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(db, blob.NewLocal(t.TempDir()), master)
+	s1 := New(dbs[0], blob.NewLocal(t.TempDir()), master)
+	if err := s1.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.AddDomain(ctx, "example.test"); err != nil {
+		t.Fatal(err)
+	}
+	return s1, New(dbs[1], blob.NewLocal(t.TempDir()), master)
 }
 
 func waitWake(t *testing.T, c <-chan struct{}, within time.Duration, what string) time.Duration {
@@ -48,12 +51,11 @@ func drain(c <-chan struct{}) {
 	}
 }
 
-// Two nodes on one rqlite. A write through node 1 wakes node 1's listeners
+// Two nodes of one cluster. A write through node 1 wakes node 1's listeners
 // through the store's hook, at once, and node 2's through node 2's poll of
 // the account's modseq. Every kind of write that moves the modseq does.
 func TestChangeReachesListenersOnBothNodes(t *testing.T) {
-	s1 := open(t)
-	s2 := secondNode(t)
+	s1, s2 := twoNodes(t)
 	h1 := &notify.Hub{States: s1.ModSeqs}
 	h2 := &notify.Hub{States: s2.ModSeqs, Interval: 50 * time.Millisecond}
 	s1.OnChange, s2.OnChange = h1.Changed, h2.Changed

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 func queryIDs(t *testing.T, s *Store, a Account, f Filter) []int64 {
@@ -116,7 +116,7 @@ func TestTextSearch(t *testing.T) {
 	}
 
 	// Reindex puts an entry back, once.
-	if _, err := s.db.Execute(ctx, rqlite.Statement{SQL: `DELETE FROM email_fts WHERE rowid = ` + sqlFTSRow(":e"),
+	if _, err := s.db.Execute(ctx, db.Statement{SQL: `DELETE FROM email_fts WHERE rowid = ` + sqlFTSRow(":e"),
 		Named: map[string]any{"a": a.ID, "e": attached.ID}}); err != nil {
 		t.Fatal(err)
 	}
