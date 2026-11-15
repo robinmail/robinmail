@@ -22,7 +22,7 @@ This is a learning project. There is no production target yet.
 | Mail API | JMAP core and mail | One standard API for the webmail, a later app and existing clients. |
 | Metadata | One SQLite database for all accounts, replicated with Raft inside robinmail (phase 10; before it a separate rqlite cluster) | The robinmail nodes are the whole cluster. Strong consistency stays: IMAP UIDs and modseq need one order of writes. Consensus is etcd's Raft library, not code of our own. |
 | Message files | Immutable blobs on the local disk of every node, named by account and SHA-256 of the plaintext | No storage service to run. robinmail replicates blobs itself (phase 4): every node holds every blob, a write is acknowledged once 2 nodes have it, and a background check fetches missing ones. |
-| Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has. What the database holds is not encrypted by robinmail: the cached header fields and previews, and since phase 8 the full-text index, from which the words of every message can be read | Protects the blobs against stolen disks and backups. Does not protect against a compromised running server, which holds the master key, nor does it cover the database files: those need an encrypted disk. |
+| Encryption at rest | Every blob is encrypted with a key of its account (XChaCha20-Poly1305 from `golang.org/x/crypto`, in chunks). The account key is in the `account` row, wrapped by a master key from a key file every node has. What the database holds is not encrypted by robinmail: the cached header fields and previews, since phase 8 the full-text index, from which the words of every message can be read, and since phase 9 the calendar and contact data, as iCalendar and vCard text | Protects the blobs against stolen disks and backups. Does not protect against a compromised running server, which holds the master key, nor does it cover the database files: those need an encrypted disk. |
 | Access to the database | Embedded since phase 10: no SQL API on any port. Raft travels over the node-to-node mutual TLS; a command on a node reaches its running server over loopback TLS with the node's own key. Before it rqlite was a separate service, locked down in phase 8 | Whoever reached rqlite's HTTP port without a login read and wrote every account. Now the way in is a node's private key or a shell on a node. |
 | Nodes | Not stateless: each node holds the database and the blobs on its own disk. Any node serves any account | No owner per account. The Raft leader orders the writes; a node forwards its writes to it. |
 | Between nodes | Nodes know each other from the Raft membership and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates of members | No CA and no shared secret to distribute. Who may join is decided by `robinmail node add` on a member, which names the newcomer's certificate. |
@@ -3081,8 +3081,11 @@ Not handled:
   known for accounts of this server.
 - **Invitations from outside are added by themselves**, as Gmail does,
   when the From field names the organizer and the mail was not taken
-  for spam. Nothing checks that the From field is genuine beyond what
-  Rspamd's score does (see the open questions).
+  for spam. Since the security review (#45) only a new invitation is
+  taken on the From field's word: an update, a cancellation of an event
+  the account has, and every reply need Rspamd's DMARC pass (or to come
+  from an account of this server), and otherwise wait in the scheduling
+  inbox.
 - **DAV:** no LOCK, no ACL method, no COPY, no calendar proxies or
   delegation, no partial calendar-data or address-data (the whole object
   comes back), no `limit` on sync-collection, no managed attachments,
@@ -3102,8 +3105,9 @@ Not handled:
 
 Open questions:
 
-- Invitations from outside: add them only with a DMARC pass (Rspamd's
-  symbol), only from senders in the address book, or as now?
+- Invitations from outside: updates, cancellations and replies need a
+  DMARC pass since #45. Should new invitations need it too, or a sender
+  in the address book?
 - Reminders: should robinmail mail them (or push JMAP's CalendarAlert)
   for users without a calendar program?
 - Public calendar links (a read-only `.ics` URL to subscribe to): wanted?
@@ -3603,14 +3607,60 @@ Built as follows:
   between loses that report. The other order sends some twice.
 - `user remove` deletes an account in one batch. For an account with
   hundreds of thousands of messages that is one very large Raft entry.
-- The repository has no LICENSE file. Until it has one nobody but its
-  author may use the code.
+- Licence (2026-11-15): AGPL-3.0-or-later for the code (`LICENSE`), so a
+  changed robinmail run as a service for others has to offer its source;
+  the documentation site (robinmail/docs) is CC BY-SA 4.0.
 
 ## Security review
 
 An adversarial review of the Go server was done on 2026-11-15 (the
-webmail clients were out of scope). Found: no critical, 1 high, 7 medium
-and 8 low findings. Fixed: the high one, 5 medium and 1 low. Open: 2
-medium (one of them partly fixed) and 7 low. The findings, the verdict
-and what was found sound are in the tracking issue:
+webmail clients were out of scope), and a second pass the same day
+closed it out and reviewed phases 9 and 10. Tracking issue, with the
+findings, the verdict and what was found sound:
 https://github.com/robinmail/robinmail/issues/44
+
+| Severity | Found | Fixed | Open |
+|---|---|---|---|
+| Critical | 0 | 0 | 0 |
+| High | 1 | 1 | 0 |
+| Medium | 9 | 9 | 0 |
+| Low | 10 | 4 | 6 |
+
+The second pass:
+
+- Inbound SMTP holds messages in memory within a budget (#43):
+  `smtp.max_bytes_in_transit` [4 × `max_message_bytes`, 100 MiB] for
+  the SMTP and submission listeners together,
+  `max_bytes_in_transit_per_ip` [`max_message_bytes`] per client
+  address. Past it a message is answered 452 4.3.1. Measured: 24
+  messages of 4 MiB held at once kept 97 MiB live without the budget,
+  at most the budget (16 MiB) with it.
+- A browser that completed a web login gets a known-device cookie
+  (`__Host-robinmail-device`, 180 days, HMAC under a key derived from
+  the master key). With it wrong passwords are counted under the cookie
+  and the client address, not the address, so strangers cannot lock
+  the owner out of the webmail (#41). Mail clients use app passwords,
+  which have no limit per address since the first pass.
+- A panic ends one SMTP or IMAP session or one queue attempt, not the
+  process. HTTP (web, JMAP, DAV) was covered by `net/http` already.
+- The HTTPS listener bounds its connections: `web.max_connections`
+  [1000] and `web.max_connections_per_ip` [100].
+- Failed logins write to the database within a budget per node (a
+  burst of 100, then 10 a second); past it they count in the node's
+  memory only and get no auth event. Metric
+  `robinmail_auth_failure_writes_skipped_total`.
+- iMIP: an update, cancellation or reply by email is applied only when
+  its From field is verified: Rspamd reported DMARC passed, or it came
+  from an account of this server. A new invitation is still added from
+  anyone. Without Rspamd nothing from outside is verified;
+  `calendar.imip_unverified` turns the check off, for the lab (#45).
+- A recurring rule without COUNT starts its expansion near the range
+  asked for: an event of every second since 1970 cost 0.86 s per query
+  and showed nothing; now 0.1 s with its instances (#46).
+
+Open, low: OIDC links an existing account by verified e-mail claim; the
+image runs as root (#24); no default quota; automatic replies use the
+account's sending limit; every account sees every other account of the
+server as a principal, with its free/busy, across all domains; calendar
+and contact data are in the database as text, unencrypted like the
+header fields (an encrypted disk covers them).
