@@ -30,12 +30,15 @@ const (
 // What is written, and how often: every login at the web, every failed
 // login at any door (which the login limits bound: ten per address and
 // fifty per IP in fifteen minutes, after which nothing is checked and
-// nothing written), and every change to passwords, app passwords, TOTP
+// nothing written; and the budget per node, failureWriteRate), and every change to passwords, app passwords, TOTP
 // and sessions. A login of a mail client with an app password is written
 // when its "last used" is, every few minutes at most.
 func (s *Server) event(ctx context.Context, event string, acct store.Account, address, ip, detail string) {
 	if s.Audit == nil {
 		return
+	}
+	if (event == EventLoginFailed || event == EventCodeFailed) && !s.mayWriteFailure() {
+		return // a flood of failures: bounded, see failureWriteRate
 	}
 	if acct.Address != "" {
 		address = acct.Address

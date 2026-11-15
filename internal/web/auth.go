@@ -18,6 +18,7 @@ import (
 
 	"github.com/robinmail/robinmail/internal/address"
 	"github.com/robinmail/robinmail/internal/ipkey"
+	"github.com/robinmail/robinmail/internal/metrics"
 	"github.com/robinmail/robinmail/internal/store"
 	"github.com/robinmail/robinmail/internal/users"
 )
@@ -261,11 +262,60 @@ func (s *Server) failed(ctx context.Context, limits ...limit) {
 		l.mem.fail(l.key)
 		keys[i] = l.shared
 	}
-	if s.Limits != nil {
+	if s.Limits != nil && s.mayWriteFailure() {
 		if err := s.Limits.AddLoginFailure(ctx, loginWindow, keys...); err != nil {
 			s.Logger.Warn("login: counting the failure for the other nodes failed", "err", err)
 		}
 	}
+}
+
+// What failed logins write to the database is bounded per node (review
+// finding 15). A wrong secret in the form of an app password costs no
+// Argon2id, only a read, so the limit of fifty per client address was all
+// that bounded those writes: a client with many addresses (an IPv6 /48 is
+// 65536 /64s, free from a tunnel broker) could make thousands of Raft
+// writes a second, for the counters and the auth event log. Past the
+// budget a failure is still counted in this node's memory, and every limit
+// holds on this node; it is not written for the other nodes, and no auth
+// event is written for it. How many were left out is logged once a minute
+// and counted in robinmail_auth_failure_writes_skipped_total.
+const (
+	failureWriteRate  = 10  // writes per second, per node
+	failureWriteBurst = 100 // writes at once after a quiet time
+)
+
+type writeBudget struct {
+	mu      sync.Mutex
+	tokens  float64
+	last    time.Time
+	skipped int       // since the last log line
+	logged  time.Time // when skipped writes were last logged
+}
+
+// mayWriteFailure takes one write from the budget for failed logins.
+func (s *Server) mayWriteFailure() bool {
+	b := &s.failWrites
+	now := s.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.last.IsZero() {
+		b.tokens = failureWriteBurst
+	} else if d := now.Sub(b.last); d > 0 {
+		b.tokens = min(failureWriteBurst, b.tokens+d.Seconds()*failureWriteRate)
+	}
+	b.last = now
+	if b.tokens >= 1 {
+		b.tokens--
+		return true
+	}
+	metrics.AuthWritesSkipped.Inc()
+	b.skipped++
+	if now.Sub(b.logged) >= time.Minute {
+		s.Logger.Warn("login: too many failed logins to write them all; counted on this node only, not in the auth log",
+			"skipped", b.skipped)
+		b.skipped, b.logged = 0, now
+	}
+	return false
 }
 
 // cleared forgets the failures under a limit after a success. shared is
