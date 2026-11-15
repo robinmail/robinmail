@@ -3611,6 +3611,17 @@ Built as follows:
   changed robinmail run as a service for others has to offer its source;
   the documentation site (robinmail/docs) is CC BY-SA 4.0.
 
+## Vue webmail removed (2026-11-15)
+
+The first webmail, Vue in `web/`, is gone; the Angular one in `web-ng/`
+is the only one. The build tag is `webmail` again and embeds
+`internal/web/dist` (the Angular build); `webmail_ng`, `dist-ng`,
+`./robinmail-ng` and the `-vue` and `-ng` make targets are gone. The
+browser tests moved from `web/e2e` to `e2e/specs`, a package of their own
+(`e2e/package.json`: Playwright, jsQR); `make e2e` installs it. The QR
+test reads jsQR from there. The sections above that name `web/`,
+`webmail_ng` or the `-vue` targets describe how it was then.
+
 ## Security review
 
 An adversarial review of the Go server was done on 2026-11-15 (the

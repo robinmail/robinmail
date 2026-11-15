@@ -159,12 +159,12 @@ func bit(b bool) uint32 {
 }
 
 // The codes are read back by a decoder that shares nothing with this
-// package: jsQR, a development dependency of the webmail. Skipped where
-// the webmail's packages are not installed ("cd web && npm ci").
+// package: jsQR, a development dependency of the browser tests. Skipped
+// where their packages are not installed ("cd e2e && npm ci").
 func TestAgainstDecoder(t *testing.T) {
-	web, _ := filepath.Abs("../../web")
+	web, _ := filepath.Abs("../../e2e")
 	if _, err := os.Stat(filepath.Join(web, "node_modules", "jsqr")); err != nil {
-		t.Skip("web/node_modules/jsqr is not installed")
+		t.Skip("e2e/node_modules/jsqr is not installed")
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {

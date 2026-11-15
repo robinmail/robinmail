@@ -2,9 +2,8 @@
 // Calendars; an invitation between the two users of the instance goes
 // through the server's scheduling (iTIP), not by email.
 import { expect, type Page, test } from '@playwright/test'
-import { OTHER, USER, angular, jmap, login } from './dev'
+import { OTHER, USER, jmap, login } from './dev'
 
-test.skip(!angular, 'the calendar is in the Angular webmail only')
 
 // removeEvents destroys the events of the page's account whose title
 // holds the text.

@@ -1,4 +1,4 @@
-//go:build webmail || webmail_ng
+//go:build webmail
 
 package web
 
@@ -11,9 +11,7 @@ import (
 
 // The built webmail, as "make" embeds it, served by the real handler: the
 // entry page for every route of the app, its assets cacheable forever, and
-// nothing in the page that the Content-Security-Policy would refuse. The
-// same holds for the Angular webmail ("make build-ng", tag webmail_ng):
-// its build has the same layout, index.html and assets/.
+// nothing in the page that the Content-Security-Policy would refuse.
 func TestEmbeddedWebmail(t *testing.T) {
 	app := Embedded()
 	index, err := fs.ReadFile(app, "index.html")

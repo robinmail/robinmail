@@ -1,9 +1,7 @@
 #!/bin/sh
-# Runs the browser tests of web/e2e against ./robinmail (built by "make":
-# the Angular webmail) and the development instance of seed.sh.
-# ROBINMAIL_BINARY names another binary, and ROBINMAIL_E2E_WEBMAIL=vue tells
-# the specs it is the Vue webmail ("make e2e-vue"). Arguments go to
-# Playwright:
+# Runs the browser tests of e2e/ against ./robinmail (built by "make", with
+# the webmail inside) and the development instance of seed.sh.
+# ROBINMAIL_BINARY names another binary. Arguments go to Playwright:
 #
 #   contrib/dev/e2e.sh               all tests
 #   contrib/dev/e2e.sh auth          the tests in files with "auth" in the name
@@ -38,5 +36,5 @@ stop() {
 trap stop EXIT
 sleep 1
 
-cd web
+cd e2e
 ROBINMAIL_E2E_CONFIG=dev/robinmail.e2e.json ROBINMAIL_E2E_URL="http://127.0.0.1:$PORT" npx playwright test "$@"

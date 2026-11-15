@@ -1,9 +1,8 @@
 // Phase 9: the contacts of the Angular webmail (JMAP for Contacts, RFC
 // 9610), and the address book as a .vcf over CardDAV.
 import { expect, type Page, test } from '@playwright/test'
-import { angular, jmap, login } from './dev'
+import { jmap, login } from './dev'
 
-test.skip(!angular, 'the contacts are in the Angular webmail only')
 
 async function removeCards(page: Page, text: string): Promise<void> {
   await jmap(page, [

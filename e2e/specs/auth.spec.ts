@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import jsQR from 'jsqr'
-import { USER, angular } from './dev'
+import { USER } from './dev'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
 // A password for the users of these tests, which exist only in the
@@ -195,7 +195,7 @@ test('app passwords: made once, listed with their use, revoked', async ({ page, 
   await dialog.getByLabel('Sending mail (SMTP)').uncheck()
   await dialog.getByLabel('JMAP programs').uncheck()
   // The Angular webmail (phase 9) also has calendars and contacts.
-  if (angular) await dialog.getByLabel('Calendars and contacts (CalDAV, CardDAV)').uncheck()
+  await dialog.getByLabel('Calendars and contacts (CalDAV, CardDAV)').uncheck()
   await dialog.getByLabel('Your account password').fill(PASSWORD)
   await dialog.getByTestId('dialog-submit').click()
   const imapOnly = (await dialog.getByTestId('app-secret').innerText()).trim()
@@ -369,10 +369,11 @@ test('log in through a provider', async ({ page, request }) => {
   // What the page says about mail programs: they need an app password.
   await expect(page.getByTestId('section-apps')).toContainText('cannot do two-step login or log in through a provider')
 
-  // The flow cookie is gone, and the session cookie is the strict one.
+  // The flow cookie is gone. What is left is the session cookie and the
+  // known-device cookie a completed login sets (issue 41), both strict.
   const cookies = await page.context().cookies()
-  expect(cookies.map((c) => c.name).sort()).toEqual(['robinmail'])
-  expect(cookies[0]).toMatchObject({ httpOnly: true, sameSite: 'Strict' })
+  expect(cookies.map((c) => c.name).sort()).toEqual(['robinmail', 'robinmail-device'])
+  for (const c of cookies) expect(c).toMatchObject({ httpOnly: true, sameSite: 'Strict' })
   await logOut(page)
 
   // A callback that no login in this browser started does nothing.

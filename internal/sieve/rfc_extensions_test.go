@@ -570,11 +570,11 @@ if body :matches "*missile*" { reject "${1}"; }`, multipart, `reject "a"`)
 	}
 }
 
-// The script the webmail's Filters page writes (web/src/sieve/rules.ts).
+// The script the webmail's Filters page writes (web-ng/projects/jmap/src/lib/sieve/rules.ts).
 // The file is the fixture of the page's own test: what the page writes is
 // what runs here.
 func TestWebmailRules(t *testing.T) {
-	src, err := os.ReadFile("../../web/src/sieve/testdata/rules.sieve")
+	src, err := os.ReadFile("../../web-ng/projects/jmap/src/lib/sieve/testdata/rules.sieve")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,8 +19,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-COPY --from=web /src/web-ng/dist/shell/ internal/web/dist-ng/
-RUN CGO_ENABLED=0 go build -tags webmail_ng -trimpath -o /robinmail ./cmd/robinmail
+COPY --from=web /src/web-ng/dist/shell/ internal/web/dist/
+RUN CGO_ENABLED=0 go build -tags webmail -trimpath -o /robinmail ./cmd/robinmail
 
 FROM alpine:3.22
 COPY --from=build /robinmail /usr/local/bin/robinmail

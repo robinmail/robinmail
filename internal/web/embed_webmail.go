@@ -1,4 +1,4 @@
-//go:build webmail && !webmail_ng
+//go:build webmail
 
 package web
 
@@ -7,19 +7,16 @@ import (
 	"io/fs"
 )
 
-// dist is the built webmail: "make web" copies web/dist here. The
-// directory is not in git, so this file only compiles after that; without
-// the "webmail" tag the binary has the placeholder page instead. The tag
-// "webmail_ng" puts the Angular webmail in its place (embed_webmail_ng.go).
-//
-// "all:" because Vite names some chunks with a leading underscore, which
-// a plain pattern leaves out.
+// dist is the built webmail (web-ng, Angular): "make" copies
+// web-ng/dist/shell here. The directory is not in git, so this file only
+// compiles after that; without the "webmail" tag the binary has the
+// placeholder page instead. index.html and the files named by their
+// content under assets/, which the handler caches for a year.
 //
 //go:embed all:dist
 var dist embed.FS
 
-// Embedded returns the webmail built into this binary, or nil when it was
-// built without one (see the Makefile).
+// Embedded returns the webmail built into this binary.
 func Embedded() fs.FS {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {

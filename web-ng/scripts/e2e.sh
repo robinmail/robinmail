@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the browser tests of web/e2e against the Angular webmail: the same
+# Runs the browser tests of e2e/ against the webmail: the same
 # specs, the same development instance, another binary. Like
 # contrib/dev/e2e.sh, with these differences:
 #
@@ -9,7 +9,7 @@
 #     so a development server on 8080 can stay up;
 #   - the instance is only seeded when ./dev has none yet.
 #
-#   web-ng/scripts/e2e.sh               all tests ("make e2e-ng" builds first)
+#   web-ng/scripts/e2e.sh               all tests ("make e2e" builds first)
 #   web-ng/scripts/e2e.sh mail auth     the tests in files with these words in the name
 #   SERVE=1 web-ng/scripts/e2e.sh       no tests: the server stays up until Ctrl-C
 set -eu
@@ -37,5 +37,5 @@ if [ -n "${SERVE:-}" ]; then
 	wait "$server"
 	exit 0
 fi
-cd web
+cd e2e
 ROBINMAIL_E2E_URL="http://127.0.0.1:$PORT" npx playwright test "$@"

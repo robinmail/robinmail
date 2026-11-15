@@ -49,8 +49,7 @@ why. That file is the design document and the record of what was built and teste
   JMAP gets them as JSCalendar and JSContact. Invitations go out as email (iMIP) and are
   applied when they come in.
 - **The webmail** (`web-ng/`, Angular) only speaks JMAP and is embedded in the binary:
-  mail, calendar and contacts. The Vue webmail in `web/` has mail only and is built with
-  `make build-vue`.
+  mail, calendar and contacts. Its browser tests (Playwright) are in `e2e/`.
 
 What is encrypted at rest: the message files. What is not: the database, which
 includes addresses, subjects, previews and the full-text index. Those need an encrypted

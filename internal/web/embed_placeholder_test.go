@@ -1,4 +1,4 @@
-//go:build !webmail && !webmail_ng
+//go:build !webmail
 
 package web
 

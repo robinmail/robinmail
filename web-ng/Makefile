@@ -1,8 +1,8 @@
 # The Angular webmail: one workspace with the libraries @robinmail/jmap and
 # @robinmail/webmail (built with @angular/build:ng-packagr into dist/) and
 # the application "shell" that only starts the router with the library's
-# routes (dist/shell). The Vue webmail in ../web is the one "make" in the
-# repository root builds; this one stands next to it.
+# routes (dist/shell). "make" in the repository root builds it into the
+# robinmail binary.
 #
 #   make            both libraries, then the shell from the built libraries
 #   make test       the unit tests of both libraries (Vitest, the runner of ng test)
@@ -11,9 +11,9 @@
 #                   on to the Go server on 127.0.0.1:8080 (ROBINMAIL_DEV_URL
 #                   for another): start that one with "make dev" or
 #                   "dev/robinmail -config dev/robinmail.json serve" in the root
-#   make go         ../robinmail-ng: the Go server with this webmail in it
-#                   ("make build-ng" in the root; the build tag webmail_ng)
-#   make e2e        the browser tests of ../web/e2e against that binary on
+#   make go         ../robinmail: the Go server with this webmail in it
+#                   ("make" in the root; the build tag webmail)
+#   make e2e        the browser tests of ../e2e against that binary on
 #                   127.0.0.1:8085, with the development instance in ../dev;
 #                   "make e2e ARGS=mail" runs the files with "mail" in the name
 #   make clean
@@ -38,7 +38,7 @@ dev: node_modules
 	$(NPM) run dev
 
 go:
-	$(MAKE) -C .. build-ng
+	$(MAKE) -C .. build
 
 e2e: go
 	scripts/e2e.sh $(ARGS)
