@@ -320,6 +320,7 @@ func (a *app) serve(stop func()) error {
 		Store:          a.store,
 		Local:          d,
 		Routes:         a.cfg.Outbound.Routes,
+		AllowPrivate:   a.cfg.Outbound.AllowPrivateAddresses,
 		Concurrency:    a.cfg.Outbound.Concurrency,
 		PerDestination: a.cfg.Outbound.PerDestination,
 		Logger:         log,

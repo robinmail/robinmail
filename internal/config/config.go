@@ -281,6 +281,13 @@ type Outbound struct {
 	// its MX hosts; "*" is every other domain. For a relay host, and for
 	// development without DNS.
 	Routes map[string]string `json:"routes"`
+	// AllowPrivateAddresses lets mail, and the fetch of an MTA-STS policy,
+	// go to a mail server whose address in DNS is not a public one:
+	// loopback, private, link-local. Off, which it should be on the
+	// internet, such a server is not connected to: a recipient domain
+	// must not be able to point this server at its own network. A lab on
+	// a private network turns it on. Routes are not affected.
+	AllowPrivateAddresses bool `json:"allow_private_addresses"`
 }
 
 // Web configures the HTTP side: login, JMAP and the webmail on one origin.

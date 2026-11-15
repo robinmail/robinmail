@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mikepage/robinmail/internal/store"
@@ -146,6 +148,9 @@ func (w *Worker) fetchSTSPolicy(ctx context.Context, domain string) ([]byte, err
 	hc := w.HTTP
 	if hc == nil {
 		hc = defaultSTSClient
+		if w.AllowPrivate {
+			hc = privateSTSClient
+		}
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -168,10 +173,38 @@ func (w *Worker) fetchSTSPolicy(ctx context.Context, domain string) ([]byte, err
 	return body, nil
 }
 
-var defaultSTSClient = &http.Client{
-	Timeout: time.Minute,
-	// "HTTP 3xx redirects MUST NOT be followed" (RFC 8461 3.3).
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+// defaultSTSClient fetches policies. Like the mail itself, the request
+// goes to a name the recipient's domain chose, so it connects to public
+// addresses only (publicAddress): the check is on the address the
+// connection is made to, after the name was looked up, and no proxy is
+// used. privateSTSClient is the same without the check, for a Worker
+// with AllowPrivate.
+var defaultSTSClient, privateSTSClient = stsClient(true), stsClient(false)
+
+func stsClient(publicOnly bool) *http.Client {
+	d := &net.Dialer{Timeout: 30 * time.Second}
+	if publicOnly {
+		d.Control = func(network, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if ip := net.ParseIP(host); err != nil || !publicAddress(ip) {
+				return fmt.Errorf("mta-sts: %s is not a public address", address)
+			}
+			return nil
+		}
+	}
+	return &http.Client{
+		Timeout: time.Minute,
+		// "HTTP 3xx redirects MUST NOT be followed" (RFC 8461 3.3).
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport: &http.Transport{
+			DialContext:           d.DialContext,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			MaxIdleConns:          8,
+			IdleConnTimeout:       30 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
+	}
 }
 
 // policy returns the MTA-STS policy to apply to a domain, or nil for none.

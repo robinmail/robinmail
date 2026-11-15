@@ -31,6 +31,9 @@
     "max_connections_per_ip": 1000,
     "max_connections_per_user": 1000
   },
+  "outbound": {
+    "allow_private_addresses": true
+  },
   "dev": {
     "retry_seconds": 5,
     "smtp_trace": true,

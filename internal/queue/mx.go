@@ -158,6 +158,26 @@ func (w *Worker) addresses(ctx context.Context, host string) ([]net.IPAddr, *fai
 	return addrs, nil
 }
 
+// cgnat is the shared address space of RFC 6598: private in all but name.
+var cgnat = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// publicAddress reports whether an address that came out of DNS may be
+// connected to: not loopback, not private (RFC 1918, RFC 4193, RFC 6598),
+// not link-local (which is where cloud metadata services live), not
+// unspecified, multicast or broadcast. An IPv4 address inside an IPv6 one
+// (::ffff:a.b.c.d) is judged as the IPv4 address.
+func publicAddress(ip net.IP) bool {
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	switch {
+	case ip == nil, ip.IsLoopback(), ip.IsPrivate(), ip.IsUnspecified(), ip.IsLinkLocalUnicast(),
+		ip.IsMulticast(), ip.Equal(net.IPv4bcast), cgnat.Contains(ip):
+		return false
+	}
+	return true
+}
+
 func dnsText(err error) string {
 	var de *net.DNSError
 	if errors.As(err, &de) {

@@ -85,6 +85,13 @@ type Worker struct {
 	// its MX hosts. "*" is every domain without a route of its own. For
 	// development, and for a relay host.
 	Routes map[string]string
+	// AllowPrivate lets mail go to MX hosts whose address is not a public
+	// one: loopback, private, link-local and the like. Off, such an
+	// address is never connected to, for mail or for an MTA-STS policy:
+	// where a domain's mail goes is the domain's to say, and it must not
+	// be able to say "to a machine on your own network". For a lab on a
+	// private network. Routes are the operator's word and go anywhere.
+	AllowPrivate bool
 	// Port is the port mail servers listen on ["25"].
 	Port string
 	// Concurrency is how many messages are worked on at once [8];
@@ -699,6 +706,10 @@ func (w *Worker) deliverDomain(ctx context.Context, domain, from string, rcpts [
 
 	last := temporary("4.4.1", "no mail server for "+domain+" could be reached")
 	dials := 0
+	// notPublic names a host that was left out because none of its
+	// addresses is a public one; usable is whether any other host got as
+	// far as being tried.
+	notPublic, usable := "", false
 	for _, hp := range hosts {
 		if policy != nil && !stsMatch(policy.MX, hp.host) {
 			w.tlsResult(ctx, domain, policy, tlsrpt.ValidationFailure, hp.host, "")
@@ -715,8 +726,25 @@ func (w *Worker) deliverDomain(ctx context.Context, domain, from string, rcpts [
 		addrs, fail := w.addresses(ctx, hp.host)
 		if fail != nil {
 			last = temporary("4.4.4", fail.msg)
+			usable = true
 			continue
 		}
+		if !routed && !w.AllowPrivate {
+			public := addrs[:0:0]
+			for _, a := range addrs {
+				if publicAddress(a.IP) {
+					public = append(public, a)
+				}
+			}
+			if len(public) < len(addrs) {
+				log.Warn("queue: an address of the mail server is not a public one, not connecting to it", "host", hp.host, "left", len(public))
+			}
+			if addrs = public; len(addrs) == 0 {
+				notPublic = hp.host
+				continue
+			}
+		}
+		usable = true
 		for _, a := range addrs {
 			if dials++; dials > maxDials || ctx.Err() != nil {
 				return sameOutcome(len(rcpts), fromFailure(last))
@@ -735,6 +763,11 @@ func (w *Worker) deliverDomain(ctx context.Context, domain, from string, rcpts [
 			}
 			return sameOutcome(len(rcpts), fromFailure(temporary("4.4.2", "the connection to "+hp.host+" was lost")))
 		}
+	}
+	if notPublic != "" && !usable {
+		// Nothing to wait for: the domain's own records send its mail to
+		// where it cannot go.
+		last = permanent("5.4.4", "the mail server "+notPublic+" of "+domain+" has no public address")
 	}
 	return sameOutcome(len(rcpts), fromFailure(last))
 }

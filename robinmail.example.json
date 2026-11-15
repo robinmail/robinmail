@@ -54,7 +54,8 @@
   "outbound": {
     "concurrency": 8,
     "per_destination": 2,
-    "routes": {}
+    "routes": {},
+    "allow_private_addresses": false
   },
   "auth": {
     "require_app_passwords": false,
