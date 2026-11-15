@@ -128,6 +128,20 @@ specs skip there.
 The lab and the cluster have no route to the internet: their name server knows no name
 outside them.
 
+## Inspiration
+
+robinmail is inspired by [mox](https://github.com/mjl-/mox), a mail server in Go by Mechiel
+Lukkien. mox showed that a complete, modern mail server can be one Go binary on the standard
+library, and it is what robinmail compares itself with.
+
+mox exists thanks to public funding for open internet software: NLnet foundation, the
+European Commission's Next Generation Internet (NGI) programme, and the Netherlands
+Ministry of the Interior and Kingdom Relations. The funds behind it:
+
+- [NLnet NGI0 Entrust](https://nlnet.nl/entrust/) (2023/2024): [Mox](https://nlnet.nl/project/Mox/)
+- [NLnet e-Commons Fund](https://nlnet.nl/commonsfund/) (2024): [Mox API](https://nlnet.nl/project/Mox-API/)
+- [NLnet NGI0 Core](https://nlnet.nl/core/) (2024/2025): [Mox Automation](https://nlnet.nl/project/Mox-Automation/)
+
 ## Where to read on
 
 - [The documentation site](https://robinmail.github.io/docs/): getting started,
