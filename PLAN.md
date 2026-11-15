@@ -35,7 +35,7 @@ This is a learning project. There is no production target yet.
 | Accounts and login | Built in. App passwords for IMAP, SMTP and JMAP with Basic auth, TOTP for web login, optional OIDC login for the webmail (phase 7). No Keycloak or other identity service required | Mail clients log in with a password and do not speak OIDC, so robinmail needs its own accounts anyway. OIDC stays generic, so Keycloak, Authentik or Zitadel can be plugged in. |
 | Auth code | JWT, JWK, PKCE, OIDC, TOTP and the QR code are our own, on the standard library (`internal/jose`, `internal/oidc`, `internal/totp`, `internal/qr`) | The dependency rule above. Each is small when it only does what robinmail needs: verify two signature algorithms, one flow, one kind of code. |
 
-Not in scope: POP3, CalDAV/CardDAV, migration tooling.
+Not in scope: POP3, migration tooling. Calendars and contacts came in phase 9.
 
 Accepted trade-off: every write goes through the one rqlite leader, also from
 another zone. Fine at this scale. If it ever is not, accounts can be spread
@@ -2826,6 +2826,49 @@ CDK for dialog, menu, overlay and listbox.
 
 Not handled: virtual scrolling of the list, a linter, and which webmail
 the Docker image carries (it carries the Vue one).
+
+### Phase 9: calendar and contacts — in progress
+
+So that robinmail can stand in for Exchange: calendars and address books,
+for the webmail over JMAP and for phones and desktop programs over
+CalDAV and CardDAV, with invitations by email. Decided by the user on
+2026-11-15:
+
+- **Protocols: both.** JMAP Contacts (RFC 9610, JSContact RFC 9553 with
+  the vCard conversion of RFC 9555) and JMAP Calendars
+  (draft-ietf-jmap-calendars-33 of 14 October 2026, the newest; it
+  builds on JSCalendar 2.0, draft-ietf-calext-jscalendarbis-22, and
+  converts with draft-ietf-calext-jscalendar-icalendar-28). CalDAV
+  (RFC 4791, scheduling RFC 6638) and CardDAV (RFC 6352) on WebDAV
+  (RFC 4918; of RFC 3744 the properties clients read; RFC 6578
+  sync-collection; RFC 6764 well-known URIs and SRV records). Every
+  object is stored once, as iCalendar or vCard text in rqlite; JMAP
+  converts on the way in and out. One atomic batch per write, modseq and
+  change log as for mail: JMAP `/changes`, DAV sync tokens and push all
+  come from them.
+- **Invitations by email in this phase:** iTIP (RFC 5546) over iMIP
+  (RFC 6047). Invitations and replies go out through submission and the
+  queue; REQUEST, REPLY and CANCEL that arrive are applied at delivery;
+  the CalDAV scheduling inbox and outbox; attendee status; free/busy for
+  local accounts.
+- **Webmail: Angular only** (`web-ng/`): calendar (day, week, month,
+  event editor, recurrence, invitations with accept and decline) and
+  contacts. The Angular webmail becomes the main one: `make` and the
+  Docker image build it; Vue stays buildable under its own target and
+  tag.
+- **Sharing:** calendars and address books with other accounts, read or
+  read and write, over JMAP (Principals and sharing, RFC 9670) and DAV.
+  Delegating mailboxes is not part of it.
+
+Also: recurrence (RRULE, EXDATE, overrides, time zones from the IANA
+data Go carries), alarms stored but not delivered by robinmail, import
+and export of `.ics` and `.vcf`, DNS records (`robinmail dns` prints
+`_caldavs._tcp` and `_carddavs._tcp`), quotas that count these objects.
+
+Exit: an iPhone or macOS Calendar, Thunderbird and DAVx5-style clients
+sync calendars and contacts; an invitation goes from one account to
+another and to a Postfix and an Exim receiver in the lab and the reply
+comes back; the webmail shows and edits it all.
 
 ## Open questions
 
