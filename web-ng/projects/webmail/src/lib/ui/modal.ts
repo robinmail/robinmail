@@ -45,7 +45,14 @@ export class Modal implements OnDestroy {
     effect(() => {
       const open = this.open()
       if (open && !this.ref) {
-        const ref = this.dialog.open(this.tpl(), { ariaLabel: untracked(() => this.title()), autoFocus: 'first-tabbable', restoreFocus: true, disableClose: untracked(() => !this.dismissible()) })
+        const ref = this.dialog.open(this.tpl(), {
+          ariaLabel: untracked(() => this.title()),
+          // The field marked autofocus, else the first field or the button that
+          // submits, else the dialog itself: not the cross in the corner.
+          autoFocus: '[autofocus], form input:not([type="hidden"]), form select, form textarea, [modal-footer] button',
+          restoreFocus: true,
+          disableClose: untracked(() => !this.dismissible()),
+        })
         this.ref = ref
         ref.closed.subscribe(() => {
           if (this.ref === ref) this.ref = null

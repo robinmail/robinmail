@@ -18,6 +18,10 @@ import { Icon } from '../ui/icon'
 import { Toaster } from '../ui/toast'
 
 const POLL_MS = 30_000
+// The line between two panes: drag it, or focus it and use the arrow keys.
+const HANDLE = 'relative z-10 -mx-1 w-2 shrink-0 cursor-col-resize touch-none outline-none max-lg:hidden after:absolute after:inset-y-0 after:left-1/2 after:w-0.5 after:-translate-x-1/2 hover:after:bg-primary/50 focus-visible:after:bg-primary'
+const PANES_KEY = 'robinmail-ng-panes'
+type Pane = 'nav' | 'list'
 const ICON_BTN = 'inline-flex items-center rounded-md p-1.5 text-default hover:bg-elevated focus-visible:outline-2 focus-visible:outline-primary'
 const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl Enter'
 
@@ -36,13 +40,13 @@ const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl
     } @else {
       @let mailbox = view.mailbox();
       @let threadId = view.threadId();
-      <div class="flex h-full overflow-hidden">
+      <div class="flex h-full overflow-hidden" [style.--nav-w.px]="widths().nav" [style.--list-w.px]="widths().list">
         <!-- The mailboxes: a column on a wide screen, a drawer on a narrow one. -->
         @if (drawer()) {
           <div class="fixed inset-0 z-30 bg-black/40 lg:hidden" (click)="drawer.set(false)"></div>
         }
         <aside
-          id="mailboxes" class="fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw] flex-col border-r border-default bg-muted lg:static lg:z-auto lg:flex lg:w-64 lg:shrink-0"
+          id="mailboxes" class="fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw] flex-col border-r border-default bg-muted lg:static lg:z-auto lg:flex lg:w-(--nav-w) lg:shrink-0"
           [class]="drawer() ? 'flex' : 'hidden'" (click)="drawerClick($event)"
         >
           <div class="flex h-(--ui-header-height) shrink-0 items-center px-4">
@@ -93,8 +97,12 @@ const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl
             <button type="button" class="${ICON_BTN}" aria-label="Log out" title="Log out" data-testid="logout" (click)="signOut()"><rm-icon name="log-out" class="size-4" /></button>
           </div>
         </aside>
+        <div
+          class="${HANDLE}" role="separator" aria-orientation="vertical" aria-label="Width of the mailboxes" tabindex="0" [attr.aria-valuenow]="widths().nav"
+          [attr.aria-valuemin]="limits.nav[0]" [attr.aria-valuemax]="limits.nav[1]" (pointerdown)="resize($event, 'nav')" (keydown)="resizeKey($event, 'nav')"
+        ></div>
 
-        <section id="list" class="min-w-0 flex-col border-r border-default max-lg:w-full lg:w-[26rem] lg:shrink-0" [class]="threadId ? 'hidden lg:flex' : 'flex'">
+        <section id="list" class="min-w-0 flex-col border-r border-default max-lg:w-full lg:w-(--list-w) lg:shrink-0" [class]="threadId ? 'hidden lg:flex' : 'flex'">
           <div class="flex h-(--ui-header-height) shrink-0 items-center gap-1.5 border-b border-default px-3 sm:px-4">
             <button rmBtn type="button" variant="ghost" color="neutral" class="lg:hidden" aria-label="Mailboxes menu" [attr.aria-expanded]="drawer()" aria-controls="mailboxes" (click)="drawer.set(true)">
               <rm-icon name="menu" class="size-4" />
@@ -118,6 +126,10 @@ const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl
           </div>
           <rm-message-list />
         </section>
+        <div
+          class="${HANDLE}" role="separator" aria-orientation="vertical" aria-label="Width of the message list" tabindex="0" [attr.aria-valuenow]="widths().list"
+          [attr.aria-valuemin]="limits.list[0]" [attr.aria-valuemax]="limits.list[1]" (pointerdown)="resize($event, 'list')" (keydown)="resizeKey($event, 'list')"
+        ></div>
 
         <section id="thread" class="min-w-0 flex-1 flex-col" [class]="threadId ? 'flex' : 'hidden lg:flex'">
           @if (threadId && store.state.ready) {
@@ -145,6 +157,10 @@ export class MailPage implements OnInit, OnDestroy {
   protected readonly drawer = signal(false)
   protected readonly shortcutsOpen = signal(false)
   protected readonly above = [{ originX: 'end', originY: 'top', overlayX: 'end', overlayY: 'bottom' } as const]
+  // How wide the mailboxes and the list are on a wide screen: the user's
+  // choice, kept in this browser.
+  protected readonly limits: Record<Pane, [number, number]> = { nav: [192, 400], list: [320, 720] }
+  protected readonly widths = signal<Record<Pane, number>>(this.storedWidths())
   private readonly thread = viewChild(ThreadView)
   private readonly messageList = viewChild(MessageList)
 
@@ -287,6 +303,59 @@ export class MailPage implements OnInit, OnDestroy {
     } finally {
       this.pumping = false
     }
+  }
+
+  private storedWidths(): Record<Pane, number> {
+    const widths = { nav: 256, list: 416 }
+    try {
+      const stored = JSON.parse(localStorage.getItem(PANES_KEY) ?? '{}') as Partial<Record<Pane, unknown>>
+      for (const pane of ['nav', 'list'] as const) {
+        const v = stored[pane]
+        if (typeof v === 'number' && Number.isFinite(v)) widths[pane] = this.clamp(pane, v)
+      }
+    } catch {
+      // No storage, or not ours: the widths we start with.
+    }
+    return widths
+  }
+  private clamp(pane: Pane, width: number): number {
+    const [min, max] = this.limits[pane]
+    return Math.round(Math.min(max, Math.max(min, width)))
+  }
+  private setWidth(pane: Pane, width: number, keep: boolean): void {
+    this.widths.update((w) => ({ ...w, [pane]: this.clamp(pane, width) }))
+    if (!keep) return
+    try {
+      localStorage.setItem(PANES_KEY, JSON.stringify(this.widths()))
+    } catch {
+      // It holds until the page is closed.
+    }
+  }
+
+  protected resize(e: PointerEvent, pane: Pane): void {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const handle = e.currentTarget as HTMLElement
+    const from = e.clientX
+    const was = this.widths()[pane]
+    handle.setPointerCapture(e.pointerId)
+    const move = (m: PointerEvent) => this.setWidth(pane, was + m.clientX - from, false)
+    const done = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', done)
+      handle.removeEventListener('pointercancel', done)
+      this.setWidth(pane, this.widths()[pane], true)
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', done)
+    handle.addEventListener('pointercancel', done)
+  }
+
+  protected resizeKey(e: KeyboardEvent, pane: Pane): void {
+    const by = e.key === 'ArrowLeft' ? -16 : e.key === 'ArrowRight' ? 16 : 0
+    if (!by) return
+    e.preventDefault()
+    this.setWidth(pane, this.widths()[pane] + by, true)
   }
 
   // A click on a link in the drawer closes it.
