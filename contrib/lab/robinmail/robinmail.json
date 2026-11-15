@@ -14,6 +14,9 @@
     "max_bytes_in_transit": 536870912,
     "max_bytes_in_transit_per_ip": 536870912
   },
+  "calendar": {
+    "imip_unverified": true
+  },
   "web": {
     "listen": ":443",
     "max_connections": 10000,

@@ -180,14 +180,14 @@ func TestRFC5546_4_2_GroupEvent(t *testing.T) {
 		"ORGANIZER:mailto:" + a.Address + "\r\nUID:" + uid + "\r\nSEQUENCE:0\r\nREQUEST-STATUS:2.0;Success\r\nDTSTAMP:19970612T190000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	rc, _ := ical.ParseOne([]byte(reply), "VCALENDAR")
 	mail := BuildIMIP("d@elsewhere.example", a.Address, rc, f.svc.now())
-	f.svc.IncomingMail(ctx, a, mail)
+	f.svc.IncomingMail(ctx, a, mail, true)
 	if ps := partstatOf(f.event(t, a, uid), "d@elsewhere.example"); ps != "DECLINED" {
 		t.Errorf("D: %q", ps)
 	}
 	// A reply in someone else's name is not taken.
 	forged := strings.Replace(reply, "PARTSTAT=DECLINED:mailto:d@", "PARTSTAT=ACCEPTED:mailto:d@", 1)
 	fc, _ := ical.ParseOne([]byte(forged), "VCALENDAR")
-	f.svc.IncomingMail(ctx, a, BuildIMIP("mallory@elsewhere.example", a.Address, fc, f.svc.now()))
+	f.svc.IncomingMail(ctx, a, BuildIMIP("mallory@elsewhere.example", a.Address, fc, f.svc.now()), false)
 	if ps := partstatOf(f.event(t, a, uid), "d@elsewhere.example"); ps != "DECLINED" {
 		t.Errorf("a forged reply changed D to %q", ps)
 	}

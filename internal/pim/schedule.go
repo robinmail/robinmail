@@ -382,6 +382,17 @@ var ErrNotForUs = errors.New("pim: the scheduling message is not for this accoun
 // organizer, a REPLY from the attendee it answers for. The message is also
 // put in the account's scheduling inbox, where CalDAV clients look.
 func (s *Service) Apply(ctx context.Context, acct store.Account, msg *ical.Component, sender string) error {
+	return s.apply(ctx, acct, msg, sender, true)
+}
+
+// ErrUnverified is an iTIP message whose sender could not be checked and
+// that would change what the account has: it is kept in the scheduling
+// inbox, not applied.
+var ErrUnverified = errors.New("pim: the sender of the scheduling message is not verified; kept in the scheduling inbox")
+
+// apply is Apply; authenticated is false when sender is only what a From
+// field said (IncomingMail).
+func (s *Service) apply(ctx context.Context, acct store.Account, msg *ical.Component, sender string, authenticated bool) error {
 	method := strings.ToUpper(msg.Value("METHOD"))
 	comps := jscal.Components(msg)
 	if len(comps) == 0 {
@@ -432,6 +443,13 @@ func (s *Service) Apply(ctx context.Context, acct store.Account, msg *ical.Compo
 	if len(existing) > 0 {
 		cur = &existing[0]
 		curCal, _ = ical.ParseOne([]byte(cur.Data), "VCALENDAR")
+	}
+	// Only a new invitation is taken on a sender's word.
+	if !authenticated && (cur != nil || method == "REPLY") {
+		if err := s.toInbox(ctx, acct, msg); err != nil {
+			return err
+		}
+		return ErrUnverified
 	}
 	var next *ical.Component
 	switch method {

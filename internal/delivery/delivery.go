@@ -61,8 +61,10 @@ type Deliverer struct {
 	AutoReply func(ctx context.Context, account store.Account, rcpt string, raw []byte) error
 	// Calendar, when set, is given every message stored for an account that
 	// was not taken for spam: an invitation or a reply in it (iMIP) is
-	// applied to the account's calendar.
-	Calendar func(ctx context.Context, account store.Account, raw []byte)
+	// applied to the account's calendar. authenticated is true when the
+	// From field is known to be right: Rspamd found DMARC passed for its
+	// domain, or the message came from an account of this server.
+	Calendar func(ctx context.Context, account store.Account, raw []byte, authenticated bool)
 	SendAs   func(ctx context.Context, accountAddress string) ([]string, error)
 	scripts  scriptCache
 	Resolver Resolver         // nil uses net.DefaultResolver
@@ -211,6 +213,7 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 	}
 	var added []field
 	role := store.RoleInbox
+	dmarc := false
 	rdns := d.reverseDNS(ctx, env.RemoteIP)
 
 	if d.Rspamd != nil {
@@ -225,6 +228,7 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 			log.Warn("rspamd failed, delivering unscanned", "err", err)
 		default:
 			log = log.With("action", res.Action, "score", res.Score)
+			dmarc = res.Has("DMARC_POLICY_ALLOW")
 			if e := verdict(res); e != nil {
 				log.Info("rejected", "code", e.Code, "symbols", strings.Join(res.Symbols, ","))
 				metrics.Rejected.Inc("scan")
@@ -269,7 +273,7 @@ func (d *Deliverer) Deliver(ctx context.Context, env *smtp.Envelope, msg []byte)
 	top := []field{{name: "Return-Path", raw: []byte("Return-Path: <" + oneLine(env.From) + ">\r\n")}, trace}
 	out := joinHeader(append(append(top, added...), fields...), rest)
 
-	return d.finish(ctx, &incoming{key: key, from: env.From, to: to, role: role, final: out,
+	return d.finish(ctx, &incoming{key: key, from: env.From, to: to, role: role, final: out, authenticated: dmarc,
 		relay: append(append([]field{trace}, added...), fields...), rest: rest, log: log})
 }
 

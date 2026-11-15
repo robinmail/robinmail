@@ -39,6 +39,7 @@ type Config struct {
 	IMAP       IMAP            `json:"imap"`
 	Auth       Auth            `json:"auth"`
 	Quota      Quota           `json:"quota"`
+	Calendar   Calendar        `json:"calendar"`
 	MTASTS     MTASTS          `json:"mta_sts"`
 	Metrics    Metrics         `json:"metrics"`
 	Scrub      Scrub           `json:"scrub"`
@@ -202,6 +203,16 @@ type Node struct {
 	// database refers to with its disk and fetches missing blobs. It also
 	// does so at start. [300]
 	RepairIntervalSeconds int `json:"repair_interval_seconds"`
+}
+
+// Calendar configures calendars and contacts.
+type Calendar struct {
+	// IMIPUnverified applies invitation changes, cancellations and replies
+	// that arrive by email from outside also when their From field could
+	// not be verified: Rspamd is off, or the sender's domain did not pass
+	// DMARC. Anybody can then change or cancel the events of the accounts
+	// here by writing the organizer's address. For tests; [false].
+	IMIPUnverified bool `json:"imip_unverified"`
 }
 
 // SMTP configures the inbound listener. Zero values get the server defaults.

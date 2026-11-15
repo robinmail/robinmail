@@ -66,6 +66,9 @@ type Service struct {
 	Store *store.Store
 	// ProdID is the PRODID of what robinmail writes.
 	ProdID string
+	// IMIPUnverified takes iTIP messages by email whose sender could not be
+	// verified as if it had been (see IncomingMail). For tests.
+	IMIPUnverified bool
 	// Send queues a message of an account for others: an invitation or a
 	// reply by email. nil sends none; scheduling then only reaches the
 	// accounts of this server.

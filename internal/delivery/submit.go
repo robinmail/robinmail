@@ -522,7 +522,9 @@ func (d *Deliverer) Local(ctx context.Context, from, to string, msg []byte) erro
 	// The recipient may be an alias that leads elsewhere, or a rewritten
 	// sender address that a bounce of our own queue is going back to; an
 	// account's filter runs as for mail from outside.
-	return d.finish(ctx, &incoming{key: key, from: from, to: routed, role: store.RoleInbox, final: out,
+	// What comes this way was submitted by an account of this server, whose
+	// From field submission checked, or is a report of our own queue.
+	return d.finish(ctx, &incoming{key: key, from: from, to: routed, role: store.RoleInbox, final: out, authenticated: true,
 		relay: fields, rest: rest, log: d.log().With("from", clean(from), "local", true)})
 }
 

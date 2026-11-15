@@ -116,6 +116,7 @@ func (a *app) serve(stop func()) error {
 	// of the account, scanned and signed; those that come in are applied
 	// at delivery.
 	calendars := &pim.Service{Store: a.store, ProdID: "-//robinmail//" + a.cfg.Hostname + "//EN", SendAs: a.store.SendAddresses, Logger: log,
+		IMIPUnverified: a.cfg.Calendar.IMIPUnverified,
 		Send: func(ctx context.Context, acct store.Account, from string, rcpts []string, raw []byte) error {
 			_, err := sender.Submit(ctx, delivery.Outgoing{Account: acct, From: from, Rcpts: rcpts, Raw: raw, Protocol: delivery.ProtocolCalendar})
 			return err

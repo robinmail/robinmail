@@ -87,6 +87,9 @@ type incoming struct {
 	relay []field
 	rest  []byte
 	log   *slog.Logger
+	// authenticated: the From field is known to be right (DMARC passed,
+	// or the message came from an account of this server).
+	authenticated bool
 }
 
 // script returns the parsed active script of an account, or nil.
@@ -360,7 +363,7 @@ func (d *Deliverer) finish(ctx context.Context, in *incoming) error {
 		}
 		metrics.Delivered.Inc()
 		if d.Calendar != nil && !spam {
-			d.Calendar(ctx, a, in.final)
+			d.Calendar(ctx, a, in.final, in.authenticated)
 		}
 		in.log.Info("delivered", "to", a.Address, "email", store.EmailID(e.ID), "role", in.role, "mailboxes", len(m.MailboxIDs),
 			"keywords", strings.Join(p.keywords, " "), "size", len(in.final))

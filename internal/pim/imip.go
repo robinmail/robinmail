@@ -223,13 +223,22 @@ func (n *noSpace) Read(p []byte) (int, error) {
 // IncomingMail is called for every message delivered to an account that
 // was not taken for spam. An iTIP message in it from the right sender is
 // applied to the account's calendar (RFC 6047 2, RFC 5546 3.2).
-func (s *Service) IncomingMail(ctx context.Context, acct store.Account, raw []byte) {
+//
+// The From field of mail from outside is whatever the sender wrote, so
+// that it names the organizer or the attendee proves nothing by itself
+// (RFC 6047 3). authenticated says the delivery checked it: DMARC passed
+// for its domain, or the message came from an account of this server. A
+// message that is not is applied only when it is a new invitation; what
+// would change an event the account has, and every reply, is kept in the
+// scheduling inbox for the user to look at, and the email stays as it is.
+func (s *Service) IncomingMail(ctx context.Context, acct store.Account, raw []byte, authenticated bool) {
 	msg, from, ok := FindITIP(raw)
 	if !ok || from == "" {
 		return
 	}
-	if err := s.Apply(ctx, acct, msg, from); err != nil {
-		s.log().Info("imip: not applied", "to", acct.Address, "from", from, "method", msg.Value("METHOD"), "err", err)
+	if err := s.apply(ctx, acct, msg, from, authenticated || s.IMIPUnverified); err != nil {
+		s.log().Info("imip: not applied", "to", acct.Address, "from", from, "method", msg.Value("METHOD"),
+			"authenticated", authenticated, "err", err)
 		return
 	}
 	s.log().Info("imip: applied", "to", acct.Address, "from", from, "method", msg.Value("METHOD"))
