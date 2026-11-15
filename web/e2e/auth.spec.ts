@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import jsQR from 'jsqr'
-import { USER } from './dev'
+import { USER, angular } from './dev'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
 // A password for the users of these tests, which exist only in the
@@ -194,6 +194,8 @@ test('app passwords: made once, listed with their use, revoked', async ({ page, 
   await dialog.getByLabel('Name').fill('Reader')
   await dialog.getByLabel('Sending mail (SMTP)').uncheck()
   await dialog.getByLabel('JMAP programs').uncheck()
+  // The Angular webmail (phase 9) also has calendars and contacts.
+  if (angular) await dialog.getByLabel('Calendars and contacts (CalDAV, CardDAV)').uncheck()
   await dialog.getByLabel('Your account password').fill(PASSWORD)
   await dialog.getByTestId('dialog-submit').click()
   const imapOnly = (await dialog.getByTestId('app-secret').innerText()).trim()
