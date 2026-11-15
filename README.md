@@ -23,8 +23,8 @@ robinmail is a learning project. Read this before you run it anywhere that matte
   Outlook, or any other server on the internet. How they treat it is unknown.
 - **No stable formats.** The config, the database schema and the commands change without
   notice. There are migrations between schema versions, and no promise.
-- **No licence.** The repository has no LICENSE file, so the default applies: you may
-  read the code, and nothing grants you the right to use, change or distribute it.
+- **Licence: AGPL-3.0-or-later** ([LICENSE](LICENSE)). You may use, change and share it.
+  Whoever runs a changed robinmail for other people must offer them its source.
 
 What works is listed, phase by phase, in [PLAN.md](PLAN.md), with what was left out and
 why. That file is the design document and the record of what was built and tested.
