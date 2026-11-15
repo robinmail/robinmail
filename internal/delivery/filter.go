@@ -359,6 +359,9 @@ func (d *Deliverer) finish(ctx context.Context, in *incoming) error {
 			return errTempFail
 		}
 		metrics.Delivered.Inc()
+		if d.Calendar != nil && !spam {
+			d.Calendar(ctx, a, in.final)
+		}
 		in.log.Info("delivered", "to", a.Address, "email", store.EmailID(e.ID), "role", in.role, "mailboxes", len(m.MailboxIDs),
 			"keywords", strings.Join(p.keywords, " "), "size", len(in.final))
 	}

@@ -213,7 +213,7 @@ func (s *Server) createAppPassword(w http.ResponseWriter, r *http.Request, u use
 		return
 	}
 	var scopes []string
-	for _, known := range []string{store.ScopeIMAP, store.ScopeSMTP, store.ScopeJMAP} {
+	for _, known := range []string{store.ScopeIMAP, store.ScopeSMTP, store.ScopeJMAP, store.ScopeDAV} {
 		for _, sc := range req.Scopes {
 			if sc == known {
 				scopes = append(scopes, known)
@@ -222,10 +222,10 @@ func (s *Server) createAppPassword(w http.ResponseWriter, r *http.Request, u use
 		}
 	}
 	if len(scopes) != len(req.Scopes) {
-		jsonError(w, http.StatusBadRequest, `scopes are "imap", "smtp" and "jmap", each once; none is all`)
+		jsonError(w, http.StatusBadRequest, `scopes are "imap", "smtp", "jmap" and "dav", each once; none is all`)
 		return
 	}
-	if len(scopes) == 3 {
+	if len(scopes) == 4 {
 		scopes = nil
 	}
 	if !s.confirm(w, r, u, req.Password) {

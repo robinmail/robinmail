@@ -148,7 +148,7 @@ func (a *app) dns(arg, keyFile string) error {
 	fmt.Fprintf(w, "_smtp._tls.%s.\tTXT\t%s\n", name, txtValue("v=TLSRPTv1; rua=mailto:postmaster@"+name))
 
 	// Mail clients: where they find the servers by the domain alone.
-	fmt.Fprintf(w, "\n; Mail clients: Thunderbird's autoconfig, and the SRV records of RFC 6186 and RFC 8314\n")
+	fmt.Fprintf(w, "\n; Mail clients: Thunderbird's autoconfig, and the SRV records of RFC 6186, RFC 8314 and, for calendars and contacts, RFC 6764\n")
 	fmt.Fprintf(w, "autoconfig.%s.\tCNAME\t%s.\n", name, host)
 	srv := func(service string, listen string) {
 		// A target of "." says the service is not offered (RFC 2782, RFC 6186 3.4).
@@ -166,6 +166,16 @@ func (a *app) dns(arg, keyFile string) error {
 	srv("_pop3", "")
 	srv("_jmap", a.cfg.Web.Listen)
 	srv("_autodiscover", a.cfg.Web.Listen)
+	// Calendar and contact programs (RFC 6764 3 and 4): over TLS only; the
+	// TXT record names the path, which the well-known URIs also lead to.
+	srv("_caldavs", a.cfg.Web.Listen)
+	srv("_carddavs", a.cfg.Web.Listen)
+	srv("_caldav", "")
+	srv("_carddav", "")
+	if listenPort(a.cfg.Web.Listen) != "" {
+		fmt.Fprintf(w, "_caldavs._tcp.%s.\tTXT\t\"path=/dav/\"\n", name)
+		fmt.Fprintf(w, "_carddavs._tcp.%s.\tTXT\t\"path=/dav/\"\n", name)
+	}
 	if !a.cfg.TLS.ACME {
 		fmt.Fprintf(w, "; The certificate in the config has to be valid for autoconfig.%s too.\n", name)
 	}

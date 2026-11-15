@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/robinmail/robinmail/internal/pim"
 	"github.com/robinmail/robinmail/internal/store"
 )
 
@@ -187,6 +188,8 @@ type Handler struct {
 	// MinPing is the shortest ping interval an event source gets
 	// (DefaultMinPing when 0).
 	MinPing time.Duration
+	// PIM serves calendars, contacts and principals; nil leaves them out.
+	PIM *pim.Service
 	// Closing, when it is closed, ends the open event sources: the server
 	// is stopping.
 	Closing <-chan struct{}
@@ -283,8 +286,8 @@ func baseURL(r *http.Request) string {
 
 // sessionState changes when the session object would (RFC 8620 2). Ours
 // depends on the user and on the limits and capabilities of this build.
-func (h *Handler) sessionState(u User) string {
-	b, _ := json.Marshal([]any{u, h.limits, store.SortProperties, MaxMailboxDepth, sieveCapability(), "5"})
+func (h *Handler) sessionState(ctx context.Context, u User) string {
+	b, _ := json.Marshal([]any{u, h.limits, store.SortProperties, MaxMailboxDepth, sieveCapability(), "6", h.PIM != nil, h.sharedState(ctx, u)})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:8])
 }
@@ -302,52 +305,56 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 		"emailQuerySortOptions":      store.SortProperties,
 		"mayCreateTopLevelMailbox":   true,
 	}
+	caps := map[string]any{
+		CapCore: map[string]any{
+			"maxSizeUpload":         l.MaxSizeUpload,
+			"maxConcurrentUpload":   l.MaxConcurrentUpload,
+			"maxSizeRequest":        l.MaxSizeRequest,
+			"maxConcurrentRequests": l.MaxConcurrentRequests,
+			"maxCallsInRequest":     l.MaxCallsInRequest,
+			"maxObjectsInGet":       l.MaxObjectsInGet,
+			"maxObjectsInSet":       l.MaxObjectsInSet,
+			"collationAlgorithms":   []string{"i;ascii-casemap"},
+		},
+		CapMail:       map[string]any{},
+		CapSubmission: map[string]any{},
+		// RFC 9661 1.3: the name and version of the Sieve implementation.
+		CapSieve: map[string]any{"implementation": "robinmail internal/sieve"},
+		// RFC 8621 1.3.3: an empty object, here and in the account.
+		CapVacation: map[string]any{},
+		// RFC 9425 3: an empty object, here and in the account.
+		CapQuota: map[string]any{},
+	}
+	accounts := map[string]any{
+		u.AccountID: map[string]any{
+			"name":       u.Username,
+			"isPersonal": true,
+			"isReadOnly": false,
+			"accountCapabilities": map[string]any{
+				CapCore: map[string]any{},
+				CapMail: mail,
+				// No FUTURERELEASE: a submission waits a moment that
+				// the server sets, in which it can be cancelled.
+				CapSubmission: map[string]any{"maxDelayedSend": 0, "submissionExtensions": map[string]any{}},
+				CapSieve:      sieveCapability(),
+				CapVacation:   map[string]any{},
+				CapQuota:      map[string]any{},
+			},
+		},
+	}
+	primary := map[string]any{CapCore: u.AccountID, CapMail: u.AccountID, CapSubmission: u.AccountID, CapSieve: u.AccountID,
+		CapVacation: u.AccountID, CapQuota: u.AccountID}
+	h.pimCapabilities(r.Context(), u, caps, accounts, primary)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"capabilities": map[string]any{
-			CapCore: map[string]any{
-				"maxSizeUpload":         l.MaxSizeUpload,
-				"maxConcurrentUpload":   l.MaxConcurrentUpload,
-				"maxSizeRequest":        l.MaxSizeRequest,
-				"maxConcurrentRequests": l.MaxConcurrentRequests,
-				"maxCallsInRequest":     l.MaxCallsInRequest,
-				"maxObjectsInGet":       l.MaxObjectsInGet,
-				"maxObjectsInSet":       l.MaxObjectsInSet,
-				"collationAlgorithms":   []string{"i;ascii-casemap"},
-			},
-			CapMail:       map[string]any{},
-			CapSubmission: map[string]any{},
-			// RFC 9661 1.3: the name and version of the Sieve implementation.
-			CapSieve: map[string]any{"implementation": "robinmail internal/sieve"},
-			// RFC 8621 1.3.3: an empty object, here and in the account.
-			CapVacation: map[string]any{},
-			// RFC 9425 3: an empty object, here and in the account.
-			CapQuota: map[string]any{},
-		},
-		"accounts": map[string]any{
-			u.AccountID: map[string]any{
-				"name":       u.Username,
-				"isPersonal": true,
-				"isReadOnly": false,
-				"accountCapabilities": map[string]any{
-					CapCore: map[string]any{},
-					CapMail: mail,
-					// No FUTURERELEASE: a submission waits a moment that
-					// the server sets, in which it can be cancelled.
-					CapSubmission: map[string]any{"maxDelayedSend": 0, "submissionExtensions": map[string]any{}},
-					CapSieve:      sieveCapability(),
-					CapVacation:   map[string]any{},
-					CapQuota:      map[string]any{},
-				},
-			},
-		},
-		"primaryAccounts": map[string]any{CapCore: u.AccountID, CapMail: u.AccountID, CapSubmission: u.AccountID, CapSieve: u.AccountID,
-			CapVacation: u.AccountID, CapQuota: u.AccountID},
-		"username":       u.Username,
-		"apiUrl":         base + "/jmap/api",
-		"downloadUrl":    base + "/jmap/download/{accountId}/{blobId}/{name}?type={type}",
-		"uploadUrl":      base + "/jmap/upload/{accountId}/",
-		"eventSourceUrl": base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
-		"state":          h.sessionState(u),
+		"capabilities":    caps,
+		"accounts":        accounts,
+		"primaryAccounts": primary,
+		"username":        u.Username,
+		"apiUrl":          base + "/jmap/api",
+		"downloadUrl":     base + "/jmap/download/{accountId}/{blobId}/{name}?type={type}",
+		"uploadUrl":       base + "/jmap/upload/{accountId}/",
+		"eventSourceUrl":  base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
+		"state":           h.sessionState(r.Context(), u),
 	})
 }
 

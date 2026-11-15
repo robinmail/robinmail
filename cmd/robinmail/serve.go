@@ -12,11 +12,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/robinmail/robinmail/internal/dav"
 	"github.com/robinmail/robinmail/internal/delivery"
 	"github.com/robinmail/robinmail/internal/imap"
 	"github.com/robinmail/robinmail/internal/jmap"
 	"github.com/robinmail/robinmail/internal/notify"
 	"github.com/robinmail/robinmail/internal/oidc"
+	"github.com/robinmail/robinmail/internal/pim"
 	"github.com/robinmail/robinmail/internal/queue"
 	"github.com/robinmail/robinmail/internal/rspamd"
 	"github.com/robinmail/robinmail/internal/smtp"
@@ -109,6 +111,15 @@ func (a *app) serve(stop func()) error {
 		_, err := sender.Submit(ctx, delivery.Outgoing{Account: acct, From: "", Rcpts: []string{rcpt}, Raw: raw, Protocol: delivery.ProtocolAuto})
 		return err
 	}
+	// Calendars and contacts: invitations and replies go out like mail
+	// of the account, scanned and signed; those that come in are applied
+	// at delivery.
+	calendars := &pim.Service{Store: a.store, ProdID: "-//robinmail//" + a.cfg.Hostname + "//EN", SendAs: a.store.SendAddresses, Logger: log,
+		Send: func(ctx context.Context, acct store.Account, from string, rcpts []string, raw []byte) error {
+			_, err := sender.Submit(ctx, delivery.Outgoing{Account: acct, From: from, Rcpts: rcpts, Raw: raw, Protocol: delivery.ProtocolCalendar})
+			return err
+		}}
+	d.Calendar = calendars.IncomingMail
 	domains, err := a.store.Domains(a.ctx)
 	if err != nil {
 		return err
@@ -161,10 +172,12 @@ func (a *app) serve(stop func()) error {
 		Health:              a.healthy,
 		Hosts:               extraHosts(a.cfg, domainNames, clients.AutoconfigHost),
 		JMAP: &jmap.Handler{Store: a.store, Hostname: a.cfg.Hostname, Send: jmapSend(sender, a.store),
-			SendAs: a.store.SendAddresses, Push: hub, Closing: a.ctx.Done()},
-		Static:     webStatic,
-		DevOrigins: a.cfg.Web.DevOrigins,
-		Logger:     log,
+			SendAs: a.store.SendAddresses, Push: hub, Closing: a.ctx.Done(), PIM: calendars},
+		DAV:         &dav.Handler{PIM: calendars, Logger: log},
+		WithDAVUser: dav.WithUser,
+		Static:      webStatic,
+		DevOrigins:  a.cfg.Web.DevOrigins,
+		Logger:      log,
 		WithUser: func(ctx context.Context, accountID, username string) context.Context {
 			return jmap.WithUser(ctx, jmap.User{AccountID: accountID, Username: username})
 		},
@@ -579,6 +592,11 @@ func trimOnce(ctx context.Context, st *store.Store, log *slog.Logger, auditReten
 	}
 	if _, err := st.TrimSTSPolicies(ctx, now.Add(-24*time.Hour)); err != nil {
 		log.Error("trimming MTA-STS policies failed", "err", err)
+		return
+	}
+	// Removed calendar objects and cards, as long as the change log.
+	if _, err := st.TrimTombstones(ctx, now.Add(-store.ChangesRetention)); err != nil {
+		log.Error("trimming removed calendar objects failed", "err", err)
 		return
 	}
 	// Longer than the longest period of "once per sender".

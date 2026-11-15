@@ -32,7 +32,8 @@ type Notifier interface {
 
 // pushTypes are the types a StateChange can name: the data types of RFC
 // 8621 that this server has, in the order they are written.
-var pushTypes = []string{"Mailbox", "Thread", "Email", "EmailDelivery", "EmailSubmission", "Identity", "SieveScript", "VacationResponse", "Quota"}
+var pushTypes = []string{"Mailbox", "Thread", "Email", "EmailDelivery", "EmailSubmission", "Identity", "SieveScript", "VacationResponse", "Quota",
+	"Calendar", "CalendarEvent", "AddressBook", "ContactCard"}
 
 const (
 	// DefaultMinPing and maxPing bound the ping interval a client may ask
@@ -76,8 +77,14 @@ func (h *Handler) changedTypes(r *http.Request, account string, since int64, wan
 		changed[name] = some(*set)
 	}
 	// RFC 9425 5: a Quota changes when its use does, which is whenever
-	// an Email comes or goes.
-	changed["Quota"] = changed["Quota"] || len(c.Email.Created)+len(c.Email.Destroyed) > 0
+	// an Email, a calendar object or a card comes or goes.
+	objs := func(t string) int {
+		if s := c.Other[t]; s != nil {
+			return len(s.Created) + len(s.Destroyed)
+		}
+		return 0
+	}
+	changed["Quota"] = changed["Quota"] || len(c.Email.Created)+len(c.Email.Destroyed)+objs("CalendarEvent")+objs("ContactCard") > 0
 	var out []string
 	for _, t := range pushTypes {
 		if (all || changed[t]) && (wanted == nil || wanted[t]) {
@@ -151,9 +158,33 @@ func (h *Handler) serveEventSource(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Subscribe before the first read of the state: a change after that
-	// read then finds the subscription.
+	// read then finds the subscription. The accounts that share calendars
+	// or address books with the user are listened to as well; what they
+	// share is told as a change of that account (JMAP Calendars 1.3).
 	wake, cancel := h.Push.Subscribe(u.AccountID)
 	defer cancel()
+	marks := h.sharedMarks(r, u)
+	merged := make(chan struct{}, 1)
+	for owner := range marks {
+		ow, oc := h.Push.Subscribe(owner)
+		defer oc()
+		go func() {
+			for {
+				select {
+				case <-r.Context().Done():
+					return
+				case _, ok := <-ow:
+					if !ok {
+						return
+					}
+					select {
+					case merged <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}()
+	}
 	last, err := h.Store.State(r.Context(), u.AccountID)
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, "about:blank", "the state cannot be read right now", nil)
@@ -233,6 +264,29 @@ func (h *Handler) serveEventSource(w http.ResponseWriter, r *http.Request) {
 			if !write("ping", "", map[string]int{"interval": int(ping / time.Second)}) {
 				return
 			}
+		case <-merged:
+			now := h.sharedMarks(r, u)
+			changed := map[string]map[string]string{}
+			for owner, m := range now {
+				if old, ok := marks[owner]; ok && old.mark == m.mark {
+					continue
+				}
+				states := map[string]string{}
+				for _, t := range m.types {
+					if wanted == nil || wanted[t] {
+						states[t] = stateString(m.state)
+					}
+				}
+				if len(states) > 0 {
+					changed[owner] = states
+				}
+			}
+			marks = now
+			if len(changed) > 0 {
+				if !write("state", "", StateChange{Type: "StateChange", Changed: changed}) || closeAfter {
+					return
+				}
+			}
 		case <-wake:
 			now, err := h.Store.State(r.Context(), u.AccountID)
 			if err != nil {
@@ -248,4 +302,40 @@ func (h *Handler) serveEventSource(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// sharedMark is how far what an account shares with the user has come.
+type sharedMark struct {
+	mark  int64 // the newest change of a shared collection or its members
+	state int64 // the owner's state
+	types []string
+}
+
+func (h *Handler) sharedMarks(r *http.Request, u User) map[string]sharedMark {
+	out := map[string]sharedMark{}
+	if h.PIM == nil {
+		return out
+	}
+	shares, err := h.PIM.Store.SharedWith(r.Context(), u.AccountID)
+	if err != nil {
+		return out
+	}
+	for _, s := range shares {
+		m := out[s.Owner]
+		col, err := h.PIM.Store.CollectionByID(r.Context(), s.Owner, s.CollectionID)
+		if err != nil {
+			continue
+		}
+		m.mark = max(m.mark, col.Modseq, col.ContentModseq, s.Modseq)
+		if s.Kind == store.KindAddressBook {
+			m.types = append(m.types, "AddressBook", "ContactCard")
+		} else {
+			m.types = append(m.types, "Calendar", "CalendarEvent")
+		}
+		if st, err := h.Store.State(r.Context(), s.Owner); err == nil {
+			m.state = st
+		}
+		out[s.Owner] = m
+	}
+	return out
 }

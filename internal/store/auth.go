@@ -40,6 +40,8 @@ const (
 	ScopeIMAP = "imap"
 	ScopeSMTP = "smtp"
 	ScopeJMAP = "jmap"
+	// ScopeDAV is CalDAV and CardDAV (phase 9).
+	ScopeDAV = "dav"
 )
 
 // AppPassword is a password for one device or program.

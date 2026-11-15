@@ -602,3 +602,23 @@ func alertsJS(c *ical.Component, z ical.Zones) map[string]any {
 	}
 	return out
 }
+
+// OverridePatch is the patch that turns the master event into one
+// instance of it, for recurrenceOverrides; a start equal to the instance's
+// recurrence id is left out.
+func OverridePatch(base, instance Event, recurrenceID string) map[string]any {
+	p := diff(base, instance)
+	if p["start"] == recurrenceID {
+		delete(p, "start")
+	}
+	return p
+}
+
+// MasterTimes returns the start and end of the master component.
+func (o *Object) MasterTimes() (start, end time.Time, ok bool) {
+	if o.Master == nil {
+		return
+	}
+	start, end, _, ok = o.times(o.Master)
+	return
+}

@@ -557,7 +557,7 @@ func TestRFC8620Session(t *testing.T) {
 		}
 	}
 	// The state differs per user.
-	if a, b := h.sessionState(testUser), h.sessionState(User{AccountID: "x", Username: "y@example.test"}); a == b {
+	if a, b := h.sessionState(context.Background(), testUser), h.sessionState(context.Background(), User{AccountID: "x", Username: "y@example.test"}); a == b {
 		t.Error("two users share a session state")
 	}
 }
@@ -592,10 +592,15 @@ func TestHandlerRouting(t *testing.T) {
 			t.Errorf("%s %s: %d, want %d", tc.method, tc.path, rec.Code, tc.want)
 		}
 	}
-	want := []string{"Core/echo", "Email/changes", "Email/copy", "Email/get", "Email/import", "Email/parse", "Email/query",
+	want := []string{"AddressBook/changes", "AddressBook/get", "AddressBook/set", "Calendar/changes", "Calendar/get", "Calendar/set",
+		"CalendarEvent/changes", "CalendarEvent/get", "CalendarEvent/parse", "CalendarEvent/query", "CalendarEvent/queryChanges", "CalendarEvent/set",
+		"ContactCard/changes", "ContactCard/get", "ContactCard/query", "ContactCard/queryChanges", "ContactCard/set",
+		"Core/echo", "Email/changes", "Email/copy", "Email/get", "Email/import", "Email/parse", "Email/query",
 		"Email/queryChanges", "Email/set", "EmailSubmission/changes", "EmailSubmission/get", "EmailSubmission/query",
 		"EmailSubmission/queryChanges", "EmailSubmission/set", "Identity/changes", "Identity/get", "Identity/set",
-		"Mailbox/changes", "Mailbox/get", "Mailbox/query", "Mailbox/queryChanges", "Mailbox/set", "Quota/changes", "Quota/get", "Quota/query", "Quota/queryChanges", "SearchSnippet/get", "SieveScript/get", "SieveScript/query", "SieveScript/set",
+		"Mailbox/changes", "Mailbox/get", "Mailbox/query", "Mailbox/queryChanges", "Mailbox/set",
+		"ParticipantIdentity/changes", "ParticipantIdentity/get", "ParticipantIdentity/set",
+		"Principal/changes", "Principal/get", "Principal/getAvailability", "Principal/query", "Principal/queryChanges", "Quota/changes", "Quota/get", "Quota/query", "Quota/queryChanges", "SearchSnippet/get", "SieveScript/get", "SieveScript/query", "SieveScript/set",
 		"SieveScript/validate", "Thread/changes", "Thread/get", "VacationResponse/get", "VacationResponse/set"}
 	if got := Methods(); !reflect.DeepEqual(got, want) {
 		t.Errorf("methods: %v", got)

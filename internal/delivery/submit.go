@@ -85,6 +85,10 @@ func (r *Refusal) Error() string { return r.Kind + ": " + r.Msg }
 // account: an automatic reply.
 const ProtocolAuto = "auto"
 
+// ProtocolCalendar is the Protocol of an invitation or a reply the server
+// wrote for a change in a calendar (iMIP, RFC 6047).
+const ProtocolCalendar = "calendar"
+
 // Outgoing is a message a user wants sent.
 type Outgoing struct {
 	Account store.Account
@@ -196,6 +200,8 @@ func submitReceived(host, qid string, o Outgoing, t time.Time) []byte {
 	case ProtocolAuto:
 		// Written by the server itself: a vacation reply.
 		b.WriteString(" (automatic reply)")
+	case ProtocolCalendar:
+		b.WriteString(" (calendar)")
 	default:
 		b.WriteString(" with " + o.Protocol)
 	}

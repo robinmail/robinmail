@@ -133,6 +133,32 @@ func init() {
 		"SieveScript/set":      {CapSieve, sieveScriptSet},
 		"SieveScript/query":    {CapSieve, sieveScriptQuery},
 		"SieveScript/validate": {CapSieve, sieveScriptValidate},
+
+		"Calendar/get":                {CapCalendars, calendarGet},
+		"Calendar/changes":            {CapCalendars, calendarChanges},
+		"Calendar/set":                {CapCalendars, calendarSet},
+		"CalendarEvent/get":           {CapCalendars, calendarEventGet},
+		"CalendarEvent/changes":       {CapCalendars, calendarEventChanges},
+		"CalendarEvent/set":           {CapCalendars, calendarEventSet},
+		"CalendarEvent/query":         {CapCalendars, calendarEventQuery},
+		"CalendarEvent/queryChanges":  {CapCalendars, queryChangesUnsupported},
+		"CalendarEvent/parse":         {CapCalendarsParse, calendarEventParse},
+		"ParticipantIdentity/get":     {CapCalendars, participantIdentityGet},
+		"ParticipantIdentity/changes": {CapCalendars, participantIdentityChanges},
+		"ParticipantIdentity/set":     {CapCalendars, participantIdentitySet},
+		"AddressBook/get":             {CapContacts, addressBookGet},
+		"AddressBook/changes":         {CapContacts, addressBookChanges},
+		"AddressBook/set":             {CapContacts, addressBookSet},
+		"ContactCard/get":             {CapContacts, contactCardGet},
+		"ContactCard/changes":         {CapContacts, contactCardChanges},
+		"ContactCard/set":             {CapContacts, contactCardSet},
+		"ContactCard/query":           {CapContacts, contactCardQuery},
+		"ContactCard/queryChanges":    {CapContacts, queryChangesUnsupported},
+		"Principal/get":               {CapPrincipals, principalGet},
+		"Principal/changes":           {CapPrincipals, principalChanges},
+		"Principal/query":             {CapPrincipals, principalQuery},
+		"Principal/queryChanges":      {CapPrincipals, queryChangesUnsupported},
+		"Principal/getAvailability":   {CapPrincipalsAvail, principalGetAvailability},
 	}
 }
 
@@ -327,7 +353,7 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 			c.done = append(c.done, extra)
 		}
 	}
-	resp := map[string]any{"methodResponses": c.done, "sessionState": h.sessionState(u)}
+	resp := map[string]any{"methodResponses": c.done, "sessionState": h.sessionState(r.Context(), u)}
 	if req.CreatedIDs != nil {
 		resp["createdIds"] = c.created
 	}

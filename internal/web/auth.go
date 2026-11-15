@@ -495,7 +495,7 @@ func (s *Server) CredentialValid(ctx context.Context, c Credential, scope string
 // It returns 0 or the status to refuse with. valid, when not nil, says
 // whether the login still stands; a long-lived response asks it when the
 // account's auth_seq moves.
-func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (acct store.Account, status int, valid func(context.Context) bool) {
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, scope string) (acct store.Account, status int, valid func(context.Context) bool) {
 	sess, acct, hash, ok, err := s.cookieSession(r, sessionCookie(r), store.StageFull)
 	if err != nil {
 		s.Logger.Error("looking up the session failed", "err", err)
@@ -514,7 +514,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (acct stor
 	}
 	check := func(c Credential) func(context.Context) bool {
 		return func(ctx context.Context) bool {
-			ok, err := s.CredentialValid(ctx, c, store.ScopeJMAP)
+			ok, err := s.CredentialValid(ctx, c, scope)
 			return ok || err != nil
 		}
 	}
@@ -524,14 +524,14 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (acct stor
 	// one read: a changed password or a first app password ends it at
 	// once, on every node. App passwords need no memory: they are cheap.
 	if c, ok := s.basic.get(username, password); ok {
-		if ok, err := s.CredentialValid(r.Context(), c, store.ScopeJMAP); err != nil {
+		if ok, err := s.CredentialValid(r.Context(), c, scope); err != nil {
 			return store.Account{}, http.StatusServiceUnavailable, nil
 		} else if ok {
 			return c.Account, 0, check(c)
 		}
 		s.basic.drop(username, password)
 	}
-	c, status, wait := s.MailLogin(r.Context(), clientIP(r), store.ScopeJMAP, username, password)
+	c, status, wait := s.MailLogin(r.Context(), clientIP(r), scope, username, password)
 	if status == http.StatusTooManyRequests {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 	}

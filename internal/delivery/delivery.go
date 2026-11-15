@@ -59,10 +59,14 @@ type Deliverer struct {
 	Reports   ReportStore
 	Filters   FilterStore
 	AutoReply func(ctx context.Context, account store.Account, rcpt string, raw []byte) error
-	SendAs    func(ctx context.Context, accountAddress string) ([]string, error)
-	scripts   scriptCache
-	Resolver  Resolver         // nil uses net.DefaultResolver
-	Now       func() time.Time // for tests
+	// Calendar, when set, is given every message stored for an account that
+	// was not taken for spam: an invitation or a reply in it (iMIP) is
+	// applied to the account's calendar.
+	Calendar func(ctx context.Context, account store.Account, raw []byte)
+	SendAs   func(ctx context.Context, accountAddress string) ([]string, error)
+	scripts  scriptCache
+	Resolver Resolver         // nil uses net.DefaultResolver
+	Now      func() time.Time // for tests
 }
 
 func (d *Deliverer) now() time.Time {

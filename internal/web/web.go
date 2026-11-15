@@ -122,6 +122,11 @@ type Server struct {
 	// JMAP serves /jmap/ and /.well-known/jmap. It gets only requests of
 	// an authenticated user, with the user in the context.
 	JMAP http.Handler
+	// DAV serves /dav/ and the well-known URIs of CalDAV and CardDAV
+	// (RFC 6764). It gets only requests of an authenticated user, with the
+	// account in the context by WithDAVUser.
+	DAV         http.Handler
+	WithDAVUser func(ctx context.Context, acct store.Account) context.Context
 	// WithUser puts the authenticated account into a request context, in
 	// the form JMAP wants.
 	WithUser func(ctx context.Context, accountID, username string) context.Context
@@ -295,6 +300,12 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/jmap/", s.jmap)
 	mux.HandleFunc("/.well-known/jmap", s.jmap)
+	if s.DAV != nil {
+		mux.HandleFunc("/dav/", s.dav)
+		mux.HandleFunc("/dav", s.dav)
+		mux.HandleFunc("/.well-known/caldav", s.dav)
+		mux.HandleFunc("/.well-known/carddav", s.dav)
+	}
 	// What mail programs fetch to configure themselves: public, and
 	// without the checks of /auth (they are not browsers).
 	mux.HandleFunc("/mail/config-v1.1.xml", s.autoconfig)
@@ -476,7 +487,7 @@ func (s *Server) jmap(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusForbidden, "cross-site request refused")
 		return
 	}
-	acct, status, valid := s.authenticate(w, r)
+	acct, status, valid := s.authenticate(w, r, store.ScopeJMAP)
 	if status != 0 {
 		// Only a client that is not a browser is told to send Basic: in a
 		// browser that header opens a password dialog.
@@ -511,6 +522,30 @@ func (s *Server) jmap(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	s.JMAP.ServeHTTP(w, r.WithContext(s.WithUser(ctx, acct.ID, acct.Address)))
+}
+
+// dav authenticates a request and passes it to the DAV handler. Calendar
+// and contact programs log in with Basic auth (an app password with the
+// "dav" scope, or the account password while the account has none); the
+// webmail's session cookie works too, for its export links.
+func (s *Server) dav(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.originAllowed(r) {
+		jsonError(w, http.StatusForbidden, "cross-site request refused")
+		return
+	}
+	acct, status, _ := s.authenticate(w, r, store.ScopeDAV)
+	if status != 0 {
+		if status == http.StatusUnauthorized && r.Header.Get("Sec-Fetch-Site") == "" && r.Header.Get("Origin") == "" {
+			w.Header().Set("WWW-Authenticate", `Basic realm="robinmail", charset="UTF-8"`)
+		}
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	if r.URL.Path == "/dav" {
+		r.URL.Path = "/dav/"
+	}
+	s.DAV.ServeHTTP(w, r.WithContext(s.WithDAVUser(r.Context(), acct)))
 }
 
 // serveStatic serves the webmail. A path that is not a file is a route of
