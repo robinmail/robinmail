@@ -6,4 +6,4 @@
 const target = process.env.ROBINMAIL_DEV_URL ?? 'http://127.0.0.1:8080'
 const to = { target, changeOrigin: false, secure: false }
 
-export default { '/jmap': to, '/.well-known/jmap': to, '/auth': to }
+export default { '/jmap': to, '/.well-known/jmap': to, '/auth': to, '/dav': to }

@@ -1,8 +1,10 @@
 # robinmail
 
-A mail server in Go that is built around JMAP. It receives mail over SMTP, stores it,
-sends it, and serves it over JMAP (RFC 8620, RFC 8621) and IMAP. A webmail in Vue ships
-inside the binary; the same webmail in Angular can be built in instead.
+A mail, calendar and contacts server in Go that is built around JMAP. It receives mail
+over SMTP, stores it, sends it, and serves it over JMAP (RFC 8620, RFC 8621) and IMAP;
+calendars and address books over JMAP (JMAP for Calendars and Contacts) and over CalDAV
+and CardDAV, with invitations by email. The webmail, in Angular, ships inside the binary;
+the first webmail, in Vue, can still be built in instead.
 
 Documentation: https://robinmail.github.io/docs/ (source: [robinmail/docs](https://github.com/robinmail/docs)).
 
@@ -14,8 +16,10 @@ robinmail is a learning project. Read this before you run it anywhere that matte
   audited it. An AI session reviewed the server on 2026-11-15; what it found and what is
   still open is on the [security page](https://robinmail.github.io/docs/security/).
 - **Never tested against real providers.** It has exchanged mail with Postfix, Exim and
-  OpenSMTPD, and been read by Thunderbird, mbsync, OfflineIMAP and Dovecot's ImapTest,
-  all in a closed lab on one machine. It has never delivered a message to Gmail,
+  OpenSMTPD, been read by Thunderbird, mbsync, OfflineIMAP and Dovecot's ImapTest, and
+  synced calendars and contacts with Thunderbird, vdirsyncer and the Python caldav
+  library, all in a closed lab on one machine. No iPhone, Mac, Outlook or DAVx5 has
+  been pointed at it. It has never delivered a message to Gmail,
   Outlook, or any other server on the internet. How they treat it is unknown.
 - **No stable formats.** The config, the database schema and the commands change without
   notice. There are migrations between schema versions, and no promise.
@@ -28,7 +32,7 @@ why. That file is the design document and the record of what was built and teste
 ## Architecture
 
 - **One binary**, `cmd/robinmail`: inbound SMTP, submission, the outbound queue, IMAP,
-  JMAP, the web login and the webmail. Standard library plus `golang.org/x`, nothing else.
+  JMAP, CalDAV and CardDAV, the web login and the webmail. Standard library plus `golang.org/x`, nothing else.
 - **Metadata in rqlite** (SQLite replicated with Raft), reached over HTTP. Every write is
   one atomic batch; there are no interactive transactions.
   Whoever reaches rqlite's HTTP port without a login owns every account, so a deployment
@@ -39,8 +43,12 @@ why. That file is the design document and the record of what was built and teste
 - **Any node serves any account.** A cluster is several robinmail nodes on one rqlite
   cluster.
 - **Spam filtering, SPF, DKIM and DMARC are Rspamd's**, asked over HTTP.
-- **The webmail** (`web/`, Vue with Nuxt UI) only speaks JMAP and is embedded in the
-  binary.
+- **Calendars and contacts** are stored once, as iCalendar and vCard text in rqlite;
+  JMAP gets them as JSCalendar and JSContact. Invitations go out as email (iMIP) and are
+  applied when they come in.
+- **The webmail** (`web-ng/`, Angular) only speaks JMAP and is embedded in the binary:
+  mail, calendar and contacts. The Vue webmail in `web/` has mail only and is built with
+  `make build-vue`.
 
 What is encrypted at rest: the message files. What is not: everything in rqlite, which
 includes addresses, subjects, previews and the full-text index. Those need an encrypted
@@ -58,7 +66,7 @@ docker compose -f contrib/compose/compose.yaml up -d
 make dev
 ```
 
-Open http://localhost:5173 and log in as `dev@robinmail.test`. The password is in
+Open http://localhost:4200 and log in as `dev@robinmail.test`. The password is in
 `contrib/dev/seed.sh`. The instance lives in `./dev`, accepts mail on `127.0.0.1:2525`,
 and sends everything for other domains to Mailpit (http://127.0.0.1:8025), so it never
 sends real mail.
@@ -74,16 +82,22 @@ make
 ```
 
 `robinmail` without arguments lists the commands. `robinmail.example.json` shows every
-setting; `robinmail dns <domain>` prints the DNS records a domain needs.
+setting; `robinmail dns <domain>` prints the DNS records a domain needs, the SRV records
+of CalDAV and CardDAV included.
+
+Calendar and contact programs use `https://<hostname>/dav/` (or find it from
+`/.well-known/caldav` and `/.well-known/carddav`) with the address and an app password
+that allows "dav". On an iPhone or a Mac, the profile on the webmail's security page
+sets up mail, calendars and contacts at once.
 
 ## Tests
 
 | Command | What it runs | Needs |
 |---|---|---|
-| `make test` | `go vet`, the Go tests, type check and unit tests of the webmail | see below |
-| `make e2e` | the webmail in a browser (Playwright) against the dev instance | the compose services |
+| `make test` | `go vet`, the Go tests, and the unit tests of the webmail | see below |
+| `make e2e` | the webmail in a browser (Playwright) against the dev instance, on port 8085 | the compose services |
 | `make cluster-test` | three rqlite and three robinmail nodes; nodes are killed and restarted | Docker |
-| `make lab-test` | SMTP with Postfix, Exim and OpenSMTPD; IMAP with ImapTest, mbsync, OfflineIMAP and Thunderbird | Docker |
+| `make lab-test` | SMTP with Postfix, Exim and OpenSMTPD; IMAP with ImapTest, mbsync, OfflineIMAP and Thunderbird; CalDAV and CardDAV with Thunderbird, vdirsyncer and the Python caldav library; invitations to Postfix and Exim | Docker |
 | `make thunderbird-test` | only the Thunderbird part of the lab | Docker |
 
 The Go tests that need a database are skipped unless they are told where one is:
@@ -95,11 +109,9 @@ ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RQLITE_B=http://127.0
 Both databases come from the compose file above. A few tests (backup and restore, master
 key rotation) start an rqlite container of their own and are skipped without Docker.
 
-`make e2e` wants port 8080. With a development server running there, use another port:
-
-```bash
-ROBINMAIL_E2E_PORT=8085 contrib/dev/e2e.sh
-```
+`make e2e` runs the server on port 8085, so a development server on 8080 can stay up.
+`make e2e-vue` runs the same specs against the Vue webmail; the calendar and contacts
+specs skip there.
 
 The lab and the cluster have no route to the internet: their name server knows no name
 outside them.
