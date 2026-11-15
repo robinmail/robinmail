@@ -20,7 +20,9 @@
     "max_bytes_in_transit_per_ip": 536870912
   },
   "web": {
-    "listen": ":443"
+    "listen": ":443",
+    "max_connections": 10000,
+    "max_connections_per_ip": 10000
   },
   "submission": {
     "undo_seconds": 0

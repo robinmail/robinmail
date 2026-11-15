@@ -207,7 +207,9 @@ func (a *app) serve(stop func()) error {
 		hs := site.HTTPServer()
 		hs.TLSConfig = tc.Clone()
 		webServers = append(webServers, hs)
-		log.Info("https listening", "addr", wl.Addr().String())
+		log.Info("https listening", "addr", wl.Addr().String(),
+			"max_connections", a.cfg.Web.MaxConnections, "per_ip", a.cfg.Web.MaxConnectionsPerIP)
+		wl = web.LimitListener(wl, a.cfg.Web.MaxConnections, a.cfg.Web.MaxConnectionsPerIP)
 		if onWebListen != nil {
 			onWebListen(wl.Addr())
 		}

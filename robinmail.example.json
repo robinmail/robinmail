@@ -27,7 +27,9 @@
   "web": {
     "listen": ":443",
     "http_listen": "",
-    "dev_origins": []
+    "dev_origins": [],
+    "max_connections": 1000,
+    "max_connections_per_ip": 100
   },
   "rspamd": {
     "url": "http://127.0.0.1:11333",

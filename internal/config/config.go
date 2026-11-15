@@ -288,6 +288,11 @@ type Web struct {
 	// DevOrigins are origins besides the server's own that may call the
 	// API, such as "http://localhost:5173" for the Vite dev server.
 	DevOrigins []string `json:"dev_origins"`
+	// MaxConnections bounds the connections open to the HTTPS listener,
+	// in all [1000] and per client address (an IPv6 /64) [100]. One past
+	// either is closed at once. A browser keeps one or a few.
+	MaxConnections      int `json:"max_connections"`
+	MaxConnectionsPerIP int `json:"max_connections_per_ip"`
 }
 
 // Rspamd configures spam scanning. An empty URL turns scanning off.
@@ -423,6 +428,15 @@ func Load(path string) (*Config, error) {
 	}
 	if (c.IMAP.Listen != "" || c.IMAP.ListenTLS != "") && !c.TLS.ACME && c.TLS.CertFile == "" {
 		return nil, errors.New(path + ": imap listeners need a certificate (tls)")
+	}
+	if c.Web.MaxConnections < 0 || c.Web.MaxConnectionsPerIP < 0 {
+		return nil, errors.New(path + ": web: limits cannot be negative")
+	}
+	if c.Web.MaxConnections == 0 {
+		c.Web.MaxConnections = 1000
+	}
+	if c.Web.MaxConnectionsPerIP == 0 {
+		c.Web.MaxConnectionsPerIP = 100
 	}
 	if c.IMAP.MaxConnections < 0 || c.IMAP.MaxConnectionsPerIP < 0 || c.IMAP.MaxConnectionsPerUser < 0 {
 		return nil, errors.New(path + ": limits cannot be negative")
