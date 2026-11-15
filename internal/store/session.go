@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // AccountByID looks an account up by its id.
@@ -124,7 +124,7 @@ func (s *Store) SessionAccount(ctx context.Context, tokenHash string) (Account, 
 // this every few minutes at most: it is a write.
 func (s *Store) TouchSession(ctx context.Context, tokenHash, ip string) error {
 	// Sets a row to given values.
-	_, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(
+	_, err := s.db.ExecuteIdempotent(ctx, db.Stmt(
 		`UPDATE session SET seen_at = max(seen_at, ?2), seen_ip = ?3 WHERE token_hash = ?1`, tokenHash, s.Now().Unix(), ip))
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
@@ -134,7 +134,7 @@ func (s *Store) TouchSession(ctx context.Context, tokenHash, ip string) error {
 
 // DeleteSession ends a session. One that does not exist is not an error.
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
-	if _, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM session WHERE token_hash = ?`, tokenHash)); err != nil {
+	if _, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM session WHERE token_hash = ?`, tokenHash)); err != nil {
 		return fmt.Errorf("store: %w", err)
 	}
 	return nil
@@ -162,8 +162,8 @@ func (s *Store) RevokeSession(ctx context.Context, account, id string) (bool, er
 	// A delete; a second run finds nothing and moves auth_seq once more,
 	// which costs open connections one more check.
 	res, err := s.db.ExecuteIdempotent(ctx,
-		rqlite.Stmt(`DELETE FROM session WHERE account_id = ?1 AND id = ?2`, account, id),
-		rqlite.Stmt(sqlBumpAuthSeq, account))
+		db.Stmt(`DELETE FROM session WHERE account_id = ?1 AND id = ?2`, account, id),
+		db.Stmt(sqlBumpAuthSeq, account))
 	if err != nil {
 		return false, fmt.Errorf("store: %w", err)
 	}
@@ -175,8 +175,8 @@ func (s *Store) RevokeSession(ctx context.Context, account, id string) (bool, er
 // given token hash (empty: all) and returns how many.
 func (s *Store) RevokeSessions(ctx context.Context, account, exceptTokenHash string) (int64, error) {
 	res, err := s.db.ExecuteIdempotent(ctx,
-		rqlite.Stmt(`DELETE FROM session WHERE account_id = ?1 AND token_hash <> ?2`, account, exceptTokenHash),
-		rqlite.Stmt(sqlBumpAuthSeq, account))
+		db.Stmt(`DELETE FROM session WHERE account_id = ?1 AND token_hash <> ?2`, account, exceptTokenHash),
+		db.Stmt(sqlBumpAuthSeq, account))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}
@@ -198,7 +198,7 @@ func (s *Store) authChanged(account string) {
 // TrimSessions removes the sessions that ended before the given time, by
 // either lifetime, and returns how many.
 func (s *Store) TrimSessions(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(
+	res, err := s.db.ExecuteIdempotent(ctx, db.Stmt(
 		`DELETE FROM session WHERE expires_at <= ?1 OR seen_at + idle <= ?1`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)

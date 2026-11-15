@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 var (
@@ -539,7 +539,7 @@ const SubmissionRetention = 24 * time.Hour
 // created before the given time, and returns how many. Submissions made
 // over JMAP are the client's to destroy.
 func (s *Store) TrimSubmissions(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(
+	res, err := s.db.ExecuteIdempotent(ctx, db.Stmt(
 		`DELETE FROM submission WHERE queue = 'done' AND email_id = 0 AND created_at < ?`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
@@ -686,7 +686,7 @@ func (s *Store) Upload(ctx context.Context, account string, data []byte, typ str
 // TrimUploads forgets uploads made before the given time. Their files go
 // with the next sweep, unless an email refers to the same content.
 func (s *Store) TrimUploads(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM upload WHERE created_at < ?`, before.Unix()))
+	res, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM upload WHERE created_at < ?`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}
@@ -723,7 +723,7 @@ func (s *Store) STSPolicy(ctx context.Context, domain string) (STSPolicy, bool, 
 
 // SaveSTSPolicy caches a policy for all nodes.
 func (s *Store) SaveSTSPolicy(ctx context.Context, p STSPolicy) error {
-	_, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(
+	_, err := s.db.ExecuteIdempotent(ctx, db.Stmt(
 		`INSERT OR REPLACE INTO mta_sts (domain, policy_id, mode, mx, fetched_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		p.Domain, p.ID, p.Mode, strings.Join(p.MX, "\n"), p.FetchedAt.Unix(), p.ExpiresAt.Unix()))
 	if err != nil {
@@ -734,7 +734,7 @@ func (s *Store) SaveSTSPolicy(ctx context.Context, p STSPolicy) error {
 
 // TrimSTSPolicies removes policies that expired before the given time.
 func (s *Store) TrimSTSPolicies(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM mta_sts WHERE expires_at < ?`, before.Unix()))
+	res, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM mta_sts WHERE expires_at < ?`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}
@@ -746,7 +746,7 @@ func (s *Store) TrimSTSPolicies(ctx context.Context, before time.Time) (int64, e
 // what they queued is not found by a server started on it later; a real
 // account's queue is never purged.
 func (s *Store) PurgeSubmissions(ctx context.Context, account string) error {
-	_, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM submission WHERE account_id = ?`, account))
+	_, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM submission WHERE account_id = ?`, account))
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
 	}

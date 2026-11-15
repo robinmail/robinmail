@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // Master key rotation. An account's blob key is stored wrapped under a
@@ -29,7 +29,7 @@ type KeyUse struct {
 // old master key can be thrown away.
 func (s *Store) AccountKeyUse(ctx context.Context) (KeyUse, error) {
 	use := KeyUse{ByKey: map[string]int{}}
-	res, err := s.db.Query(ctx, rqlite.Strong, rqlite.Stmt(`SELECT id, blob_key FROM account`))
+	res, err := s.db.Query(ctx, db.Strong, db.Stmt(`SELECT id, blob_key FROM account`))
 	if err != nil {
 		return use, fmt.Errorf("store: %w", err)
 	}
@@ -52,7 +52,7 @@ func (s *Store) AccountKeyUse(ctx context.Context) (KeyUse, error) {
 // again, and run on two nodes at once: an account is either still under
 // the old key or under the new one, and both are in every node's file.
 func (s *Store) RewrapAccountKeys(ctx context.Context) (changed, already int, err error) {
-	res, err := s.db.Query(ctx, rqlite.Strong, rqlite.Stmt(`SELECT id, blob_key FROM account ORDER BY id`))
+	res, err := s.db.Query(ctx, db.Strong, db.Stmt(`SELECT id, blob_key FROM account ORDER BY id`))
 	if err != nil {
 		return 0, 0, fmt.Errorf("store: %w", err)
 	}
@@ -72,7 +72,7 @@ func (s *Store) RewrapAccountKeys(ctx context.Context) (changed, already int, er
 		// Safe to send twice: the second time the row no longer has the
 		// old value and nothing happens.
 		if _, err := s.db.ExecuteIdempotent(ctx,
-			rqlite.Stmt(`UPDATE account SET blob_key = ? WHERE id = ? AND blob_key = ?`, wrapped, id, old)); err != nil {
+			db.Stmt(`UPDATE account SET blob_key = ? WHERE id = ? AND blob_key = ?`, wrapped, id, old)); err != nil {
 			return changed, already, fmt.Errorf("store: account %s: %w", id, err)
 		}
 		changed++

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // schemaVersion goes up with every change to the tables below. Init brings
@@ -681,9 +681,9 @@ func (s *Store) Init(ctx context.Context) error {
 		return err
 	}
 	if version == 0 {
-		stmts := make([]rqlite.Statement, len(schema))
+		stmts := make([]db.Statement, len(schema))
 		for i, sql := range schema {
-			stmts[i] = rqlite.Stmt(sql)
+			stmts[i] = db.Stmt(sql)
 		}
 		if _, err := s.db.ExecuteIdempotent(ctx, stmts...); err != nil {
 			return fmt.Errorf("store: creating schema: %w", err)
@@ -698,12 +698,12 @@ func (s *Store) Init(ctx context.Context) error {
 			break
 		}
 		// The guard makes the batch fail if another node migrated first.
-		stmts := []rqlite.Statement{rqlite.Stmt(
+		stmts := []db.Statement{db.Stmt(
 			`INSERT INTO guard (ok) SELECT 1 WHERE NOT ((SELECT max(version) FROM schema_version) = ?)`, version)}
 		for _, sql := range steps {
-			stmts = append(stmts, rqlite.Stmt(sql))
+			stmts = append(stmts, db.Stmt(sql))
 		}
-		stmts = append(stmts, rqlite.Stmt(`UPDATE schema_version SET version = ?`, version+1))
+		stmts = append(stmts, db.Stmt(`UPDATE schema_version SET version = ?`, version+1))
 		_, merr := s.db.ExecuteIdempotent(ctx, stmts...)
 		now, err := s.version(ctx)
 		if err != nil {
@@ -722,8 +722,8 @@ func (s *Store) Init(ctx context.Context) error {
 
 // version returns 0 for a database without our tables.
 func (s *Store) version(ctx context.Context) (int64, error) {
-	res, err := s.db.Query(ctx, rqlite.Weak, rqlite.Stmt(`SELECT max(version) FROM schema_version`))
-	var e *rqlite.Error
+	res, err := s.db.Query(ctx, db.Weak, db.Stmt(`SELECT max(version) FROM schema_version`))
+	var e *db.Error
 	if errors.As(err, &e) && strings.Contains(e.Message, "no such table") {
 		return 0, nil
 	}

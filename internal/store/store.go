@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 var (
@@ -79,7 +79,7 @@ const (
 // keys, which never change, so any number of nodes can work on the same
 // rqlite.
 type Store struct {
-	db     *rqlite.Client
+	db     db.DB
 	blobs  blob.Store
 	master *blob.MasterKey
 	keys   sync.Map // account id -> []byte, the unwrapped blob key
@@ -104,8 +104,8 @@ type Store struct {
 
 // New returns a store. master wraps the keys that encrypt each account's
 // blobs; every node of a cluster needs the same one.
-func New(db *rqlite.Client, blobs blob.Store, master *blob.MasterKey) *Store {
-	return &Store{db: db, blobs: blobs, master: master, Now: time.Now}
+func New(d db.DB, blobs blob.Store, master *blob.MasterKey) *Store {
+	return &Store{db: d, blobs: blobs, master: master, Now: time.Now}
 }
 
 // Email, Mailbox and Thread ids are per-account counters. To the outside they
@@ -151,7 +151,7 @@ const (
 // parameters in base; add and guard take extra ones as name, value pairs.
 type batch struct {
 	base  map[string]any
-	stmts []rqlite.Statement
+	stmts []db.Statement
 	fail  map[int]error // statement index -> what its failure means
 	// again marks a batch that may be sent a second time when rqlite did
 	// not say whether the first was applied. See run.
@@ -193,7 +193,7 @@ func (b *batch) add(sql string, kv ...any) {
 		}
 		named[name] = v
 	}
-	b.stmts = append(b.stmts, rqlite.Statement{SQL: sql, Named: named})
+	b.stmts = append(b.stmts, db.Statement{SQL: sql, Named: named})
 }
 
 // guard makes the batch fail with err unless cond, a SQL expression, holds.
@@ -247,7 +247,7 @@ func (b *batch) change(typ, sel string, kv ...any) {
 // a counter and bump the modseq, so a second run would do the work twice, or
 // they carry a guard ("no mailbox of that name yet", ifInState) that a
 // second run would trip over its own first run and report as a refusal.
-// Those fail with rqlite.ErrUnknownOutcome and the caller's caller decides:
+// Those fail with db.ErrUnknownOutcome and the caller's caller decides:
 // a JMAP client gets serverFail and syncs, a command prints the error.
 //
 // The batches marked idempotent are sent again. How each write qualifies:
@@ -301,7 +301,7 @@ func (b *batch) change(typ, sel string, kv ...any) {
 //	ClearLoginFailures     again: a delete
 //	Init                   again: CREATE IF NOT EXISTS; a migration is guarded
 //	                       by the version it starts from
-func (s *Store) run(ctx context.Context, b *batch) ([]rqlite.Result, error) {
+func (s *Store) run(ctx context.Context, b *batch) ([]db.Result, error) {
 	exec := s.db.Execute
 	if b.again {
 		exec = s.db.ExecuteIdempotent
@@ -315,7 +315,7 @@ func (s *Store) run(ctx context.Context, b *batch) ([]rqlite.Result, error) {
 		}
 		return res, nil
 	}
-	var e *rqlite.Error
+	var e *db.Error
 	if errors.As(err, &e) {
 		if mapped, ok := b.fail[e.Index]; ok && (e.Unique() || e.Check()) {
 			return nil, mapped
@@ -344,12 +344,12 @@ func (s *Store) run(ctx context.Context, b *batch) ([]rqlite.Result, error) {
 //	        without asking the leader, unless it lost the leader more than
 //	        5 seconds ago. A count that is a moment old is good enough for a
 //	        rate limit, and it keeps a login from waiting on the leader.
-func (s *Store) query(ctx context.Context, account string, stmts ...[]any) ([]rqlite.Result, error) {
+func (s *Store) query(ctx context.Context, account string, stmts ...[]any) ([]db.Result, error) {
 	b := &batch{base: map[string]any{"a": account}}
 	for _, st := range stmts {
 		b.add(st[0].(string), st[1:]...)
 	}
-	res, err := s.db.Query(ctx, rqlite.Weak, b.stmts...)
+	res, err := s.db.Query(ctx, db.Weak, b.stmts...)
 	if err != nil {
 		return nil, fmt.Errorf("store: %w", err)
 	}

@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // This file holds what phase 7 added to the ways into an account: app
@@ -142,7 +142,7 @@ func (s *Store) AppPassword(ctx context.Context, account, id string) (AppPasswor
 // UseAppPassword notes a login with an app password. Callers do this every
 // few minutes per app password at most: it is a write.
 func (s *Store) UseAppPassword(ctx context.Context, account, id, ip string) error {
-	_, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(
+	_, err := s.db.ExecuteIdempotent(ctx, db.Stmt(
 		`UPDATE app_password SET used_at = max(used_at, ?3), used_ip = ?4 WHERE account_id = ?1 AND id = ?2`,
 		account, id, s.Now().Unix(), ip))
 	if err != nil {
@@ -156,8 +156,8 @@ func (s *Store) UseAppPassword(ctx context.Context, account, id, ip string) erro
 // logged in with it, on every node.
 func (s *Store) RevokeAppPassword(ctx context.Context, account, id string) (bool, error) {
 	res, err := s.db.ExecuteIdempotent(ctx,
-		rqlite.Stmt(`DELETE FROM app_password WHERE account_id = ?1 AND id = ?2`, account, id),
-		rqlite.Stmt(sqlBumpAuthSeq, account))
+		db.Stmt(`DELETE FROM app_password WHERE account_id = ?1 AND id = ?2`, account, id),
+		db.Stmt(sqlBumpAuthSeq, account))
 	if err != nil {
 		return false, fmt.Errorf("store: %w", err)
 	}
@@ -322,7 +322,7 @@ func (s *Store) ReplaceRecoveryCodes(ctx context.Context, account string, hashes
 // one claimed: that is what keeps a code from working twice, on whatever
 // node it is tried (RFC 6238 5.2).
 func (s *Store) UseTOTPStep(ctx context.Context, account string, step int64) (bool, error) {
-	res, err := s.db.Execute(ctx, rqlite.Stmt(
+	res, err := s.db.Execute(ctx, db.Stmt(
 		`UPDATE totp SET last_step = ?2 WHERE account_id = ?1 AND confirmed_at > 0 AND last_step < ?2`, account, step))
 	if err != nil {
 		return false, fmt.Errorf("store: %w", err)
@@ -333,7 +333,7 @@ func (s *Store) UseTOTPStep(ctx context.Context, account string, step int64) (bo
 // UseRecoveryCode spends a recovery code and reports whether this call got
 // it: the row is deleted, so a code works once.
 func (s *Store) UseRecoveryCode(ctx context.Context, account, hash string) (bool, error) {
-	res, err := s.db.Execute(ctx, rqlite.Stmt(`DELETE FROM recovery_code WHERE account_id = ?1 AND hash = ?2`, account, hash))
+	res, err := s.db.Execute(ctx, db.Stmt(`DELETE FROM recovery_code WHERE account_id = ?1 AND hash = ?2`, account, hash))
 	if err != nil {
 		return false, fmt.Errorf("store: %w", err)
 	}
@@ -344,11 +344,11 @@ func (s *Store) UseRecoveryCode(ctx context.Context, account, hash string) (bool
 // recovery codes, and reports whether TOTP was on.
 func (s *Store) DisableTOTP(ctx context.Context, account string) (bool, error) {
 	res, err := s.db.ExecuteIdempotent(ctx,
-		rqlite.Stmt(`DELETE FROM totp WHERE account_id = ?1 AND confirmed_at > 0`, account),
-		rqlite.Stmt(`DELETE FROM totp WHERE account_id = ?1`, account),
-		rqlite.Stmt(`DELETE FROM recovery_code WHERE account_id = ?1`, account),
+		db.Stmt(`DELETE FROM totp WHERE account_id = ?1 AND confirmed_at > 0`, account),
+		db.Stmt(`DELETE FROM totp WHERE account_id = ?1`, account),
+		db.Stmt(`DELETE FROM recovery_code WHERE account_id = ?1`, account),
 		// Logins that wait for a code that no longer exists.
-		rqlite.Stmt(`DELETE FROM session WHERE account_id = ?1 AND stage = 'totp'`, account))
+		db.Stmt(`DELETE FROM session WHERE account_id = ?1 AND stage = 'totp'`, account))
 	if err != nil {
 		return false, fmt.Errorf("store: %w", err)
 	}
@@ -375,7 +375,7 @@ func (s *Store) LinkOIDC(ctx context.Context, account, provider, subject string)
 // returns how many there were. The next login through a provider links
 // again.
 func (s *Store) UnlinkOIDC(ctx context.Context, account string) (int64, error) {
-	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM oidc_link WHERE account_id = ?`, account))
+	res, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM oidc_link WHERE account_id = ?`, account))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}
@@ -412,7 +412,7 @@ func cut(s string, max int) string {
 // AddAuthEvent appends to the log of auth events. At is set to now.
 func (s *Store) AddAuthEvent(ctx context.Context, e AuthEvent) error {
 	metrics.AuthEvents.Inc(e.Event)
-	_, err := s.db.Execute(ctx, rqlite.Stmt(
+	_, err := s.db.Execute(ctx, db.Stmt(
 		`INSERT INTO auth_event (at, account_id, address, event, ip, detail) VALUES (?, ?, ?, ?, ?, ?)`,
 		s.Now().Unix(), e.AccountID, cut(e.Address, maxEventAddress), e.Event, cut(e.IP, 64), cut(e.Detail, maxEventDetail)))
 	if err != nil {
@@ -444,7 +444,7 @@ func (s *Store) AuthEvents(ctx context.Context, account string, limit int) ([]Au
 // TrimAuthEvents removes the events from before the given time and returns
 // how many.
 func (s *Store) TrimAuthEvents(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM auth_event WHERE at < ?`, before.Unix()))
+	res, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM auth_event WHERE at < ?`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}

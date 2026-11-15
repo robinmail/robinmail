@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // BlobGrace is how old an unreferenced blob file must be before a sweep
@@ -61,8 +61,8 @@ func (r blobRefs) AccountBlobs(ctx context.Context, account string) (map[string]
 // Referenced reads through the Raft log: the answer decides whether a file
 // is deleted, so it must not come from a node that only thinks it leads.
 func (r blobRefs) Referenced(ctx context.Context, account, sum string) (bool, error) {
-	res, err := r.s.db.Query(ctx, rqlite.Strong,
-		rqlite.Stmt(`SELECT 1 FROM email WHERE account_id = ? AND blob = ?
+	res, err := r.s.db.Query(ctx, db.Strong,
+		db.Stmt(`SELECT 1 FROM email WHERE account_id = ? AND blob = ?
 			UNION ALL SELECT 1 FROM upload WHERE account_id = ? AND blob = ?
 			UNION ALL SELECT 1 FROM submission WHERE account_id = ? AND blob = ?
 			UNION ALL SELECT 1 FROM sieve_script WHERE account_id = ? AND blob = ? LIMIT 1`,

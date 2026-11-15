@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // How long the change log and the delivery keys are kept.
@@ -133,11 +133,11 @@ func (s *Store) TrimAccountChanges(ctx context.Context, account string, before t
 func (s *Store) trimChanges(ctx context.Context, account string, before time.Time) (int64, error) {
 	t := before.Unix()
 	res, err := s.db.ExecuteIdempotent(ctx,
-		rqlite.Stmt(`UPDATE account SET trimmed_modseq = max(trimmed_modseq,
+		db.Stmt(`UPDATE account SET trimmed_modseq = max(trimmed_modseq,
 				(SELECT max(c.modseq) FROM changes c WHERE c.account_id = account.id AND c.at < ?))
 			WHERE (? = '' OR id = ?)
 				AND EXISTS (SELECT 1 FROM changes c WHERE c.account_id = account.id AND c.at < ?)`, t, account, account, t),
-		rqlite.Stmt(`DELETE FROM changes WHERE at < ? AND (? = '' OR account_id = ?)`, t, account, account))
+		db.Stmt(`DELETE FROM changes WHERE at < ? AND (? = '' OR account_id = ?)`, t, account, account))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}
@@ -147,7 +147,7 @@ func (s *Store) trimChanges(ctx context.Context, account string, before time.Tim
 // TrimDelivered forgets delivery keys stored before the given time and
 // returns how many.
 func (s *Store) TrimDelivered(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM delivered WHERE at < ?`, before.Unix()))
+	res, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM delivered WHERE at < ?`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}

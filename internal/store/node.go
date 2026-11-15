@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // Node is a robinmail node of the cluster, as the node table has it.
@@ -34,7 +34,7 @@ func (s *Store) RegisterNode(ctx context.Context, n Node, running bool) error {
 	if running {
 		stamp = now
 	}
-	_, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`INSERT INTO node (id, address, cert, started_at, seen_at)
+	_, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`INSERT INTO node (id, address, cert, started_at, seen_at)
 		VALUES (?1, ?2, ?3, ?4, ?4)
 		ON CONFLICT (id) DO UPDATE SET address = ?2, cert = ?3,
 			started_at = CASE WHEN ?4 > 0 THEN ?4 ELSE started_at END,
@@ -50,8 +50,8 @@ func (s *Store) RegisterNode(ctx context.Context, n Node, running bool) error {
 // node runs under the same id.
 func (s *Store) Heartbeat(ctx context.Context, id, cert string) (bool, error) {
 	res, err := s.db.ExecuteIdempotent(ctx,
-		rqlite.Stmt(`UPDATE node SET seen_at = ? WHERE id = ? AND cert = ?`, s.Now().Unix(), id, cert),
-		rqlite.Stmt(`SELECT 1 FROM node WHERE id = ? AND cert = ?`, id, cert))
+		db.Stmt(`UPDATE node SET seen_at = ? WHERE id = ? AND cert = ?`, s.Now().Unix(), id, cert),
+		db.Stmt(`SELECT 1 FROM node WHERE id = ? AND cert = ?`, id, cert))
 	if err != nil {
 		return false, fmt.Errorf("store: %w", err)
 	}
@@ -78,8 +78,8 @@ func (s *Store) Nodes(ctx context.Context) ([]Node, error) {
 // first. It reports whether there was such a node.
 func (s *Store) RemoveNode(ctx context.Context, id string) (bool, error) {
 	res, err := s.db.ExecuteIdempotent(ctx,
-		rqlite.Stmt(`SELECT 1 FROM node WHERE id = ?`, id),
-		rqlite.Stmt(`DELETE FROM node WHERE id = ?`, id))
+		db.Stmt(`SELECT 1 FROM node WHERE id = ?`, id),
+		db.Stmt(`DELETE FROM node WHERE id = ?`, id))
 	if err != nil {
 		return false, fmt.Errorf("store: %w", err)
 	}
@@ -107,7 +107,7 @@ func (s *Store) LoginFailures(ctx context.Context, window time.Duration, keys ..
 	b := &batch{base: map[string]any{}}
 	b.add(`SELECT key, started, count FROM login_failure WHERE key IN (VALUES `+vals+`) AND started > :cut`,
 		append(kv, "cut", s.Now().Add(-window).Unix())...)
-	res, err := s.db.Query(ctx, rqlite.None, b.stmts...)
+	res, err := s.db.Query(ctx, db.None, b.stmts...)
 	if err != nil {
 		return nil, fmt.Errorf("store: %w", err)
 	}
@@ -126,9 +126,9 @@ func (s *Store) LoginFailures(ctx context.Context, window time.Duration, keys ..
 func (s *Store) AddLoginFailure(ctx context.Context, window time.Duration, keys ...string) error {
 	now := s.Now().Unix()
 	cut := s.Now().Add(-window).Unix()
-	stmts := make([]rqlite.Statement, len(keys))
+	stmts := make([]db.Statement, len(keys))
 	for i, k := range keys {
-		stmts[i] = rqlite.Stmt(`INSERT INTO login_failure (key, started, count) VALUES (?1, ?2, 1)
+		stmts[i] = db.Stmt(`INSERT INTO login_failure (key, started, count) VALUES (?1, ?2, 1)
 			ON CONFLICT (key) DO UPDATE SET
 				count = CASE WHEN started > ?3 THEN count + 1 ELSE 1 END,
 				started = CASE WHEN started > ?3 THEN started ELSE ?2 END`, k, now, cut)
@@ -156,7 +156,7 @@ func (s *Store) ClearLoginFailures(ctx context.Context, keys ...string) error {
 // TrimLoginFailures removes the counters whose window ended before the
 // given time and returns how many.
 func (s *Store) TrimLoginFailures(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM login_failure WHERE started <= ?`, before.Unix()))
+	res, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM login_failure WHERE started <= ?`, before.Unix()))
 	if err != nil {
 		return 0, fmt.Errorf("store: %w", err)
 	}

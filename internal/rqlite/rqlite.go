@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/robinmail/robinmail/internal/db"
 	"github.com/robinmail/robinmail/internal/metrics"
 	"io"
 	"net"
@@ -28,105 +29,37 @@ import (
 	"time"
 )
 
-// Level is rqlite's read consistency level.
-type Level string
+// The types are internal/db's: the store talks to rqlite through that
+// interface.
+type (
+	Level     = db.Level
+	Statement = db.Statement
+	Result    = db.Result
+	Error     = db.Error
+)
 
 const (
-	// None reads the local node without any check. May be stale.
-	None Level = "none"
-	// Weak reads the leader after it checked, locally, that it is the leader.
-	Weak Level = "weak"
-	// Linearizable has the leader confirm its leadership with a quorum first.
-	Linearizable Level = "linearizable"
-	// Strong sends the read through the Raft log.
-	Strong Level = "strong"
+	None         = db.None
+	Weak         = db.Weak
+	Linearizable = db.Linearizable
+	Strong       = db.Strong
 )
 
 // maxResponse bounds what Do reads from the server.
 const maxResponse = 256 << 20
 
-// Statement is one SQL statement with its parameters: positional (Args, for
-// "?") or named (Named, for ":name"), not both.
-type Statement struct {
-	SQL   string
-	Args  []any
-	Named map[string]any
-}
-
 // Stmt builds a statement with positional parameters.
-func Stmt(sql string, args ...any) Statement { return Statement{SQL: sql, Args: args} }
-
-// MarshalJSON encodes the statement the way rqlite expects it:
-// ["SQL", arg, ...] or ["SQL", {"name": arg, ...}].
-func (s Statement) MarshalJSON() ([]byte, error) {
-	if len(s.Named) > 0 {
-		if len(s.Args) > 0 {
-			return nil, errors.New("rqlite: statement has both positional and named parameters")
-		}
-		return json.Marshal([]any{s.SQL, s.Named})
-	}
-	return json.Marshal(append([]any{s.SQL}, s.Args...))
-}
-
-// Result is the outcome of one statement. A value is nil, int64, float64,
-// string or bool.
-type Result struct {
-	Columns      []string
-	Types        []string
-	Values       [][]any
-	LastInsertID int64
-	RowsAffected int64
-}
-
-// SQLite extended result codes for constraint violations.
-const (
-	codeConstraintCheck      = 275
-	codeConstraintPrimaryKey = 1555
-	codeConstraintUnique     = 2067
-)
-
-// Error is a statement that SQLite refused. The batch it was part of has
-// been rolled back.
-type Error struct {
-	Index   int    // position of the statement in the batch
-	Message string // SQLite's message
-	Code    int    // SQLite's extended result code, 0 if rqlite did not send one
-}
-
-func (e *Error) Error() string { return fmt.Sprintf("rqlite: statement %d: %s", e.Index, e.Message) }
-
-// Unique reports whether the statement broke a UNIQUE or PRIMARY KEY
-// constraint.
-func (e *Error) Unique() bool {
-	if e.Code != 0 {
-		return e.Code == codeConstraintUnique || e.Code == codeConstraintPrimaryKey
-	}
-	return strings.HasPrefix(e.Message, "UNIQUE constraint failed")
-}
-
-// Check reports whether the statement broke a CHECK constraint.
-func (e *Error) Check() bool {
-	if e.Code != 0 {
-		return e.Code == codeConstraintCheck
-	}
-	return strings.HasPrefix(e.Message, "CHECK constraint failed")
-}
+func Stmt(sql string, args ...any) Statement { return db.Stmt(sql, args...) }
 
 // IsUnique reports whether err is a UNIQUE or PRIMARY KEY violation.
-func IsUnique(err error) bool {
-	var e *Error
-	return errors.As(err, &e) && e.Unique()
-}
+func IsUnique(err error) bool { return db.IsUnique(err) }
 
-// ErrUnknownOutcome wraps the error of a write that may or may not have been
-// applied: the request left this process and no answer came back, or the
-// answer was an error that does not say. Execute returns it; ExecuteIdempotent
-// tries again instead.
-var ErrUnknownOutcome = errors.New("the outcome of the write is unknown")
+var (
+	ErrUnknownOutcome = db.ErrUnknownOutcome
+	ErrStale          = db.ErrStale
+)
 
-// ErrStale is returned by a Query at level None when the node that was asked
-// has been without a leader for too long to answer from its own copy.
-var ErrStale = errors.New("rqlite: this node's copy is stale")
+var _ db.DB = (*Client)(nil)
 
 // Client talks to an rqlite cluster through any of its nodes.
 //
@@ -594,7 +527,7 @@ func decode(data []byte, want int) ([]Result, outcome, error) {
 				}
 			}
 		}
-		results[i] = Result{Columns: r.Columns, Types: r.Types, Values: r.Values,
+		results[i] = Result{Columns: r.Columns, Values: r.Values,
 			LastInsertID: r.LastInsertID, RowsAffected: r.RowsAffected}
 	}
 	if len(results) != want {

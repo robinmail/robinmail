@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // Calendars and address books (phase 9). A collection is a calendar, an
@@ -447,7 +447,7 @@ func cols(withData bool) string {
 	return objectColumns
 }
 
-func scanObjects(res []rqlite.Result, withData bool) []Object {
+func scanObjects(res []db.Result, withData bool) []Object {
 	out := make([]Object, 0, len(res[0].Values))
 	for _, row := range res[0].Values {
 		out = append(out, scanObject(row, withData))

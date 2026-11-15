@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // Account is one mail user. ID is random and never changes, also if the
@@ -163,7 +163,7 @@ func (s *Store) seqs(ctx context.Context, column string, accounts []string) (map
 		vals, kv := values("i", chunk)
 		b := &batch{base: map[string]any{}}
 		b.add(`SELECT id, `+column+` FROM account WHERE id IN (VALUES `+vals+`)`, kv...)
-		res, err := s.db.Query(ctx, rqlite.None, b.stmts...)
+		res, err := s.db.Query(ctx, db.None, b.stmts...)
 		if err != nil {
 			return nil, fmt.Errorf("store: %w", err)
 		}

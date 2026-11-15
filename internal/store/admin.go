@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/robinmail/robinmail/internal/blob"
-	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/db"
 )
 
 // What the administrator's commands need and nothing else does: the
@@ -207,7 +207,7 @@ func (s *Store) Totals(ctx context.Context) (Totals, error) {
 // Ping asks the database for one row through the Raft log: it answers
 // only when the cluster has a leader that this node can reach.
 func (s *Store) Ping(ctx context.Context) error {
-	if _, err := s.db.Query(ctx, rqlite.Strong, rqlite.Stmt(`SELECT 1`)); err != nil {
+	if _, err := s.db.Query(ctx, db.Strong, db.Stmt(`SELECT 1`)); err != nil {
 		return fmt.Errorf("store: %w", err)
 	}
 	return nil
@@ -239,9 +239,9 @@ func (s *Store) LoadDatabase(ctx context.Context, r io.ReadSeeker) error {
 	if err := s.Init(ctx); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecuteIdempotent(ctx, rqlite.Stmt(`DELETE FROM node`),
+	if _, err := s.db.ExecuteIdempotent(ctx, db.Stmt(`DELETE FROM node`),
 		// Claims of the old cluster's nodes: free at once.
-		rqlite.Stmt(`UPDATE submission SET claimed_by = '', claimed_until = 0 WHERE claimed_until > 0`)); err != nil {
+		db.Stmt(`UPDATE submission SET claimed_by = '', claimed_until = 0 WHERE claimed_until > 0`)); err != nil {
 		return fmt.Errorf("store: %w", err)
 	}
 	return nil
@@ -250,7 +250,7 @@ func (s *Store) LoadDatabase(ctx context.Context, r io.ReadSeeker) error {
 // Empty reports whether the database holds no domain and no account: the
 // only kind a backup is restored into.
 func (s *Store) Empty(ctx context.Context) (bool, error) {
-	res, err := s.db.Query(ctx, rqlite.Strong, rqlite.Stmt(`SELECT (SELECT count(*) FROM domain) + (SELECT count(*) FROM account)`))
+	res, err := s.db.Query(ctx, db.Strong, db.Stmt(`SELECT (SELECT count(*) FROM domain) + (SELECT count(*) FROM account)`))
 	if err != nil {
 		return false, fmt.Errorf("store: %w", err)
 	}
