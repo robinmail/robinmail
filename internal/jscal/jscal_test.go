@@ -208,11 +208,11 @@ func TestPatchObject(t *testing.T) {
 // Invalid JSCalendar is refused with the property named.
 func TestInvalidProperties(t *testing.T) {
 	for prop, js := range map[string]string{
-		"start":                         `{"@type":"Event","uid":"u","start":"2026-13-01T00:00:00"}`,
-		"timeZone":                      `{"@type":"Event","uid":"u","start":"2026-01-01T00:00:00","timeZone":"Mars/Olympus"}`,
-		"duration":                      `{"@type":"Event","uid":"u","start":"2026-01-01T00:00:00","duration":"1 hour"}`,
-		"recurrenceRule/frequency":      `{"@type":"Event","uid":"u","start":"2026-01-01T00:00:00","recurrenceRule":{"frequency":"often"}}`,
-		"uid":                           `{"@type":"Event","start":"2026-01-01T00:00:00"}`,
+		"start":                          `{"@type":"Event","uid":"u","start":"2026-13-01T00:00:00"}`,
+		"timeZone":                       `{"@type":"Event","uid":"u","start":"2026-01-01T00:00:00","timeZone":"Mars/Olympus"}`,
+		"duration":                       `{"@type":"Event","uid":"u","start":"2026-01-01T00:00:00","duration":"1 hour"}`,
+		"recurrenceRule/frequency":       `{"@type":"Event","uid":"u","start":"2026-01-01T00:00:00","recurrenceRule":{"frequency":"often"}}`,
+		"uid":                            `{"@type":"Event","start":"2026-01-01T00:00:00"}`,
 		"participants/x/calendarAddress": `{"@type":"Event","uid":"u","start":"2026-01-01T00:00:00","participants":{"x":{"name":"n"}}}`,
 	} {
 		_, err := ToICal(mustJS(t, js), nil, "p", now)
