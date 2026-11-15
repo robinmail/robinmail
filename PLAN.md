@@ -2790,6 +2790,44 @@ Built as follows:
   - **Playwright**, one spec per new screen: `search`, `aliases`,
     `filters`, `vacation`, `quota`, `mailapps`.
 
+### Angular webmail (web-ng) — in progress
+
+A second webmail next to `web/`, with the same screens, on the same JMAP
+client and stores. The Vue webmail stays the one `make` builds.
+
+Built as follows. Angular 22.2.7 (22.3 exists only as a release
+candidate), zoneless, standalone components, signals. One workspace in
+`web-ng/`: the libraries `@robinmail/jmap` (client, sync, push, the mail
+and compose stores, compose logic, the `/auth` API, Sieve rules: the
+files of `web/src` with their tests) and `@robinmail/webmail` (every
+screen, `webmailRoutes`, `provideWebmail()`), and the application
+`shell`, which starts the router with those routes. The libraries are
+built with `@angular/build:ng-packagr`; `@angular/build:library` does
+not exist in this version. The shell is built with
+`@angular/build:application` from the built libraries, and from their
+sources under `ng serve`. Tailwind 4 with our own components; Angular
+CDK for dialog, menu, overlay and listbox.
+
+- **State:** the stores are unchanged. `reactive()` is a deep proxy over
+  one signal: a write to any state runs every template again that read
+  any of it.
+- **The page:** no `<base>` element, which `base-uri 'none'` refuses;
+  the router is told `/` and index.html names its files absolutely.
+  `scripts/layout.mjs` moves the files named by their content to
+  `assets/`, so the build has the layout of Vite's.
+- **Message HTML:** only as `/jmap/view/...` in a sandboxed iframe that
+  is made with its sandbox and address before it enters the page.
+- **Go:** the build tag `webmail_ng` embeds `internal/web/dist-ng`
+  (`make build-ng`, `./robinmail-ng`). Handler, cache headers and CSP
+  are the same; `TestEmbeddedWebmail` runs for both tags.
+- **Tests:** 207 unit tests in the client library, 45 in the screens
+  (Vitest through `ng test`). `web/e2e` against `./robinmail-ng`
+  (`make e2e-ng`, port 8085): 27 passed, 14 skipped, as with Vue; the
+  Keycloak spec and the screenshot specs pass when asked for.
+
+Left: virtual scrolling of the list, a linter, a choice of webmail for
+the image.
+
 ## Open questions
 
 - Passkeys (WebAuthn) are the second factor that cannot be phished, and
