@@ -26,7 +26,8 @@ This is a learning project. There is no production target yet.
 | Between nodes | Nodes find each other through the `node` table in rqlite and talk over mutual TLS: each has a self-signed certificate, and both sides accept exactly the certificates whose fingerprint is in that table | No CA and no shared secret to distribute. Who may join is decided by who can write to rqlite, which holds everything anyway. |
 | Mailboxes | An Email can be in several mailboxes (labels) | Full JMAP `mailboxIds`. |
 | IMAP | Built in phase 6 on UIDs that exist from day one. A label is a folder; a message with three labels is in three folders | No store migration later. Mail clients only speak IMAP. |
-| Webmail | Vue single-page app in `web/`: plain Vite, Vue Router, Nuxt UI (without Nuxt). Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. Nuxt UI is MIT and has the dashboard and inbox components a mail client needs. |
+| Webmail | Since phase 9 the Angular single-page app in `web-ng/` (mail, calendar, contacts); before it the Vue app in `web/` (Vite, Vue Router, Nuxt UI), which stays buildable. Built to static files and embedded with `go:embed` | The client only talks JMAP, so nothing needs to render on a server. No workerd container and no proxy; a node stays one binary. |
+| Calendars and contacts | JMAP (Calendars, Contacts, Principals) for the webmail; CalDAV and CardDAV for programs; one store under both, of iCalendar and vCard text | Phones and desktop programs speak only DAV; the webmail speaks only JMAP. Text as clients sent it keeps what JSCalendar has no word for. |
 | Origin | One hostname. robinmail serves the API under `/jmap`, `/.well-known/jmap` and `/auth`, and the embedded webmail everywhere else | Same origin: no CORS, `SameSite=Strict` works. |
 | Web auth | Session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, `__Host-`) plus an `Origin` check on every request to `/auth` and JMAP, and JSON with its content type for everything that changes state. No CSRF token. Sessions are rows in rqlite | The client never holds a token. Any node accepts the cookie. The three checks leave no cross-site request for a token to stop (phase 7). |
 | Spam and mail auth | Rspamd over HTTP | As in owl, including its lessons (below). |
@@ -67,7 +68,7 @@ Every mail table starts with `account_id`.
 | `vacation` | enabled, from_at, to_at, subject, text_body, html_body, modseq | JMAP's VacationResponse: at most one row per account |
 | `vacation_sent` | key, at | automatic replies that went out: a hash of the reply and of whom it was for; trimmed after 45 days |
 | `alias` | address, target, domain, wildcard, created_at | one row per target of an alias; `address` is an address or a pattern with one `*` (`*@domain` is the catch-all); not per account |
-| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq, next_sieve, quota_bytes, quota_count, used_bytes, used_count | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts`; `quota_*` are the account's own limits (NULL: the default of the config, 0: none) and `used_*` what its emails add up to, kept by triggers |
+| `account` | id, address, password_hash, blob_key, created_at, modseq, trimmed_modseq, next_email, next_mailbox, next_thread, next_submission, next_identity, uidvalidity, auth_seq, password_changed_at, seq, next_sieve, next_collection, next_object, quota_bytes, quota_count, used_bytes, used_count | id is random and never changes; counters live here; `uidvalidity` is the last UIDVALIDITY a mailbox of the account got; `blob_key` is the account's blob key wrapped by the master key; `trimmed_modseq` is the newest state the change log no longer covers; `auth_seq` moves when a way into the account is withdrawn; `password_hash` is `!` for an account that an OIDC login made; `seq` numbers the accounts and makes the row ids of `email_fts`; `quota_*` are the account's own limits (NULL: the default of the config, 0: none) and `used_*` what its emails add up to, kept by triggers |
 | `session` | token_hash, id, account_id, stage, method, created_at, seen_at, expires_at, idle, ip, seen_ip, agent, remember | web login; the hash is SHA-256 of the token in the cookie; `id` is what the user's list shows and revokes by; `stage` is `full`, or `totp` for a login that still owes its code; ends at `expires_at`, or `idle` seconds after `seen_at` |
 | `app_password` | id, name, hash, scope, created_at, used_at, used_ip | a password for one device; `hash` is SHA-256 of the 160 random bits the server made; `scope` lists `imap`, `smtp`, `jmap` (empty: all); revoking deletes the row |
 | `totp` | secret, created_at, confirmed_at, last_step | one row per account; the secret is sealed with the account's blob key; not asked for until confirmed; `last_step` is the newest time step a code was accepted for |
@@ -80,7 +81,12 @@ Every mail table starts with `account_id`.
 | `email_fts` | rowid, subject, addr, body, attach, hdr | the full-text index: an FTS5 table, contentless (the words and their places, not the text); the rowid is the account's `seq` times 2^32 plus the email id; a trigger on `email` removes a row with its email; not per account and not encrypted |
 | `keyword` | email_id, keyword | `$seen`, `$flagged`, `$draft`, `$answered`, custom; `$deleted` is IMAP's `\Deleted` |
 | `thread_ref` | message_id, thread_id | every Message-ID seen in `Message-ID`, `In-Reply-To`, `References` |
-| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission, Identity, SieveScript, VacationResponse or Quota; op created, updated or destroyed; `at` is for trimming |
+| `changes` | modseq, type, id, op, at | type Email, Mailbox, Thread, EmailSubmission, Identity, SieveScript, VacationResponse, Quota, and since phase 9 Calendar, AddressBook, CalendarEvent, ContactCard and SchedulingMessage; op created, updated or destroyed; `at` is for trimming |
+| `collection` | id, kind, name, description, color, sort_order, is_default, is_subscribed, is_visible, include_availability, timezone, components, props, created_at, modseq, content_modseq | a calendar, an address book or the scheduling inbox (phase 9); `props` are the DAV dead properties and the path a client chose; `content_modseq` moves with every change of a member (CTag, sync) |
+| `dav_object` | id, collection_id, kind, name, uid, data, etag, size, component, start_at, end_at, summary, schedule_tag, created_at, created_modseq, modseq | one calendar object (the components of one UID) or one vCard, as text; `name` is its DAV resource name; `start_at`/`end_at` bound its instances (NULL end: for ever); one UID per collection; counts in the quota |
+| `dav_tombstone` | collection_id, name, object_id, modseq, at | an object removed or moved away, for DAV sync and the changes of a sharee; trimmed with the change log |
+| `collection_share` | collection_id, sharee, rights, modseq | a collection shared with another account, `read` or `write` |
+| `share_epoch` | sharee, modseq | the owner's modseq when what is shared with a sharee last changed; a sharee's older state gets cannotCalculateChanges |
 | `delivered` | key, at | delivery key, for idempotent delivery; trimmed after a week |
 | `submission` | id, email_id, thread_id, identity_id, message_id, blob, size, mail_from, recipients, rcpt_count, undo, queue, created_at, send_at, next_try, tries, claimed_by, claimed_until, destroyed, submit_key, modseq | outbound queue: one row per message; `recipients` is JSON with the state of each; `blob` is the message as it goes out; a node works on a row while its claim lasts |
 | `identity` | id, name, email, reply_to, bcc, text_signature, html_signature, modseq | JMAP identities; id 1 is made with the account |
@@ -192,7 +198,13 @@ internal/oidc        OpenID Connect relying party; oidctest is a provider for te
 internal/queue       outbound delivery: MX, MTA-STS, retries, bounces   new
 internal/notify      who hears of a change: a hub per node, a poll for other nodes   new
 internal/imap        IMAP server, protocol only         new
-web/                 Vue webmail (Vite, Nuxt UI); src/jmap is the client, e2e the browser test
+internal/ical        iCalendar and vCard text, DATE-TIME, DURATION, zones, recurrence (RRULE)   new (phase 9)
+internal/jscal       iCalendar to JSCalendar and back, instances of an event   new (phase 9)
+internal/jscontact   vCard to JSContact and back        new (phase 9)
+internal/pim         calendars and contacts: rights, checks, scheduling (iTIP, iMIP), free/busy   new (phase 9)
+internal/dav         WebDAV, CalDAV, CardDAV, protocol on internal/pim   new (phase 9)
+web-ng/              Angular webmail, the main one since phase 9: mail, calendar, contacts
+web/                 Vue webmail (Vite, Nuxt UI), mail only; e2e holds the browser tests of both
 Makefile             web build, binary with the webmail, tests, dev
 Dockerfile           the binary with the webmail in an image
 contrib/rspamd       Rspamd config, DKIM signing        port as is; dkim_signing.conf new
@@ -201,7 +213,7 @@ contrib/compose      rqlite, Rspamd for dev             new; with dev-only Rspam
                      keycloak.yaml: a Keycloak with a realm, for "make keycloak-test"
 contrib/dev          seed and demo scripts, sample mail new; a local instance in ./dev;
                      e2e.sh and oidc-provider for the browser tests
-contrib/lab          the interoperability lab: Postfix, Exim, OpenSMTPD, IMAP clients, Thunderbird, DNS, CA   new; "make lab-test"
+contrib/lab          the interoperability lab: Postfix, Exim, OpenSMTPD, IMAP clients, Thunderbird, DAV clients, DNS, CA   new; "make lab-test"
 internal/labtest     tests against that lab             new
 ```
 
@@ -2792,7 +2804,8 @@ Built as follows:
 ### Angular webmail (web-ng) — done
 
 A second webmail next to `web/`, with the same screens, on the same JMAP
-client and stores. The Vue webmail stays the one `make` builds.
+client and stores. Since phase 9 it is the one `make` builds, with the
+calendar and the contacts.
 
 Built as follows. Angular 22.2.7 (22.3 exists only as a release
 candidate), zoneless, standalone components, signals. One workspace in
@@ -2824,10 +2837,10 @@ CDK for dialog, menu, overlay and listbox.
   (`make e2e-ng`, port 8085): 27 passed, 14 skipped, as with Vue; the
   Keycloak spec and the screenshot specs pass when asked for.
 
-Not handled: virtual scrolling of the list, a linter, and which webmail
-the Docker image carries (it carries the Vue one).
+Not handled: virtual scrolling of the list and a linter. (Which webmail
+the Docker image carries was open here; since phase 9 it is this one.)
 
-### Phase 9: calendar and contacts — in progress
+### Phase 9: calendar and contacts — done
 
 So that robinmail can stand in for Exchange: calendars and address books,
 for the webmail over JMAP and for phones and desktop programs over
@@ -2865,10 +2878,220 @@ data Go carries), alarms stored but not delivered by robinmail, import
 and export of `.ics` and `.vcf`, DNS records (`robinmail dns` prints
 `_caldavs._tcp` and `_carddavs._tcp`), quotas that count these objects.
 
-Exit: an iPhone or macOS Calendar, Thunderbird and DAVx5-style clients
-sync calendars and contacts; an invitation goes from one account to
+Exit: Thunderbird and DAV clients that are not ours sync calendars and
+contacts (an iPhone, macOS and DAVx5 are left to try by hand); an
+invitation goes from one account to
 another and to a Postfix and an Exim receiver in the lab and the reply
 comes back; the webmail shows and edits it all.
+
+Built as follows, in this order, each piece committed with its tests:
+`ical`, `jscal`, `jscontact`, the store (schema 14), `pim`, `dav`, JMAP
+and the wiring into `serve`, the Angular screens, the switch of `make`
+and the image, the lab.
+
+- **One text, two protocols.** A calendar object is stored as the
+  VCALENDAR of one UID (master and overrides, RFC 4791 4.1), a card as
+  its vCard, in `dav_object`, with a few columns taken from it: the
+  span of its instances for time ranges, the UID, a summary. DAV reads
+  and writes that text; JMAP converts it to JSCalendar or JSContact on
+  every read and back on every write, starting from the stored text, so
+  what JSCalendar has no word for (X- properties, parameters, Apple's
+  labels on grouped vCard properties) stays. An event's id is its
+  object's (`v<n>`), a card's `p<n>`; an instance that
+  `expandRecurrences` makes is `<id>_<recurrence id>`.
+- **Writes** are one batch each, as for mail: guards for the
+  collection, the ETag (`If-Match`, `If-None-Match: *`), one UID per
+  collection (RFC 4791 5.3.2.1, RFC 6352 6.3.2.1) and the quota; the
+  account's modseq moves, `changes` gets Calendar, AddressBook,
+  CalendarEvent or ContactCard. A removal or a move leaves a tombstone,
+  from which a DAV sync token (`http://robinmail.invalid/sync/<modseq>`)
+  and the changes of a sharee are answered. A collection's
+  `content_modseq` is its CTag.
+- **Sharing.** A collection is shared with another account to read or
+  to write. To that account's JMAP session the owner's account appears,
+  read-only or not, with just what is shared (RFC 9670 accounts); in DAV
+  the shared collection shows up in the sharee's own home as
+  `<owner>-c<n>`, with the privileges of RFC 3744 that say what is
+  allowed. A sharee's changes come from the shared collections; a state
+  from before the last change of the share is refused
+  (`cannotCalculateChanges`, DAV `valid-sync-token`), so the client
+  starts again. A sharee who deletes a shared collection in a DAV client
+  leaves it; the owner keeps it.
+- **Scheduling** (RFC 6638 3.2, implicit). After a change of an
+  account's event, robinmail works out what to send: as organizer a
+  REQUEST to the attendees when more than their answers changed, a
+  CANCEL to those taken off and to all on a delete; as attendee a REPLY
+  when its own PARTSTAT changed, DECLINED on a delete. To an account of
+  this server the message is applied at once (its calendar gets the
+  event or the answer) and put in its scheduling inbox; to anyone else
+  it goes as an email (iMIP, RFC 6047: text, `text/calendar;
+  method=...` and `invite.ics`) through submission and the queue, signed
+  like the account's mail. CalDAV PUT and DELETE schedule;
+  `Schedule-Reply: F` on a DELETE does not. JMAP schedules when
+  `sendSchedulingMessages` is true, as the draft says. Incoming mail that
+  is not spam and holds an iTIP part is applied when it comes from the
+  organizer (REQUEST, ADD, CANCEL) or from the attendee it answers for
+  (REPLY); an older SEQUENCE is ignored (RFC 5546 2.1.5); the account's
+  own answer and alarms stay while the sequence does.
+- **Free/busy** of accounts of this server: the CalDAV outbox POST (RFC
+  6638 5), `free-busy-query` (RFC 4791 7.10) and JMAP
+  `Principal/getAvailability`. Transparent, cancelled, confidential and
+  declined events do not count; tentative ones are BUSY-TENTATIVE.
+- **Recurrence** is expanded by `ical` for every RRULE part (RFC 5545
+  3.3.10), with RDATE, EXDATE and overrides, in the event's zone. Zones
+  are IANA names from Go's data (`time/tzdata` is in the binary),
+  Windows names as Outlook writes them, names that end in an IANA name,
+  and otherwise a VTIMEZONE is compared with the IANA zones by its
+  changes; one that matches none becomes its standard offset. Expansion
+  has bounds: a rule that never fires ends after 2000 empty periods, a
+  period makes at most 50 000 instances, a range at most 10 000.
+- **Alarms** are stored (VALARM, JSCalendar alerts) and given to
+  clients; robinmail sends no reminders.
+- **CalDAV and CardDAV** (`internal/dav`): discovery through the
+  well-known URIs and `current-user-principal`; PROPFIND (Depth 0 and 1),
+  PROPPATCH with dead properties, MKCALENDAR and extended MKCOL at the
+  path the client chose, GET of one object or of a whole collection as
+  `.ics` or `.vcf` (the export), PUT, DELETE, MOVE; the reports
+  calendar-query (filters of RFC 4791 9.7 with time ranges),
+  calendar-multiget (with `expand`), free-busy-query,
+  addressbook-query (RFC 6352 10.5 with `limit`), addressbook-multiget
+  (a 3.0 card asked for as 4.0 changes its VERSION line),
+  sync-collection, expand-property and principal-property-search.
+  Programs log in with Basic auth: an app password with the new scope
+  `dav`, or the account password while the account has none. The
+  webmail's session cookie works too (for its export and import), and
+  the origin check applies to it only: Thunderbird's calendar sends
+  `Origin` and `Sec-Fetch-Site: same-origin` from its own code and
+  gives up on a 401 without a challenge, so `/dav` always sends one.
+- **JMAP** (`internal/jmap`): Calendar get/changes/set (with
+  `shareWith`, `onDestroyRemoveEvents`, `onSuccessSetIsDefault`),
+  CalendarEvent get/changes/set/query/parse, ParticipantIdentity
+  get/changes (the account's addresses; set is `forbidden`),
+  AddressBook and ContactCard get/changes/set/query, Principal
+  get/changes/query and getAvailability. `maxCalendarsPerEvent` and
+  `maxAddressBooksPerCard` are 1. The origin keeps `sequence` and
+  `updated` (JMAP Calendars 5.4) and picks the organizer address. Push
+  covers the new types, and the accounts that share something with the
+  user.
+- **Quota.** Calendar objects and cards count like messages, in octets
+  and in number, by triggers on `dav_object`; RFC 9425's `types` say
+  so.
+- **DNS and clients.** `robinmail dns` prints `_caldavs._tcp` and
+  `_carddavs._tcp` with their `path=/dav/` TXT records (RFC 6764 3, 4);
+  the Apple profile of the security page sets up CalDAV and CardDAV
+  besides mail; the security page shows the DAV address; the app
+  password form has the new scope.
+- **Webmail.** The Angular webmail got the calendar (day, week, month;
+  the user's calendars and those shared with them, each shown or
+  hidden; an editor with all day, start and end, location, repetition
+  by day, week, month or year with a count, guests, a reminder and
+  notes; one occurrence or the whole series changed or deleted;
+  invitations with accept, maybe and decline; calendars made, coloured,
+  shared by address, downloaded; `.ics` import through
+  `CalendarEvent/parse`) and the contacts (list, search, detail, editor
+  with names, organization, addresses, numbers, birthday and notes,
+  `.vcf` import through CardDAV, download). It is the main webmail now:
+  `make` builds it into `./robinmail`, `make e2e` tests it on port
+  8085, the Docker image carries it. The Vue webmail is `make
+  build-vue` (`./robinmail-vue`), `test-vue`, `e2e-vue`, `dev-vue`; the
+  old `-ng` names still work.
+- **A Go fault found in the lab.** With the zone data Go carries (what
+  the Alpine image uses), `Time.ZoneBounds` at the end of a leap year
+  past the zone table returns a boundary that ends where it starts
+  (Europe/Amsterdam, 2032-12-31). The VTIMEZONE writer looped on it and
+  took all memory for an event in 2031. It now steps past such a
+  boundary and stops after 1000 steps; a test runs it on that data.
+
+Test runs at the end of the phase:
+
+- `go vet ./...` and `go vet -tags webmail_ng ./...`: clean.
+- `go test -race ./...` with both databases: every package ok; 1030
+  tests and subtests passed, 24 skipped (lab, cluster, Rspamd). New:
+  `ical` (the 26 examples of RFC 5545 3.8.5.3 by name, folding, TEXT,
+  parameters and RFC 6868, DATE-TIME, DURATION, VTIMEZONE 3.6.5 and on
+  Go's own zone data; FuzzParse and FuzzRRule, 30 s each without a
+  find), `jscal` (RFC 8984 6.1, 6.2, 6.4, 6.6 through iCalendar and back),
+  `jscontact` (RFC 6350 8 through JSContact and back, an iPhone card, a
+  new card), `store` (collections, objects, sync, moves, shares, quota),
+  `pim` (RFC 5546 4.2 with three local accounts and one by mail, 2.1.5,
+  free/busy, shares), `dav` (RFC 6764, RFC 4791 5.3.1.2, 5.3.2, 7.8,
+  7.9, 7.10, 9.6.5 on the data of Appendix B, RFC 6578, RFC 6352 8.6.4,
+  RFC 5689, RFC 4918 9.2, RFC 6638, shares, hostile XML), `jmap`
+  (session, events with recurrence and instance ids, scheduling,
+  sharing, contacts, parse), `web` (DAV auth and origin, the Apple
+  profile with CalDAV and CardDAV).
+- Web-ng unit tests: 214 in the client library (7 new), 45 in the
+  screens.
+- The browser suite (`make e2e`, port 8085): 33 passed, 14 skipped by
+  design; the six new specs are `calendar.spec.ts` (a repeating event,
+  an invitation to the other user accepted and cancelled, `.ics` import,
+  a calendar shared to read) and `contacts.spec.ts` (a contact made,
+  found, changed, downloaded as vCard, deleted; `.vcf` import).
+- `make lab-test`: every case passes (454 s), with the new
+  `TestDAVClients` (Python caldav 1.4.0), `TestVdirsyncer` (vdirsyncer
+  0.19.3), `TestInvitations` (robinmail to robinmail, to Postfix and to
+  Exim: request, reply by mail, cancel) and `TestThunderbirdCalDAV`
+  (Thunderbird 153.7 ESR: events and cards both ways, a change and a
+  delete in Thunderbird, an invitation shown, a later card by sync).
+- `make` builds the Angular webmail into `./robinmail`; the lab's image
+  was built from the Dockerfile with it.
+
+Not run in this phase: `make cluster-test`, `make e2e-vue`, the
+Keycloak spec.
+
+Not handled:
+
+- **No phone or desktop program other than Thunderbird has been
+  tried.** The iPhone and macOS (Calendar, Contacts, the profile), DAVx5
+  and Outlook (which speaks no CalDAV) were not in the lab. The
+  hand-over note says how to try the iPhone on the development instance
+  (`contrib/dev/phone.sh`).
+- **Per-user properties of shared calendars** (JMAP Calendars 5.4:
+  colour, alerts, keywords per sharee): there is one copy; a sharee's
+  change of colour or visibility is accepted and kept by no one.
+- **CalendarEventNotification and ShareNotification** (JMAP Calendars
+  7, RFC 9670 5) are not there; nor the `/copy` methods, `isDraft`
+  (refused), `defaultAlertsWithTime` and `defaultAlertsWithoutTime`
+  (always null), and `/queryChanges` of events, cards and principals
+  (`cannotCalculateChanges`: query again).
+- **An event lives in one calendar** (`maxCalendarsPerEvent` 1), a card
+  in one address book.
+- **Scheduling:** COUNTER, DECLINECOUNTER and REFRESH are ignored;
+  SCHEDULE-STATUS is written on the organizer's copy only when an
+  answer comes, not when the request goes out; no Schedule-Tag
+  (RFC 6638 3.2.10); `hideAttendees` is not applied; free/busy is only
+  known for accounts of this server.
+- **Invitations from outside are added by themselves**, as Gmail does,
+  when the From field names the organizer and the mail was not taken
+  for spam. Nothing checks that the From field is genuine beyond what
+  Rspamd's score does (see the open questions).
+- **DAV:** no LOCK, no ACL method, no COPY, no calendar proxies or
+  delegation, no partial calendar-data or address-data (the whole object
+  comes back), no `limit` on sync-collection, no managed attachments,
+  no VAVAILABILITY, no public or subscribable calendar URLs. Sharing is
+  only with accounts of this server.
+- **Zones:** a VTIMEZONE that matches no IANA zone becomes its standard
+  offset; RSCALE (RFC 7529) is kept but expanded as Gregorian.
+- **Not encrypted at rest:** calendar objects and cards are text in
+  rqlite, like the full-text index; the blobs stay the only thing
+  encrypted.
+- **Webmail:** no dragging of events, no time zone picker (the
+  browser's zone), no free/busy view while inviting, no attendees per
+  occurrence, no reminders shown by the webmail; no contact groups or
+  photos in the editor. The Vue webmail has neither calendar nor
+  contacts.
+- **Mailbox delegation** was not part of this phase, as decided.
+
+Open questions:
+
+- Invitations from outside: add them only with a DMARC pass (Rspamd's
+  symbol), only from senders in the address book, or as now?
+- Reminders: should robinmail mail them (or push JMAP's CalendarAlert)
+  for users without a calendar program?
+- Public calendar links (a read-only `.ics` URL to subscribe to): wanted?
+- Mailbox delegation and calendar proxies (RFC 3744 groups, Apple's
+  calendar-proxy): Exchange users expect "send on behalf of" and a
+  secretary's access. A phase of its own?
 
 ## Open questions
 
