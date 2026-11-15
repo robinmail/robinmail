@@ -114,7 +114,7 @@
               "extractLicenses": false,
               "sourceMap": true,
               "tsConfig": "projects/shell/tsconfig.dev.json",
-              "deployUrl": "/"
+              "baseHref": "/"
             }
           },
           "defaultConfiguration": "production"

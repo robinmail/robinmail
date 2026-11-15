@@ -50,17 +50,25 @@ export class AddressInput {
     this.input().nativeElement.focus()
   }
 
+  // The field is written here and not only through the template: text
+  // that was typed and is taken away again in the same moment leaves the
+  // template with the value it had, and it would not touch the field.
+  private setText(v: string): void {
+    this.text.set(v)
+    this.input().nativeElement.value = v
+  }
+
   // commit turns the typed text into chips. It answers whether all of it
   // was an address.
   commit(): boolean {
     if (this.text().trim() === '') {
-      this.text.set('')
+      this.setText('')
       this.setBad(false)
       return true
     }
     const r = parseAddresses(this.text())
     if (r.addresses.length) this.valueChange.emit(dedupe([...this.value(), ...r.addresses]))
-    this.text.set(r.invalid.join(', '))
+    this.setText(r.invalid.join(', '))
     this.setBad(r.invalid.length > 0)
     return r.invalid.length === 0
   }
@@ -96,7 +104,7 @@ export class AddressInput {
     const pasted = e.clipboardData?.getData('text/plain') ?? ''
     if (pasted === '') return
     e.preventDefault()
-    this.text.set(this.text().trim() ? `${this.text()}, ${pasted}` : pasted)
+    this.setText(this.text().trim() ? `${this.text()}, ${pasted}` : pasted)
     this.commit()
   }
 

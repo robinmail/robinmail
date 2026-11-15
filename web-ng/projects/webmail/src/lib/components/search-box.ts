@@ -59,6 +59,8 @@ export class SearchBox {
   }
   protected clear(): void {
     this.text.set('')
+    // Also when the template still holds the empty value from before the typing.
+    this.input().nativeElement.value = ''
     this.apply()
   }
   focus(): void {
