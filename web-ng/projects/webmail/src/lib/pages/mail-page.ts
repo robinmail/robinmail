@@ -96,7 +96,7 @@ const sendKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl
 
         <section id="list" class="min-w-0 flex-col border-r border-default max-lg:w-full lg:w-[26rem] lg:shrink-0" [class]="threadId ? 'hidden lg:flex' : 'flex'">
           <div class="flex h-(--ui-header-height) shrink-0 items-center gap-1.5 border-b border-default px-3 sm:px-4">
-            <button rmBtn type="button" variant="ghost" color="neutral" class="lg:hidden" aria-label="Mailboxes" [attr.aria-expanded]="drawer()" aria-controls="mailboxes" (click)="drawer.set(true)">
+            <button rmBtn type="button" variant="ghost" color="neutral" class="lg:hidden" aria-label="Mailboxes menu" [attr.aria-expanded]="drawer()" aria-controls="mailboxes" (click)="drawer.set(true)">
               <rm-icon name="menu" class="size-4" />
             </button>
             <h1 class="truncate font-semibold text-highlighted">{{ mailbox?.name ?? 'Mail' }}</h1>
@@ -332,7 +332,8 @@ export class MailPage implements OnInit, OnDestroy {
         }
         break
       case 'Escape':
-        if (selected.length) view.selection.set(new Set())
+        if (this.drawer()) this.drawer.set(false)
+        else if (selected.length) view.selection.set(new Set())
         else if (threadId) void view.closeThread()
         break
       case '/':
