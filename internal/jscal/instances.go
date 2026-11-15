@@ -159,6 +159,11 @@ func (o *Object) Set() (ical.Set, bool) {
 // MaxInstances bounds what one expansion returns.
 const MaxInstances = 10_000
 
+// maxSteps bounds the instances one expansion looks at, those before the
+// range included. Rules without COUNT start near the range
+// (ical.Set.IterFrom); this bounds the ones with a large COUNT.
+const maxSteps = 250_000
+
 // Instances returns the instances that overlap [from, to): those whose end
 // is after from and whose start is before to (RFC 4791 9.9). An instance of
 // zero length overlaps when it starts within the range. complete is false
@@ -192,8 +197,14 @@ func (o *Object) Instances(from, to time.Time, max int) (out []Instance, complet
 		}
 		// An instance that started before from can still overlap it.
 		lookFrom := from.Add(-length).Add(-48 * time.Hour)
-		it := set.Iter()
-		for steps := 0; steps < 2_000_000; steps++ {
+		it := set.IterFrom(lookFrom)
+		for steps := 0; ; steps++ {
+			if steps == maxSteps {
+				// Instances before from count too: the expansion stopped
+				// without reaching to.
+				complete = false
+				break
+			}
 			t, more := it.Next()
 			if !more {
 				break
@@ -226,9 +237,6 @@ func (o *Object) Instances(from, to time.Time, max int) (out []Instance, complet
 				if !add(Instance{Start: t, End: end, RecurrenceID: rid, Component: o.Master}) {
 					break
 				}
-			}
-			if steps == 2_000_000-1 {
-				complete = false
 			}
 		}
 	}

@@ -287,6 +287,32 @@ func newRuleIter(r RRule, start time.Time) *ruleIter {
 	return it
 }
 
+// longestPeriod is the most time one period of a frequency can take: a
+// day can have 25 hours.
+var longestPeriod = map[Freq]time.Duration{
+	Secondly: time.Second, Minutely: time.Minute, Hourly: time.Hour,
+	Daily: 25 * time.Hour, Weekly: 7 * 25 * time.Hour, Monthly: 31 * 25 * time.Hour, Yearly: 366 * 25 * time.Hour,
+}
+
+// seek skips the periods that end before from without making their
+// instances, so that a rule of every second since 1970 costs as much as one
+// that started last week. A rule with COUNT is left alone: its instances
+// have to be counted. The period it moves to begins at or before from, so
+// nothing at or after from is skipped; the caller drops what is before.
+func (it *ruleIter) seek(from time.Time) {
+	if it.r.Count > 0 || it.done || it.r.Interval <= 0 {
+		return
+	}
+	d := from.Sub(it.start)
+	per := longestPeriod[it.r.Freq] * time.Duration(it.r.Interval)
+	if d <= 0 || per <= 0 {
+		return
+	}
+	if n := int(d/per) - 2; n > it.period {
+		it.period, it.buf, it.empty = n, nil, 0
+	}
+}
+
 func (it *ruleIter) next() (time.Time, bool) {
 	for len(it.buf) == 0 {
 		if it.done {
@@ -625,7 +651,12 @@ func (s *source) advance() bool {
 
 // Iter starts a walk over the set. DTSTART is always the first instance
 // (RFC 5545 3.8.2.4), unless it is excluded.
-func (s *Set) Iter() *Iter {
+func (s *Set) Iter() *Iter { return s.IterFrom(time.Time{}) }
+
+// IterFrom is Iter for a caller that wants nothing before from: the rules
+// without COUNT start near it (ruleIter.seek). Instances before from may
+// still come and are the caller's to drop.
+func (s *Set) IterFrom(from time.Time) *Iter {
 	it := &Iter{ex: map[int64]bool{}}
 	for _, t := range s.ExDates {
 		it.ex[t.Unix()] = true
@@ -638,6 +669,9 @@ func (s *Set) Iter() *Iter {
 	}
 	for _, r := range s.Rules {
 		rs := &source{rule: newRuleIter(r, s.Start)}
+		if !from.IsZero() {
+			rs.rule.seek(from)
+		}
 		if rs.advance() {
 			it.h = append(it.h, rs)
 		}
@@ -673,7 +707,7 @@ func (it *Iter) Next() (time.Time, bool) {
 // more than maxSteps instances before from.
 func (s *Set) Between(from, to time.Time, max int) ([]time.Time, bool) {
 	const maxSteps = 1_000_000
-	it := s.Iter()
+	it := s.IterFrom(from)
 	var out []time.Time
 	for steps := 0; steps < maxSteps; steps++ {
 		t, ok := it.Next()
