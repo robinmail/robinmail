@@ -81,3 +81,47 @@ func TestPrivateAddressesWhenAllowed(t *testing.T) {
 		t.Errorf("routed: submission %s", states(got))
 	}
 }
+
+// The HTTP requests that go where another domain says (its MTA-STS policy,
+// the https address for its TLS reports) do not connect to an address
+// that is not public either, whatever name it was reached under.
+func TestOutboundHTTPConnectsToPublicAddressesOnly(t *testing.T) {
+	connected := make(chan struct{}, 4)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			connected <- struct{}{}
+			c.Close()
+		}
+	}()
+	// "localhost" is a name, as an attacker's own name for 127.0.0.1 would be.
+	_, port, _ := net.SplitHostPort(l.Addr().String())
+	for _, host := range []string{"127.0.0.1", "localhost"} {
+		_, err = OutboundHTTP(false).Get("https://" + net.JoinHostPort(host, port) + "/.well-known/mta-sts.txt")
+		if err == nil || !strings.Contains(err.Error(), "not a public address") {
+			t.Errorf("%s: %v, want a refusal to connect", host, err)
+		}
+	}
+	select {
+	case <-connected:
+		t.Error("a connection was made to 127.0.0.1")
+	default:
+	}
+	// The lab's client does connect (and then fails on what is no TLS).
+	if _, err = OutboundHTTP(true).Get("https://" + l.Addr().String() + "/"); err == nil || strings.Contains(err.Error(), "not a public address") {
+		t.Errorf("allowed: %v", err)
+	}
+	select {
+	case <-connected:
+	default:
+		t.Error("the client that may did not connect")
+	}
+}

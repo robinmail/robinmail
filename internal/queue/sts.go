@@ -181,6 +181,17 @@ func (w *Worker) fetchSTSPolicy(ctx context.Context, domain string) ([]byte, err
 // with AllowPrivate.
 var defaultSTSClient, privateSTSClient = stsClient(true), stsClient(false)
 
+// OutboundHTTP is the HTTP client for a request to a place that another
+// domain named: its MTA-STS policy host, the https address its TLS
+// reports go to. It follows no redirects, uses no proxy, and unless
+// allowPrivate is set connects to public addresses only.
+func OutboundHTTP(allowPrivate bool) *http.Client {
+	if allowPrivate {
+		return privateSTSClient
+	}
+	return defaultSTSClient
+}
+
 func stsClient(publicOnly bool) *http.Client {
 	d := &net.Dialer{Timeout: 30 * time.Second}
 	if publicOnly {

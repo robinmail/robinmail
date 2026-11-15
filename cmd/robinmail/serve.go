@@ -661,7 +661,9 @@ func (a *app) tlsReporter(sender *delivery.Submitter, log *slog.Logger) *tlsRepo
 			return sender.Report(ctx, a.store, key, from, rcpt, raw)
 		},
 		// No redirects: the report goes where the record says or nowhere.
-		post: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		// And where the record says is the other domain's choice: not to
+		// an address on our own network (queue.OutboundHTTP).
+		post: queue.OutboundHTTP(a.cfg.Outbound.AllowPrivateAddresses),
 		now:  time.Now, log: log,
 	}
 }
