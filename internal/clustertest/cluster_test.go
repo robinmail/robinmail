@@ -2,7 +2,6 @@ package clustertest
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -105,7 +104,7 @@ func leaderKilled(t *testing.T, sessions []session) {
 // uidnext; and the account's modseq is at least that of every email.
 func uidsWithoutGaps(t *testing.T) {
 	t.Helper()
-	num := func(v any) int64 { n, _ := v.(json.Number).Int64(); return n }
+	num := func(v any) int64 { f, _ := v.(float64); return int64(f) }
 	for _, r := range dbRows(t, `SELECT m.account_id, m.id, count(*), count(DISTINCT em.uid), max(em.uid), m.uidnext
 		FROM mailbox m JOIN email_mailbox em ON em.account_id = m.account_id AND em.mailbox_id = m.id
 		GROUP BY m.account_id, m.id`) {
@@ -239,7 +238,12 @@ func wipedNode(t *testing.T, sessions []session) {
 	}
 
 	// One other node down; the victim must not fetch from the one left.
-	since := time.Now()
+	// Its log counts every fetch, the repair pass's too: compare before
+	// and after the reads.
+	fetches := func() int {
+		return strings.Count(compose(t, "logs", "--no-log-prefix", robin[victim].service), "blob fetched")
+	}
+	before := fetches()
 	compose(t, "kill", robin[0].service)
 	waitFor(t, "a leader of the two left", 30*time.Second, func() bool { return membersUp() == 2 })
 	j := newJMAP(victim)
@@ -260,7 +264,7 @@ func wipedNode(t *testing.T, sessions []session) {
 			read++
 		}
 	}
-	fetched := strings.Count(compose(t, "logs", "--no-log-prefix", "--since", since.UTC().Format(time.RFC3339), robin[victim].service), "blob fetched")
+	fetched := fetches() - before
 	t.Logf("with %s killed, %s read %d of %d messages, fetching %d blobs from a peer",
 		robin[0].service, robin[victim].service, read-bad, read, fetched)
 	if read != total {

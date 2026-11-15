@@ -604,7 +604,8 @@ func (j *jmap) loginAs(t testing.TB, user string) session {
 }
 
 // dbRows runs a query on the database, linearizable, through a node that
-// answers, and returns the rows. Numbers are json.Number.
+// answers, and returns the rows. Numbers are float64, as encoding/json
+// makes them.
 func dbRows(t testing.TB, sql string) [][]any {
 	t.Helper()
 	var last error
@@ -616,7 +617,6 @@ func dbRows(t testing.TB, sql string) [][]any {
 		}
 		var rows [][]any
 		dec := json.NewDecoder(strings.NewReader(out))
-		dec.UseNumber()
 		for {
 			var row []any
 			if err := dec.Decode(&row); err != nil {
