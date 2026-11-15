@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	mail "github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/tlsrpt"
+	mail "github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/tlsrpt"
 )
 
 // tlsReporter makes the daily TLS reports (RFC 8460): for every domain

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/message"
 )
 
 // test evaluates one test.

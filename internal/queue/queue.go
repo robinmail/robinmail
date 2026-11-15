@@ -24,7 +24,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
-	"github.com/mikepage/robinmail/internal/metrics"
+	"github.com/robinmail/robinmail/internal/metrics"
 	"log/slog"
 	"net"
 	"net/http"
@@ -33,11 +33,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/rqlite"
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/tlsrpt"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/tlsrpt"
 )
 
 // Store is what a Worker needs from the store. *store.Store has it.

@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // VacationResponse (RFC 8621 8): the automatic reply of an account. There

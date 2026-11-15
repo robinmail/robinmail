@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/message"
 )
 
 // The example report of RFC 8460 appendix B.

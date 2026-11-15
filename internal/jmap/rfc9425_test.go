@@ -3,7 +3,7 @@ package jmap
 import (
 	"testing"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 func (e *env) quota(name, args string) map[string]any {

@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // maxInlineImage is the largest image of a message that the HTML view

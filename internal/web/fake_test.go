@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // fakeAccounts is the store in memory: accounts, sessions, app passwords,

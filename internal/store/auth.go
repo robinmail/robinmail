@@ -6,13 +6,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/mikepage/robinmail/internal/metrics"
+	"github.com/robinmail/robinmail/internal/metrics"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // This file holds what phase 7 added to the ways into an account: app

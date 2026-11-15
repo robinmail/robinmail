@@ -18,7 +18,7 @@ import (
 	"context"
 	"embed"
 	"errors"
-	"github.com/mikepage/robinmail/internal/metrics"
+	"github.com/robinmail/robinmail/internal/metrics"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -32,8 +32,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/users"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/users"
 )
 
 // Accounts is what the server needs from the store. *store.Store has it.

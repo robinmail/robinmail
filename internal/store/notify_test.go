@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/notify"
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/notify"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // secondNode is another store on the same rqlite, as a second robinmail

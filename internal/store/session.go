@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // AccountByID looks an account up by its id.

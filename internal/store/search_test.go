@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 func queryIDs(t *testing.T, s *Store, a Account, f Filter) []int64 {

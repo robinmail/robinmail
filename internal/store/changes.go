@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // How long the change log and the delivery keys are kept.

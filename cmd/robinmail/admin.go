@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // note writes what an administrator did to the log of auth events, for

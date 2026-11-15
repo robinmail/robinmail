@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/address"
 )
 
 // An alias is an address, or a pattern for addresses, of one of our

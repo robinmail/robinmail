@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // JMAP Quota (RFC 9425): what the account may hold and holds, as up to two

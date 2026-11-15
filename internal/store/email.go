@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/blob"
 )
 
 // Email is one stored message. Its ID does not depend on the mailboxes it is

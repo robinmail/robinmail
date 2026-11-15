@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/config"
-	"github.com/mikepage/robinmail/internal/web"
+	"github.com/robinmail/robinmail/internal/config"
+	"github.com/robinmail/robinmail/internal/web"
 )
 
 // Besides its hostname the server answers under names that belong to its

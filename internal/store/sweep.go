@@ -9,8 +9,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // BlobGrace is how old an unreferenced blob file must be before a sweep

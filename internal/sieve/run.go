@@ -9,7 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mikepage/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/message"
 )
 
 // Limits on what one message costs and causes.

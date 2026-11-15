@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 var (

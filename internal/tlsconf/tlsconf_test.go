@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/config"
+	"github.com/robinmail/robinmail/internal/config"
 )
 
 func writeCert(t *testing.T, certFile, keyFile string, serial int64) {

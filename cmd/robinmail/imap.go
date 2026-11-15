@@ -7,10 +7,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mikepage/robinmail/internal/imap"
-	"github.com/mikepage/robinmail/internal/notify"
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/web"
+	"github.com/robinmail/robinmail/internal/imap"
+	"github.com/robinmail/robinmail/internal/notify"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/web"
 )
 
 // imapBackend puts the store behind the interfaces of internal/imap.

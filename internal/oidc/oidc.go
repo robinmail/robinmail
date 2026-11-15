@@ -42,7 +42,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/jose"
+	"github.com/robinmail/robinmail/internal/jose"
 )
 
 // Config describes one provider.

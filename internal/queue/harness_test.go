@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/rqlite"
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Nothing in these tests asks a real name server or connects anywhere but

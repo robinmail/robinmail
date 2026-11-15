@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // RFC 5321 4.2.2: 452 "insufficient system storage" and 552 "exceeded

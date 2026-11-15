@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Capability URIs.

@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/config"
-	"github.com/mikepage/robinmail/internal/queue"
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/config"
+	"github.com/robinmail/robinmail/internal/queue"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // TestMain keeps the outbound worker of every "serve" in these tests away

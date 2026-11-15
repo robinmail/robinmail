@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // emailRef reads an email id that may be a "#creationId" reference.

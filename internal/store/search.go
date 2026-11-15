@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/mikepage/robinmail/internal/search"
+	"github.com/robinmail/robinmail/internal/search"
 )
 
 // sqlFTSBase is the first rowid of the account :a in email_fts; its emails

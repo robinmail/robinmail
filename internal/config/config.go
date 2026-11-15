@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/address"
 )
 
 type Config struct {

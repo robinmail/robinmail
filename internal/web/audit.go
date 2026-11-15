@@ -3,7 +3,7 @@ package web
 import (
 	"context"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Events in the log of auth events (the auth_event table). The detail of

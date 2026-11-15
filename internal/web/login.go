@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/totp"
-	"github.com/mikepage/robinmail/internal/users"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/totp"
+	"github.com/robinmail/robinmail/internal/users"
 )
 
 // The web login.

@@ -8,10 +8,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mikepage/robinmail/internal/qr"
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/totp"
-	"github.com/mikepage/robinmail/internal/users"
+	"github.com/robinmail/robinmail/internal/qr"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/totp"
+	"github.com/robinmail/robinmail/internal/users"
 )
 
 // What a logged-in user changes about the ways into the account: the

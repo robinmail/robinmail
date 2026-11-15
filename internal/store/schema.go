@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // schemaVersion goes up with every change to the tables below. Init brings

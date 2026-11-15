@@ -1,4 +1,4 @@
-module github.com/mikepage/robinmail
+module github.com/robinmail/robinmail
 
 go 1.27.4
 

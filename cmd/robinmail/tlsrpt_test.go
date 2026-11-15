@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/config"
-	"github.com/mikepage/robinmail/internal/queue"
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/tlsrpt"
+	"github.com/robinmail/robinmail/internal/config"
+	"github.com/robinmail/robinmail/internal/queue"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/tlsrpt"
 )
 
 // TestMTASTSPolicyServed is phase 8's policy host: robinmail answers

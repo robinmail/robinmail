@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // Node is a robinmail node of the cluster, as the node table has it.

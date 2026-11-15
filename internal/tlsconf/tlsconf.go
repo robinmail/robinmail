@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 
-	"github.com/mikepage/robinmail/internal/config"
+	"github.com/robinmail/robinmail/internal/config"
 )
 
 // ErrNotConfigured means the config has neither certificate files nor ACME.

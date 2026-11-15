@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mikepage/robinmail/internal/queue"
+	"github.com/robinmail/robinmail/internal/queue"
 )
 
 // TestAliasesAndForwarding is phase 8's aliases between two servers, each

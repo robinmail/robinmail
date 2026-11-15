@@ -3077,4 +3077,4 @@ webmail clients were out of scope). Found: no critical, 1 high, 7 medium
 and 8 low findings. Fixed: the high one, 5 medium and 1 low. Open: 2
 medium (one of them partly fixed) and 7 low. The findings, the verdict
 and what was found sound are in the tracking issue:
-https://github.com/mikepage/robinmail/issues/44
+https://github.com/robinmail/robinmail/issues/44

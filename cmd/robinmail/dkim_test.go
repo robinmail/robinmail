@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/queue"
-	"github.com/mikepage/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/queue"
+	"github.com/robinmail/robinmail/internal/smtp"
 )
 
 // catcher is a mail server that keeps what it is given.

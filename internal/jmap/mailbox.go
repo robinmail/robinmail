@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // mailboxProperties are the properties of a Mailbox (RFC 8621 2).

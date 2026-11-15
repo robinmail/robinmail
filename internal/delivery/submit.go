@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/address"
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/rspamd"
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/rspamd"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // SubmitStore is the part of the store a Submitter needs. *store.Store

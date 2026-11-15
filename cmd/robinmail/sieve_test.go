@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mikepage/robinmail/internal/queue"
+	"github.com/robinmail/robinmail/internal/queue"
 )
 
 // sieveCall posts method calls with the Sieve capability.

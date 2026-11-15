@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mikepage/robinmail/internal/sieve"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/sieve"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // doSieve runs calls with the Sieve capability in "using".

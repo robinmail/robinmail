@@ -4,7 +4,7 @@ A mail server in Go that is built around JMAP. It receives mail over SMTP, store
 sends it, and serves it over JMAP (RFC 8620, RFC 8621) and IMAP. A webmail in Vue ships
 inside the binary; the same webmail in Angular can be built in instead.
 
-Documentation: [docs/](docs/README.md).
+Documentation: https://robinmail.github.io/docs/ (source: [robinmail/docs](https://github.com/robinmail/docs)).
 
 ## What it is, and what it is not
 
@@ -12,7 +12,7 @@ robinmail is a learning project. Read this before you run it anywhere that matte
 
 - **Not production-hardened.** Nobody has run it under real load, and no human has
   audited it. An AI session reviewed the server on 2026-11-15; what it found and what is
-  still open is in [docs/security.md](docs/security.md).
+  still open is on the [security page](https://robinmail.github.io/docs/security/).
 - **Never tested against real providers.** It has exchanged mail with Postfix, Exim and
   OpenSMTPD, and been read by Thunderbird, mbsync, OfflineIMAP and Dovecot's ImapTest,
   all in a closed lab on one machine. It has never delivered a message to Gmail,
@@ -106,8 +106,9 @@ outside them.
 
 ## Where to read on
 
-- [docs/](docs/README.md): getting started, architecture, configuration, webmail, testing,
-  security, and a comparison with mox.
+- [The documentation site](https://robinmail.github.io/docs/): getting started,
+  architecture, configuration, commands, webmail, testing, security, and a comparison
+  with mox.
 - [PLAN.md](PLAN.md): decisions, the store, every phase with what was built, how it was
   tested and what is not handled, and the open questions.
 - `Makefile`: the targets, with what each needs.

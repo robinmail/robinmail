@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // The limit on wrong passwords for one address holds when the guesses

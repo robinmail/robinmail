@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/blob"
 )
 
 // blobFile is where the local blob store keeps a blob.

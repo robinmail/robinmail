@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/rspamd"
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/rspamd"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // queueStore records what a Submitter queues.

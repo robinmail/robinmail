@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/address"
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/srs"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/srs"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // fakeAliases is an alias table with the lookup rules of the store.

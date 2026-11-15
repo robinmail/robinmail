@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/address"
-	"github.com/mikepage/robinmail/internal/oidc"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/oidc"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Login through an OpenID Connect provider, for the webmail only: a mail

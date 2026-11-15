@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/totp"
+	"github.com/robinmail/robinmail/internal/totp"
 )
 
 // reply is one HTTP answer of a robinmail node.

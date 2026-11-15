@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/address"
 )
 
 func TestParseAliasAddress(t *testing.T) {

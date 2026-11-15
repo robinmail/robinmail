@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 var ctx = context.Background()

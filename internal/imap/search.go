@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/message"
 )
 
 // SEARCH (RFC 3501 6.4.4), with the MODSEQ key of RFC 7162 3.1.5, the

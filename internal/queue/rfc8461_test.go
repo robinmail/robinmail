@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // RFC 8461 3.1: the TXT record. The example is "v=STSv1; id=20160831085700Z;".

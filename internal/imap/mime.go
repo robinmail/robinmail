@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/message"
 )
 
 // The structure of a message as IMAP wants it: a tree of body parts, each

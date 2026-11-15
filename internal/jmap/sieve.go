@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/sieve"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/sieve"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // JMAP for Sieve scripts (RFC 9661): SieveScript/get, /set, /query and

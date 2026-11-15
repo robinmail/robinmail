@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/oidc/oidctest"
-	"github.com/mikepage/robinmail/internal/queue"
-	"github.com/mikepage/robinmail/internal/totp"
+	"github.com/robinmail/robinmail/internal/oidc/oidctest"
+	"github.com/robinmail/robinmail/internal/queue"
+	"github.com/robinmail/robinmail/internal/totp"
 )
 
 // authNode is one of two servers on the same database.

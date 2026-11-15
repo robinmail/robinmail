@@ -5,10 +5,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/address"
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/srs"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/srs"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // AliasStore finds the alias for an address of ours. *store.Store has it.

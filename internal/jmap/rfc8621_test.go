@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/address"
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/rqlite"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Tests of the mail methods, written from RFC 8621 and using its examples.

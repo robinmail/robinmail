@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/message"
 )
 
 // Policy types (RFC 8460 4.3.2, "policy-type").

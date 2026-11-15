@@ -21,7 +21,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mikepage/robinmail/internal/oidc/oidctest"
+	"github.com/robinmail/robinmail/internal/oidc/oidctest"
 )
 
 func main() {

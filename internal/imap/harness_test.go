@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/message"
 )
 
 // The tests of this package run the server against a store in memory that

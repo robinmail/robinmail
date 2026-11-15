@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/message"
 )
 
 const (

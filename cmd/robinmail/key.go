@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/mikepage/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/blob"
 )
 
 // Replacing the master key, in steps that never leave a node unable to

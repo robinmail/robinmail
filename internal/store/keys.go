@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // Master key rotation. An account's blob key is stored wrapped under a

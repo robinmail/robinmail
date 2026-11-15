@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/oidc"
-	"github.com/mikepage/robinmail/internal/oidc/oidctest"
+	"github.com/robinmail/robinmail/internal/oidc"
+	"github.com/robinmail/robinmail/internal/oidc/oidctest"
 )
 
 var ctx = context.Background()

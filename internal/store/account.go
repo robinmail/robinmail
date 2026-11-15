@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/rqlite"
 )
 
 // Account is one mail user. ID is random and never changes, also if the

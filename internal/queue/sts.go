@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/tlsrpt"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/tlsrpt"
 )
 
 // MTA-STS (RFC 8461) lets a domain say that mail for it must go over TLS

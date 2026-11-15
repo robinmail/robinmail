@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/config"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/config"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // rqliteImage is the rqlite of contrib/compose/compose.yaml.

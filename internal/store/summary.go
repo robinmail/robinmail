@@ -3,8 +3,8 @@ package store
 import (
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/search"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/search"
 )
 
 // summary is what a delivery caches from the message: the ids that decide the

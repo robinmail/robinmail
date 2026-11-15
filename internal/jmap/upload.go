@@ -6,7 +6,7 @@ import (
 	"mime"
 	"net/http"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // serveUpload is the upload endpoint (RFC 8620 6.1): the body of the POST

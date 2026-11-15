@@ -22,14 +22,14 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/mikepage/robinmail/internal/address"
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/cluster"
-	"github.com/mikepage/robinmail/internal/config"
-	"github.com/mikepage/robinmail/internal/rqlite"
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/users"
-	"github.com/mikepage/robinmail/internal/web"
+	"github.com/robinmail/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/cluster"
+	"github.com/robinmail/robinmail/internal/config"
+	"github.com/robinmail/robinmail/internal/rqlite"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/users"
+	"github.com/robinmail/robinmail/internal/web"
 )
 
 const usage = `usage: robinmail [-config robinmail.json] <command>

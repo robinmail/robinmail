@@ -58,8 +58,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Directory is the node table. *store.Store has it.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Tests of Identity (RFC 8621 6) and EmailSubmission (RFC 8621 7).

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/notify"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/notify"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Tests of push, written from RFC 8620 section 7. They need rqlite, as the

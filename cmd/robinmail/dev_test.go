@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/config"
-	"github.com/mikepage/robinmail/internal/tlsconf"
+	"github.com/robinmail/robinmail/internal/config"
+	"github.com/robinmail/robinmail/internal/tlsconf"
 )
 
 // The development instance of contrib/dev/seed.sh is one a mail client

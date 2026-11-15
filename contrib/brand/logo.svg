@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#1d2433"/>
+  <!-- envelope -->
+  <rect x="96" y="160" width="320" height="224" rx="28" fill="#f4efe6"/>
+  <path d="M110 178 L256 292 L402 178" fill="none" stroke="#1d2433" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- robin: round body with an orange breast, sitting on the envelope -->
+  <circle cx="352" cy="146" r="62" fill="#3a2f2a"/>
+  <circle cx="362" cy="160" r="40" fill="#e8642c"/>
+  <circle cx="330" cy="124" r="9" fill="#f4efe6"/>
+  <circle cx="330" cy="124" r="4" fill="#1d2433"/>
+  <path d="M298 128 L272 138 L298 144 Z" fill="#f2b33d"/>
+</svg>

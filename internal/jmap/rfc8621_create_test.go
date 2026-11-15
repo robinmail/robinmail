@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Tests of what makes Emails: the upload endpoint (RFC 8620 6.1),

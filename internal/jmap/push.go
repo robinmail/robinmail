@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Push: the event source of RFC 8620 7.3. A client keeps one GET open and

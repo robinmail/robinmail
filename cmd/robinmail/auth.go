@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
-	"github.com/mikepage/robinmail/internal/users"
-	"github.com/mikepage/robinmail/internal/web"
+	"github.com/robinmail/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/users"
+	"github.com/robinmail/robinmail/internal/web"
 )
 
 // The administrator's side of authentication: what somebody with a shell

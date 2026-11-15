@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/address"
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 var identityProperties = []string{"id", "name", "email", "replyTo", "bcc", "textSignature", "htmlSignature", "mayDelete"}

@@ -9,17 +9,17 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
-	"github.com/mikepage/robinmail/internal/metrics"
+	"github.com/robinmail/robinmail/internal/metrics"
 	"log/slog"
 	"net"
 	"strings"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/address"
-	"github.com/mikepage/robinmail/internal/rspamd"
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/srs"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/rspamd"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/srs"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // Store is the part of the mail store delivery needs. *store.Store has it.

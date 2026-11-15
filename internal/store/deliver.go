@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/blob"
+	"github.com/robinmail/robinmail/internal/blob"
 )
 
 // Message is a raw message to store in one account.

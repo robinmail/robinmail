@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/smtp"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/smtp"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // The grammar of RFC 5321 4.4 as regular expressions, for a line whose

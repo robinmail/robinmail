@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/address"
+	"github.com/robinmail/robinmail/internal/address"
 )
 
 // Mail programs that configure themselves. Three ways are served, all from

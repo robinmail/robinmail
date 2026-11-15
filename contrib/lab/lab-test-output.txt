@@ -1109,4 +1109,4 @@ tls 01 self-signed certificate, no MTA-STS policy: delivered over TLS           
 tls 02 self-signed certificate, MTA-STS enforce: not delivered                           -             -             -             -             -             pass          -             -             -             
 tls 03 no STARTTLS offered, no policy: delivered in the clear                            -             -             -             -             -             pass          -             -             -             
 tls 04 no STARTTLS offered, MTA-STS enforce: not delivered                               -             -             -             -             -             pass          -             -             -             
-ok  	github.com/mikepage/robinmail/internal/labtest	430.070s
+ok  	github.com/robinmail/robinmail/internal/labtest	430.070s

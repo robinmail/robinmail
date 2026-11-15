@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // RFC 8621 4.4.1: the conditions text, body and header of Email/query, and

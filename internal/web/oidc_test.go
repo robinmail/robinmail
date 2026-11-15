@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/oidc"
-	"github.com/mikepage/robinmail/internal/oidc/oidctest"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/oidc"
+	"github.com/robinmail/robinmail/internal/oidc/oidctest"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // withProvider gives the site a fake OpenID provider, as the provider

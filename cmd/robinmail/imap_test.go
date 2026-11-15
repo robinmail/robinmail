@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mikepage/robinmail/internal/queue"
+	"github.com/robinmail/robinmail/internal/queue"
 )
 
 // imapClient speaks IMAP by hand and logs the dialogue.

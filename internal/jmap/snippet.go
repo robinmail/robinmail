@@ -6,9 +6,9 @@ import (
 	"html"
 	"strings"
 
-	"github.com/mikepage/robinmail/internal/message"
-	"github.com/mikepage/robinmail/internal/search"
-	"github.com/mikepage/robinmail/internal/store"
+	"github.com/robinmail/robinmail/internal/message"
+	"github.com/robinmail/robinmail/internal/search"
+	"github.com/robinmail/robinmail/internal/store"
 )
 
 // How much of a body a snippet is looked for in, and how long one is (RFC
