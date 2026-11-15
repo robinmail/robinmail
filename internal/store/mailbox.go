@@ -223,7 +223,7 @@ func (s *Store) DestroyMailbox(ctx context.Context, account string, id int64, re
 			FROM email e WHERE e.account_id = :a AND e.id IN `+doomed)
 		// Mailboxes that share a thread with a destroyed email: their
 		// thread counts may change.
-		b.change("Mailbox", `x.mailbox_id AS id, 'updated' AS op FROM email_mailbox x
+		b.change("Mailbox", `x.mailbox_id AS id, 'counts' AS op FROM email_mailbox x
 			JOIN email o ON o.account_id = x.account_id AND o.id = x.email_id
 			WHERE x.account_id = :a AND x.mailbox_id <> :m AND o.thread_id IN (
 				SELECT e.thread_id FROM email e WHERE e.account_id = :a AND e.id IN `+doomed+`)`)

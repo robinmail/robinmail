@@ -301,7 +301,7 @@ func (s *Store) setFlags(ctx context.Context, account string, u FlagUpdate, rang
 	}
 	b.change("Email", `s.id AS id, 'updated' AS op FROM email s WHERE s.account_id = :a AND s.modseq = `+sqlModseq)
 	// Keywords change the unread count of every mailbox the email is in.
-	b.change("Mailbox", `y.mailbox_id AS id, 'updated' AS op FROM email_mailbox y
+	b.change("Mailbox", `y.mailbox_id AS id, 'counts' AS op FROM email_mailbox y
 		WHERE y.account_id = :a AND y.email_id IN `+sqlStamped)
 	b.touchMailboxes()
 	b.add(`SELECT modseq FROM account WHERE id = :a`)
@@ -389,9 +389,9 @@ func (s *Store) copyMessages(ctx context.Context, account string, from int64, ra
 		WHERE x.account_id = :a AND x.mailbox_id = :m AND x.email_id IN ` + sqlStamped + ` ORDER BY x.uid`)
 	if move {
 		b.add(`DELETE FROM email_mailbox WHERE account_id = :a AND mailbox_id = :m AND email_id IN ` + sqlStamped)
-		b.change("Mailbox", `:m AS id, 'updated' AS op`)
+		b.change("Mailbox", `:m AS id, 'counts' AS op`)
 	}
-	b.change("Mailbox", `:to AS id, 'updated' AS op`)
+	b.change("Mailbox", `:to AS id, 'counts' AS op`)
 	b.change("Email", `s.id AS id, 'updated' AS op FROM email s WHERE s.account_id = :a AND s.modseq = `+sqlModseq)
 	b.touchMailboxes()
 	b.add(`SELECT (SELECT modseq FROM account WHERE id = :a), uidvalidity FROM mailbox WHERE account_id = :a AND id = :to`)
@@ -428,7 +428,7 @@ func (s *Store) renumber(ctx context.Context, account string, mailbox int64, ran
 	b.add(`INSERT OR REPLACE INTO email_mailbox (account_id, email_id, mailbox_id, uid) SELECT :a, x.email_id, :m, ` + renumbered)
 	b.add(`UPDATE mailbox SET uidnext = (SELECT max(uid) + 1 FROM email_mailbox WHERE account_id = :a AND mailbox_id = :m)
 		WHERE account_id = :a AND id = :m`)
-	b.change("Mailbox", `:m AS id, 'updated' AS op`)
+	b.change("Mailbox", `:m AS id, 'counts' AS op`)
 	b.change("Email", `s.id AS id, 'updated' AS op FROM email s WHERE s.account_id = :a AND s.modseq = `+sqlModseq)
 	b.touchMailboxes()
 	b.add(`SELECT (SELECT modseq FROM account WHERE id = :a), uidvalidity FROM mailbox WHERE account_id = :a AND id = :m`)
@@ -526,10 +526,10 @@ func (s *Store) expunge(ctx context.Context, account string, mailbox int64, rang
 	// This mailbox; the other mailboxes of an email that stays (it loses a
 	// keyword); and mailboxes that share a thread with a destroyed email
 	// (their thread counts).
-	b.change("Mailbox", `:m AS id, 'updated' AS op`)
-	b.change("Mailbox", `y.mailbox_id AS id, 'updated' AS op FROM email_mailbox y
+	b.change("Mailbox", `:m AS id, 'counts' AS op`)
+	b.change("Mailbox", `y.mailbox_id AS id, 'counts' AS op FROM email_mailbox y
 		WHERE y.account_id = :a AND y.email_id IN `+sqlStamped)
-	b.change("Mailbox", `y.mailbox_id AS id, 'updated' AS op FROM email_mailbox y
+	b.change("Mailbox", `y.mailbox_id AS id, 'counts' AS op FROM email_mailbox y
 		JOIN email o ON o.account_id = y.account_id AND o.id = y.email_id
 		WHERE y.account_id = :a AND o.thread_id IN (
 			SELECT e.thread_id FROM email e WHERE e.account_id = :a AND e.id IN `+doomed+`)`)

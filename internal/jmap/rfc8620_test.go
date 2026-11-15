@@ -625,7 +625,7 @@ func TestRFC8620QueryWindow(t *testing.T) {
 		{"from the middle", 2, nil, 0, 10, 2, "c,d,e", ""},
 		// "If the position is greater than or equal to the total number of
 		// objects in the results list, then the ids array ... will be empty".
-		{"past the end", 5, nil, 0, 10, 5, "", ""},
+		{"past the end", 5, nil, 0, 10, 0, "", ""},
 		// "A negative value is added to the total ... to get the position".
 		{"negative", -2, nil, 0, 10, 3, "d,e", ""},
 		// "If the absolute value of the negative position is greater than

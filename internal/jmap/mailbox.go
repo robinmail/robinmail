@@ -155,6 +155,7 @@ func (c *call) changes(raw json.RawMessage, typ string, format func(int64) strin
 	if err != nil {
 		return nil, storeErr(err)
 	}
+	c.lastChanges = set
 	ids := func(list []int64) []string {
 		out := make([]string, len(list))
 		for i, id := range list {
@@ -173,14 +174,19 @@ func (c *call) changes(raw json.RawMessage, typ string, format func(int64) strin
 	}, nil
 }
 
-// mailboxChanges is Mailbox/changes (RFC 8621 2.2). updatedProperties is
-// always null: the change log does not record whether only counts changed.
+// mailboxChanges is Mailbox/changes (RFC 8621 2.2). When every updated
+// mailbox only changed because emails came, went or changed keywords, the
+// change log says so (op "counts") and updatedProperties names the four
+// counts; otherwise it is null.
 func mailboxChanges(c *call, raw json.RawMessage) (any, *methodError) {
 	out, e := c.changes(raw, "Mailbox", store.MailboxID)
 	if e != nil {
 		return nil, e
 	}
 	out["updatedProperties"] = nil
+	if c.lastChanges.CountsOnly {
+		out["updatedProperties"] = []string{"totalEmails", "unreadEmails", "totalThreads", "unreadThreads"}
+	}
 	return out, nil
 }
 
@@ -345,7 +351,7 @@ func (c *call) runMailboxQuery(args *mailboxQueryArgs) ([]string, *methodError) 
 			case "sortOrder":
 				cmp = int(a.SortOrder - b.SortOrder)
 			case "name":
-				cmp = strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+				cmp = strings.Compare(a.Name, b.Name) // i;octet, as the JMAP-TestSuite expects
 			}
 			if cmp != 0 {
 				return (cmp < 0) == k.asc
@@ -866,7 +872,7 @@ func mailboxSet(c *call, raw json.RawMessage) (any, *methodError) {
 				run.notCreated[cid] = tooDeep
 				continue
 			}
-			n := store.NewMailbox{ParentID: p.parent, Name: *p.name, Subscribed: true, IfInState: run.ifState}
+			n := store.NewMailbox{ParentID: p.parent, Name: *p.name, IfInState: run.ifState}
 			if p.sortOrder != nil {
 				n.SortOrder = *p.sortOrder
 			}

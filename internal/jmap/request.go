@@ -70,6 +70,9 @@ func (i invocation) MarshalJSON() ([]byte, error) {
 
 // call is the state of one API request while its methods run.
 type call struct {
+	// lastChanges is what the last changes helper read, for a method that
+	// adds to its answer (Mailbox/changes).
+	lastChanges store.ChangeSet
 	ctx     context.Context
 	h       *Handler
 	user    User
@@ -637,7 +640,9 @@ func window(ids []string, position int64, anchor *string, anchorOffset int64, li
 	}
 	start = max(start, 0)
 	if start >= n {
-		return start, []string{}, nil
+		// Past the end: no ids, and position 0, as the JMAP-TestSuite
+		// expects (RFC 8620 5.5 does not say).
+		return 0, []string{}, nil
 	}
 	end := min(start+limit, n)
 	return start, ids[start:end], nil

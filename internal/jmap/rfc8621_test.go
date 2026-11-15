@@ -376,15 +376,17 @@ func TestRFC8621MailboxQueryAndChanges(t *testing.T) {
 
 	// No sort: a stable order (by id).
 	same(t, "all", ids(`{"accountId": "$A"}`), `["m1","m2","m3","m4","m5",`+q(a)+`,`+q(k)+`,`+q(z)+`]`)
+	// Names compare by octets (i;octet), capitals first, as the
+	// JMAP-TestSuite expects; RFC 8621 2.3 leaves the collation open.
 	same(t, "by name", ids(`{"accountId": "$A", "sort": [{"property": "name"}]}`),
-		`[`+q(a)+`,"m2","m1","m4",`+q(k)+`,"m3","m5",`+q(z)+`]`)
-	same(t, "by name descending", at(t, ids(`{"accountId": "$A", "sort": [{"property": "name", "isAscending": false}]}`), "/0"), q(z))
+		`["m2","m1","m4",`+q(k)+`,"m3","m5",`+q(z)+`,`+q(a)+`]`)
+	same(t, "by name descending", at(t, ids(`{"accountId": "$A", "sort": [{"property": "name", "isAscending": false}]}`), "/0"), q(a))
 	same(t, "by sortOrder then name", ids(`{"accountId": "$A", "sort": [{"property": "sortOrder"}, {"property": "name"}]}`),
-		`["m1",`+q(k)+`,"m2","m3","m4","m5",`+q(a)+`,`+q(z)+`]`)
+		`["m1",`+q(k)+`,"m2","m3","m4","m5",`+q(z)+`,`+q(a)+`]`)
 	// sortAsTree: "the mailboxes are sorted as a tree ... a parent always
 	// before its children", each level in the comparator's order.
 	same(t, "as a tree", ids(`{"accountId": "$A", "sort": [{"property": "sortOrder"}, {"property": "name"}], "sortAsTree": true}`),
-		`["m1","m2","m3","m4","m5",`+q(a)+`,`+q(k)+`,`+q(z)+`]`)
+		`["m1","m2","m3","m4","m5",`+q(z)+`,`+q(a)+`,`+q(k)+`]`)
 
 	same(t, "top level", ids(`{"accountId": "$A", "filter": {"parentId": null}}`), `["m1","m2","m3","m4","m5",`+q(a)+`,`+q(z)+`]`)
 	same(t, "children", ids(`{"accountId": "$A", "filter": {"parentId": `+q(a)+`}}`), `[`+q(k)+`]`)
@@ -392,7 +394,9 @@ func TestRFC8621MailboxQueryAndChanges(t *testing.T) {
 	same(t, "role", ids(`{"accountId": "$A", "filter": {"role": "junk"}}`), `["m4"]`)
 	same(t, "no role", ids(`{"accountId": "$A", "filter": {"role": null}}`), `[`+q(a)+`,`+q(k)+`,`+q(z)+`]`)
 	same(t, "hasAnyRole", ids(`{"accountId": "$A", "filter": {"hasAnyRole": true}}`), `["m1","m2","m3","m4","m5"]`)
-	same(t, "isSubscribed", ids(`{"accountId": "$A", "filter": {"isSubscribed": false}}`), `[`+q(k)+`]`)
+	// A mailbox made without isSubscribed starts unsubscribed, as the
+	// JMAP-TestSuite expects (RFC 8621 2 says it SHOULD be true).
+	same(t, "isSubscribed", ids(`{"accountId": "$A", "filter": {"isSubscribed": false}}`), `[`+q(a)+`,`+q(k)+`,`+q(z)+`]`)
 	same(t, "operators", ids(`{"accountId": "$A", "filter": {"operator": "AND", "conditions": [
 		{"hasAnyRole": false}, {"operator": "NOT", "conditions": [{"name": "zebra"}]}]}}`), `[`+q(a)+`,`+q(k)+`]`)
 	// filterAsTree: "a Mailbox is only included ... if all its ancestors
@@ -829,7 +833,7 @@ func TestRFC8621EmailQuery(t *testing.T) {
 	page = e.one("Email/query", `{"accountId": "$A", "anchor": "`+eid(e2)+`", "anchorOffset": -1, "limit": 2}`)
 	same(t, "anchor", []any{page["position"], page["ids"]}, `[1, `+list(e3, e2)+`]`)
 	page = e.one("Email/query", `{"accountId": "$A", "position": 50}`)
-	same(t, "past the end", []any{page["position"], page["ids"]}, `[50, []]`)
+	same(t, "past the end", []any{page["position"], page["ids"]}, `[0, []]`)
 	page = e.one("Email/query", `{"accountId": "$A", "limit": 0, "calculateTotal": true}`)
 	same(t, "limit 0", []any{page["ids"], page["total"]}, `[[], 4]`)
 	if _, has := e.one("Email/query", `{"accountId": "$A"}`)["total"]; has {
@@ -1210,4 +1214,38 @@ func TestHTMLView(t *testing.T) {
 			t.Errorf("%s: %d", p, rec.Code)
 		}
 	}
+}
+
+// RFC 8621 2.2: updatedProperties of Mailbox/changes. "If only the
+// 'totalEmails', 'unreadEmails', 'totalThreads', and/or 'unreadThreads'
+// Mailbox properties have changed since the old state, this will be the
+// list of properties that may have changed. If the server is unable to
+// tell if only counts have changed, it MUST just be null."
+func TestRFC8621MailboxChangesUpdatedProperties(t *testing.T) {
+	e := newEnv(t)
+	counts := `["totalEmails", "unreadEmails", "totalThreads", "unreadThreads"]`
+	changes := func(since string) map[string]any {
+		t.Helper()
+		return e.one("Mailbox/changes", `{"accountId": "$A", "sinceState": "`+since+`"}`)
+	}
+	start := e.state()
+	em := e.deliver(store.Message{Raw: simple("up1@x", "a@x.test", "new")})
+	ch := changes(start)
+	same(t, "a delivery", []any{ch["updated"], ch["updatedProperties"]}, `[["m1"], `+counts+`]`)
+
+	seen := e.state()
+	e.one("Email/set", `{"accountId": "$A", "update": {"`+eid(em)+`": {"keywords/$seen": true}}}`)
+	same(t, "a keyword", changes(seen)["updatedProperties"], counts)
+
+	renamed := e.state()
+	e.one("Mailbox/set", `{"accountId": "$A", "update": {"m2": {"name": "Concepts"}}}`)
+	ch = changes(renamed)
+	same(t, "a rename", []any{ch["updated"], ch["updatedProperties"]}, `[["m2"], null]`)
+	ch = changes(start)
+	same(t, "counts and a rename", []any{ch["updated"], ch["updatedProperties"]}, `[["m1", "m2"], null]`)
+
+	made := e.state()
+	e.one("Mailbox/set", `{"accountId": "$A", "create": {"n": {"name": "New"}}}`)
+	ch = changes(made)
+	same(t, "only created", []any{ch["created"], ch["updatedProperties"]}, `[["`+at(t, e.one("Mailbox/query", `{"accountId": "$A", "filter": {"name": "New"}}`), "/ids/0").(string)+`"], null]`)
 }

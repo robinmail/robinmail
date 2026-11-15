@@ -284,20 +284,20 @@ func (s *Store) UpdateEmail(ctx context.Context, account string, id int64, u Upd
 	if u.ReplaceMailboxes {
 		vals, kv := values("s", u.AddMailboxes)
 		gone := `account_id = :a AND email_id = :e AND mailbox_id NOT IN (VALUES ` + vals + `)`
-		b.change("Mailbox", `mailbox_id AS id, 'updated' AS op FROM email_mailbox WHERE `+gone, kv...)
+		b.change("Mailbox", `mailbox_id AS id, 'counts' AS op FROM email_mailbox WHERE `+gone, kv...)
 		b.add(`UPDATE mailbox SET modseq = `+sqlModseq+` WHERE account_id = :a
 			AND id IN (SELECT mailbox_id FROM email_mailbox WHERE `+gone+`)`, kv...)
 		b.add(`DELETE FROM email_mailbox WHERE `+gone, kv...)
 	}
 	for _, m := range u.RemoveMailboxes {
-		b.change("Mailbox", `:m AS id, 'updated' AS op WHERE `+sqlInMailbox, "m", m)
+		b.change("Mailbox", `:m AS id, 'counts' AS op WHERE `+sqlInMailbox, "m", m)
 		b.add(`UPDATE mailbox SET modseq = `+sqlModseq+` WHERE account_id = :a AND id = :m AND `+sqlInMailbox, "m", m)
 		b.add(`DELETE FROM email_mailbox WHERE account_id = :a AND email_id = :e AND mailbox_id = :m`, "m", m)
 	}
 	for _, m := range u.AddMailboxes {
 		// The three statements share one condition: the email is not in the
 		// mailbox yet. The UPDATE takes the UID, the INSERT uses it.
-		b.change("Mailbox", `:m AS id, 'updated' AS op WHERE NOT `+sqlInMailbox, "m", m)
+		b.change("Mailbox", `:m AS id, 'counts' AS op WHERE NOT `+sqlInMailbox, "m", m)
 		b.add(`UPDATE mailbox SET uidnext = uidnext + 1, modseq = `+sqlModseq+`
 			WHERE account_id = :a AND id = :m AND NOT `+sqlInMailbox, "m", m)
 		b.add(`INSERT INTO email_mailbox (account_id, email_id, mailbox_id, uid)
@@ -319,7 +319,7 @@ func (s *Store) UpdateEmail(ctx context.Context, account string, id int64, u Upd
 	}
 	if u.ReplaceKeywords || len(add) > 0 || len(remove) > 0 {
 		// Keywords change a mailbox's unread count.
-		b.change("Mailbox", `mailbox_id AS id, 'updated' AS op FROM email_mailbox WHERE account_id = :a AND email_id = :e`)
+		b.change("Mailbox", `mailbox_id AS id, 'counts' AS op FROM email_mailbox WHERE account_id = :a AND email_id = :e`)
 		b.add(`UPDATE mailbox SET modseq = ` + sqlModseq + ` WHERE account_id = :a
 			AND id IN (SELECT mailbox_id FROM email_mailbox WHERE account_id = :a AND email_id = :e)`)
 	}
@@ -363,7 +363,7 @@ func (s *Store) DestroyEmailIf(ctx context.Context, account string, id, ifState 
 	b.ifState(ifState)
 	b.guard(ErrNoEmail, `EXISTS (SELECT 1 FROM email WHERE account_id = :a AND id = :e)`)
 	b.bump()
-	b.change("Mailbox", `mailbox_id AS id, 'updated' AS op FROM email_mailbox WHERE account_id = :a AND email_id = :e`)
+	b.change("Mailbox", `mailbox_id AS id, 'counts' AS op FROM email_mailbox WHERE account_id = :a AND email_id = :e`)
 	b.add(`UPDATE mailbox SET modseq = ` + sqlModseq + ` WHERE account_id = :a
 		AND id IN (SELECT mailbox_id FROM email_mailbox WHERE account_id = :a AND email_id = :e)`)
 	b.change("Thread", `e.thread_id AS id, CASE WHEN `+others+` THEN 'updated' ELSE 'destroyed' END AS op

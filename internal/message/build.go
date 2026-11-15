@@ -561,8 +561,11 @@ func foldSpaced(name string, words []string) string {
 }
 
 // phrase writes a display name: atoms as they are, other ASCII as a quoted
-// string, the rest as encoded words (RFC 5322 3.2.5, RFC 2047 5 (3)).
-func phrase(name string, first int) []string {
+// string, the rest as encoded words (RFC 5322 3.2.5, RFC 2047 5 (3)). With
+// quoteWords, several atoms ("Foo bar") are one quoted string too, as
+// Fastmail and most mail programs write a person's name; group names stay
+// atoms.
+func phrase(name string, first int, quoteWords bool) []string {
 	name = strings.Join(strings.Fields(name), " ")
 	if name == "" {
 		return nil
@@ -577,7 +580,7 @@ func phrase(name string, first int) []string {
 			atoms = false
 		}
 	}
-	if atoms {
+	if atoms && (!quoteWords || !strings.Contains(name, " ")) {
 		return strings.Fields(name)
 	}
 	return []string{`"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(name) + `"`}
@@ -613,7 +616,7 @@ func addrSpec(email string) string {
 func addressTokens(a Address, last bool) []string {
 	var tokens []string
 	if a.Name != nil {
-		tokens = phrase(*a.Name, 60)
+		tokens = phrase(*a.Name, 60, true)
 	}
 	spec := addrSpec(a.Email)
 	if len(tokens) > 0 {
@@ -647,7 +650,7 @@ func FormatGroups(name string, groups []Group) string {
 			}
 			continue
 		}
-		head := phrase(*g.Name, 60)
+		head := phrase(*g.Name, 60, false)
 		if len(head) == 0 {
 			head = []string{`""`}
 		}

@@ -152,7 +152,7 @@ func (s *Store) Deliver(ctx context.Context, account string, m Message) (Email, 
 	}
 
 	b.change("Email", `next_email - 1 AS id, 'created' AS op FROM account WHERE id = :a`)
-	b.change("Mailbox", `mailbox_id AS id, 'updated' AS op FROM email_mailbox
+	b.change("Mailbox", `mailbox_id AS id, 'counts' AS op FROM email_mailbox
 		WHERE account_id = :a AND email_id = `+sqlNewEmail)
 	b.change("Thread", `e.thread_id AS id,
 		CASE WHEN EXISTS (SELECT 1 FROM email o WHERE o.account_id = :a AND o.thread_id = e.thread_id AND o.id <> e.id)

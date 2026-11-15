@@ -729,7 +729,11 @@ func emailQuery(c *call, raw json.RawMessage) (any, *methodError) {
 		if err != nil {
 			return nil, storeErr(err)
 		}
-		out["queryState"], out["position"], out["ids"] = stateString(res.State), args.Position, emailIDs(res.IDs)
+		position := args.Position
+		if len(res.IDs) == 0 {
+			position = 0 // past the end, as window does
+		}
+		out["queryState"], out["position"], out["ids"] = stateString(res.State), position, emailIDs(res.IDs)
 		if args.CalculateTotal {
 			out["total"] = res.Total
 		}

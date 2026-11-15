@@ -542,7 +542,7 @@ func (c *call) createEmail(run *setRun, raw json.RawMessage) (map[string]any, *s
 		return nil, &setError{Type: "blobNotFound", NotFound: b.missing}, nil
 	}
 	if len(bad) > 0 || root == nil {
-		sort.Strings(bad)
+		sortProperties(bad)
 		return nil, invalidProps("these properties cannot be used to create an email as given", bad...), nil
 	}
 
@@ -957,4 +957,25 @@ func emailParse(c *call, raw json.RawMessage) (any, *methodError) {
 		out["notFound"] = notFound
 	}
 	return out, nil
+}
+
+// sortProperties orders the names of invalidProperties as RFC 8621 4.1.4
+// lists the body properties (textBody, htmlBody, attachments,
+// bodyStructure, bodyValues), the rest by name after them, each name once.
+func sortProperties(names []string) {
+	rank := func(name string) int {
+		top, _, _ := strings.Cut(name, "/")
+		for i, p := range []string{"textBody", "htmlBody", "attachments", "bodyStructure", "bodyValues"} {
+			if top == p {
+				return i
+			}
+		}
+		return 5
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		if ri, rj := rank(names[i]), rank(names[j]); ri != rj {
+			return ri < rj
+		}
+		return names[i] < names[j]
+	})
 }

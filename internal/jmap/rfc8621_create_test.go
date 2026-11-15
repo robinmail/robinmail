@@ -398,7 +398,7 @@ func TestRFC8621_4_6_CreateRefusals(t *testing.T) {
 		// "isEncodingProblem [...] isTruncated: MUST be false".
 		"a truncated value":     {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t"}], "bodyValues": {"t": {"value": "x", "isTruncated": true}}}`, "invalidProperties", "bodyValues/t/isTruncated"},
 		"a damaged value":       {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t"}], "bodyValues": {"t": {"value": "x", "isTruncated": true, "isEncodingProblem": true}}}`, "invalidProperties", "bodyValues/t/isEncodingProblem bodyValues/t/isTruncated"},
-		"a value without value": {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t"}], "bodyValues": {"t": {}}}`, "invalidProperties", "bodyValues/t/value textBody/0/partId"},
+		"a value without value": {`{"mailboxIds": {"m2": true}, "textBody": [{"partId": "t"}], "bodyValues": {"t": {}}}`, "invalidProperties", "textBody/0/partId bodyValues/t/value"},
 		// "The bodyStructure EmailBodyPart MUST NOT contain a property
 		// representing a header field that is already defined on the
 		// top-level Email object."

@@ -146,7 +146,7 @@ func TestRFC5322Addresses(t *testing.T) {
 	if strings.Contains(v, `"=?`) {
 		t.Errorf("an encoded word inside a quoted string: %s", v)
 	}
-	if !strings.Contains(v, `"Joe Q. Public" <john.q.public@example.com>`) || !strings.Contains(v, "Mary Smith <mary@x.test>") {
+	if !strings.Contains(v, `"Joe Q. Public" <john.q.public@example.com>`) || !strings.Contains(v, `"Mary Smith" <mary@x.test>`) {
 		t.Errorf("names not written as the RFC's examples have them: %s", v)
 	}
 	got := Addresses(v)
@@ -181,7 +181,7 @@ func TestRFC5322Addresses(t *testing.T) {
 		{Name: sp("Undisclosed recipients"), Addresses: []Address{}},
 	}
 	gv := FormatGroups("To", groups)
-	if want := " A Group: Ed Jones <c@a.test>, joe@where.test, John <jdoe@one.test>;,\r\n loose@example.com, Undisclosed recipients: ;"; gv != want {
+	if want := " A Group: \"Ed Jones\" <c@a.test>, joe@where.test, John <jdoe@one.test>;,\r\n loose@example.com, Undisclosed recipients: ;"; gv != want {
 		t.Errorf("groups written as %q, want %q", gv, want)
 	}
 	back := GroupedAddresses(gv)

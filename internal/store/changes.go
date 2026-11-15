@@ -20,6 +20,11 @@ type ChangeSet struct {
 	Created   []int64
 	Updated   []int64
 	Destroyed []int64
+	// CountsOnly says that every object in Updated changed only by the
+	// op "counts": a write that changed which emails are in a mailbox
+	// or their keywords, not the mailbox itself. Mailbox/changes reports
+	// it as updatedProperties (RFC 8621 2.2). ChangesOf sets it.
+	CountsOnly bool
 }
 
 // Changes is what happened to an account between two states.
@@ -177,7 +182,10 @@ func (s *Store) ChangesOf(ctx context.Context, account, typ string, since int64,
 		return ChangeSet{}, 0, false, ErrCannotCalculateChanges
 	}
 
-	type span struct{ first, last string }
+	type span struct {
+		first, last string
+		props       bool // an op other than "counts" in between
+	}
 	seen := map[int64]*span{}
 	var order []int64
 	rows := res[1].Values
@@ -200,13 +208,15 @@ func (s *Store) ChangesOf(ctx context.Context, account, typ string, since int64,
 			id, op := asInt(row[1]), asString(row[2])
 			if sp, ok := seen[id]; ok {
 				sp.last = op
+				sp.props = sp.props || op != "counts"
 				continue
 			}
-			seen[id] = &span{op, op}
+			seen[id] = &span{op, op, op != "counts"}
 			order = append(order, id)
 		}
 		i = end
 	}
+	set.CountsOnly = true
 	for _, id := range order {
 		sp := seen[id]
 		switch {
@@ -217,8 +227,10 @@ func (s *Store) ChangesOf(ctx context.Context, account, typ string, since int64,
 			set.Destroyed = append(set.Destroyed, id)
 		default:
 			set.Updated = append(set.Updated, id)
+			set.CountsOnly = set.CountsOnly && !sp.props
 		}
 	}
+	set.CountsOnly = set.CountsOnly && len(set.Updated) > 0
 	for _, list := range [][]int64{set.Created, set.Updated, set.Destroyed} {
 		sort.Slice(list, func(i, j int) bool { return list[i] < list[j] })
 	}

@@ -3310,6 +3310,22 @@ Built as follows:
   7.2, keyed by UID, with `LOCATION;DERIVED=TRUE` naming
   `mainLocationId`, and one location keeps its key in a JSID parameter,
   draft-ietf-calext-jscalendar-icalendar 2.2.4, 2.3.25).
+  - **Then the last 7, by the user's decision (2026-11-15): 169 pass, 4
+    skip, 0 fail.** Each was a choice the RFC leaves open or a SHOULD,
+    now made as the suite (and Fastmail) makes it:
+    `Mailbox/changes` gives `updatedProperties` (the four counts) when
+    every updated mailbox changed only because emails came, went or
+    changed keywords: those writes log the op `counts` instead of
+    `updated`, and anything else in the range makes it null; a new
+    mailbox without `isSubscribed` starts unsubscribed (RFC 8621 2 says
+    it SHOULD be true for the user's own mailboxes; mailboxes with a role
+    stay subscribed); mailbox names sort by octets, capitals first; a
+    query past the end answers position 0; `invalidProperties` names the
+    body properties in the RFC's order (textBody, htmlBody, attachments,
+    bodyStructure, bodyValues); a display name of several words is
+    written as a quoted string (`"Foo bar" <a@b>`), group names stay
+    atoms. Tests: `TestRFC8621MailboxChangesUpdatedProperties` and the
+    changed expectations in the RFC 8620/8621 and RFC 5322 tests.
 - **Latency** (`ROBINMAIL_LATENCY`, `internal/store`, 500 operations one
   after the other on a laptop, p50 / p90 / p99; a delivery includes
   writing the blob file with fsync, which is most of it):
@@ -3462,10 +3478,10 @@ Built as follows:
 - The `dev` section (`retry_seconds`, `smtp_trace`) is in every binary. A
   production config with it set gets a warning at start for the first and
   a very large log for the second. A build tag would keep them out.
-- The JMAP-TestSuite is pinned to one commit and changes daily. Seven
-  files fail: one for `updatedProperties` of `Mailbox/changes`, which we
-  leave null, six over readings of the RFC that could be raised with its
-  authors.
+- The JMAP-TestSuite is pinned to one commit and changes daily. Every
+  file passes since 2026-11-15; six of those passes follow the suite
+  where the RFC leaves a choice (see phase 10), one of them against a
+  SHOULD (new mailboxes start unsubscribed).
 - RFC 9106's own test vectors use a secret and associated data, which
   `x/crypto`'s exported `argon2.IDKey` does not take. `x/crypto` runs them
   in its own tests; ours check the reference implementation's vectors
