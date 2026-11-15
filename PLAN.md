@@ -2789,7 +2789,7 @@ Built as follows:
   - **Playwright**, one spec per new screen: `search`, `aliases`,
     `filters`, `vacation`, `quota`, `mailapps`.
 
-### Angular webmail (web-ng) — in progress
+### Angular webmail (web-ng) — done
 
 A second webmail next to `web/`, with the same screens, on the same JMAP
 client and stores. The Vue webmail stays the one `make` builds.
@@ -2824,8 +2824,8 @@ CDK for dialog, menu, overlay and listbox.
   (`make e2e-ng`, port 8085): 27 passed, 14 skipped, as with Vue; the
   Keycloak spec and the screenshot specs pass when asked for.
 
-Left: virtual scrolling of the list, a linter, a choice of webmail for
-the image.
+Not handled: virtual scrolling of the list, a linter, and which webmail
+the Docker image carries (it carries the Vue one).
 
 ## Open questions
 
