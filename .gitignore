@@ -6,5 +6,6 @@
 /internal/web/dist/
 /internal/web/dist-ng/
 /robinmail-ng
+/robinmail-vue
 /contrib/compose/cluster/secrets/
 /contrib/lab/secrets/

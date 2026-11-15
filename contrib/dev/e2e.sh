@@ -1,6 +1,9 @@
 #!/bin/sh
-# Runs the browser tests of web/e2e against ./robinmail (built by "make")
-# and the development instance of seed.sh. Arguments go to Playwright:
+# Runs the browser tests of web/e2e against ./robinmail (built by "make":
+# the Angular webmail) and the development instance of seed.sh.
+# ROBINMAIL_BINARY names another binary, and ROBINMAIL_E2E_WEBMAIL=vue tells
+# the specs it is the Vue webmail ("make e2e-vue"). Arguments go to
+# Playwright:
 #
 #   contrib/dev/e2e.sh               all tests
 #   contrib/dev/e2e.sh auth          the tests in files with "auth" in the name
@@ -25,7 +28,7 @@ node contrib/dev/e2e-config.mjs
 
 dev/oidc-provider -listen 127.0.0.1:8090 &
 provider=$!
-./robinmail -config dev/robinmail.e2e.json serve &
+${ROBINMAIL_BINARY:-./robinmail} -config dev/robinmail.e2e.json serve &
 server=$!
 stop() {
 	kill "$server" "$provider" 2>/dev/null || true

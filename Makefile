@@ -1,31 +1,37 @@
-# robinmail: the server in Go and the webmail in web/ (Vue, built with Node).
+# robinmail: the server in Go and the webmail in web-ng/ (Angular, built
+# with Node).
 #
 #   make            the webmail, then ./robinmail with the webmail inside
-#   make web        only the webmail: web/dist, copied to internal/web/dist
-#   make test       go vet, the Go tests, type check and unit tests of web/
-#   make e2e        the browser test against ./robinmail and the dev instance
+#   make web        only the webmail: web-ng/dist/shell, copied to internal/web/dist-ng
+#   make test       go vet, the Go tests, and the unit tests of web-ng/
+#   make e2e        the browser tests of web/e2e against ./robinmail and the dev instance
 #   make keycloak-test  the browser test of the OpenID Connect login against a Keycloak container
-#   make dev        a development instance with live reload on :5173
+#   make dev        a development instance with live reload (ng serve on http://localhost:4200)
 #   make cluster-test   the cluster tests on three rqlite and three robinmail nodes in Docker
 #   make lab-test       the interoperability tests in Docker: Postfix, Exim and OpenSMTPD over SMTP,
-#                       Dovecot's ImapTest, mbsync, OfflineIMAP and Thunderbird over IMAP
+#                       Dovecot's ImapTest, mbsync, OfflineIMAP and Thunderbird over IMAP,
+#                       CalDAV and CardDAV clients
 #   make thunderbird-test   only the Thunderbird tests of the lab
 #   make clean
 #
-# The Angular webmail in web-ng/ stands next to the Vue one, which stays
-# the one "make" builds:
+# The Vue webmail in web/ was the first one. Since phase 9 the Angular one
+# is the main webmail (it has the calendar and the contacts); the Vue one
+# stays buildable:
 #
-#   make build-ng   the Angular webmail, then ./robinmail-ng with it inside
-#   make web-ng     only that webmail: web-ng/dist/shell, copied to internal/web/dist-ng
-#   make test-ng    its unit tests, and the Go tests of the binary that has it
-#   make e2e-ng     the browser tests of web/e2e against ./robinmail-ng
-#   make dev-ng     like "make dev", with ng serve on http://localhost:4200
+#   make build-vue  the Vue webmail, then ./robinmail-vue with it inside
+#   make web-vue    only that webmail: web/dist, copied to internal/web/dist
+#   make test-vue   its type check and unit tests, and the Go tests of the binary that has it
+#   make e2e-vue    the browser tests against ./robinmail-vue (the calendar and contacts specs skip)
+#   make dev-vue    a development instance with Vite on http://localhost:5173
+#
+# build-ng, web-ng, test-ng, e2e-ng and dev-ng are the names the Angular
+# targets had before phase 9; they still work.
 #
 # A plain "go build ./cmd/robinmail" needs no Node and no make: that binary
-# answers with a placeholder page instead of the webmail. The webmail gets
-# in through the build tag "webmail", which embeds internal/web/dist; that
-# directory and web/dist are build output and not in git. The tag
-# "webmail_ng" embeds internal/web/dist-ng, the Angular build, instead.
+# answers with a placeholder page instead of the webmail. The build tag
+# "webmail_ng" embeds internal/web/dist-ng, the Angular build; the tag
+# "webmail" embeds internal/web/dist, the Vue build. Those directories and
+# the dist directories of web/ and web-ng/ are build output and not in git.
 #
 # Tests that need rqlite are skipped unless ROBINMAIL_TEST_RQLITE is set:
 #
@@ -39,20 +45,22 @@
 # afterwards) and are skipped without Docker.
 #
 # Development (make dev): contrib/dev/seed.sh makes an instance in ./dev
-# with the user dev@robinmail.test (password in that script) and some mail.
-# The Go server listens on http://127.0.0.1:8080 and Vite on
-# http://localhost:5173, which is the one to open: it serves web/src with
-# live reload and passes /jmap, /.well-known/jmap and /auth on to Go. It
-# needs rqlite-dev from contrib/compose (127.0.0.1:4005, a database the
-# Go tests do not touch). The instance also takes a
-# mail client: IMAP on 127.0.0.1:1993 and :1143, submission on :1465 and
-# :1587, with a self-signed certificate (contrib/dev/seed.sh has the
-# settings for Thunderbird).
+# with the users dev@ and other@robinmail.test (password in that script)
+# and some mail. The Go server listens on http://127.0.0.1:8080 and ng
+# serve on http://localhost:4200, which is the one to open: it serves the
+# webmail with live reload and passes the API on to Go. It needs
+# rqlite-dev from contrib/compose (127.0.0.1:4005, a database the Go tests
+# do not touch). The instance also takes a mail client (IMAP on
+# 127.0.0.1:1993 and :1143, submission on :1465 and :1587, with a
+# self-signed certificate; contrib/dev/seed.sh has the settings) and a
+# calendar and contacts client (CalDAV and CardDAV on
+# http://127.0.0.1:8080/dav/ with an app password).
 #
-# make e2e uses the same instance, but the webmail inside ./robinmail on
-# http://127.0.0.1:8080, with a config of its own (dev/robinmail.e2e.json)
-# that adds an OpenID provider: a fake one, started with the tests, that
-# logs the dev user in without asking. The first time: cd web && npx playwright install chromium
+# make e2e uses the same instance with the webmail inside ./robinmail, on
+# http://127.0.0.1:8085 so that a development server on 8080 can stay up,
+# with a config of its own (dev/robinmail.e2e.json) that adds an OpenID
+# provider: a fake one, started with the tests, that logs the dev user in
+# without asking. The first time: cd web && npx playwright install chromium
 # It takes about three minutes: the tests that send mail wait for the
 # server's undo time and its queue. Mail goes between the two users of the
 # instance (dev@ and other@robinmail.test); one test sends to an outside
@@ -67,71 +75,44 @@ WEB_SRC := $(shell find web/src web/public web/index.html web/package.json web/p
 WEB_NG_SRC := $(shell find web-ng/projects web-ng/scripts web-ng/angular.json web-ng/package.json web-ng/package-lock.json web-ng/tsconfig.json web-ng/.postcssrc.json -type f 2>/dev/null)
 
 .PHONY: all build web test test-go test-web e2e dev clean cluster-test lab-test thunderbird-test keycloak-test \
-	build-ng web-ng test-ng e2e-ng dev-ng
+	build-vue web-vue test-vue e2e-vue dev-vue build-ng web-ng test-ng e2e-ng dev-ng
 
 all: build
-
-build: internal/web/dist/index.html
-	$(GO) build -tags webmail -o robinmail ./cmd/robinmail
-
-web: internal/web/dist/index.html
-
-web/node_modules: web/package.json web/package-lock.json
-	cd web && $(NPM) ci
-	@touch web/node_modules
-
-# "npm run build" type-checks and writes web/dist. The copy is what go:embed
-# reads: a pattern cannot reach outside its own package directory.
-internal/web/dist/index.html: web/node_modules $(WEB_SRC)
-	cd web && $(NPM) run build
-	rm -rf internal/web/dist
-	cp -R web/dist internal/web/dist
 
 # The Angular webmail. "npm run build" builds the two libraries with
 # ng-packagr and the application from them, and moves the files named by
 # their content to assets/, where the server caches them for a year.
-build-ng: internal/web/dist-ng/index.html
-	$(GO) build -tags webmail_ng -o robinmail-ng ./cmd/robinmail
+build: internal/web/dist-ng/index.html
+	$(GO) build -tags webmail_ng -o robinmail ./cmd/robinmail
 
-web-ng: internal/web/dist-ng/index.html
+web: internal/web/dist-ng/index.html
 
 web-ng/node_modules: web-ng/package.json web-ng/package-lock.json
 	cd web-ng && $(NPM) ci
 	@touch web-ng/node_modules
 
+# The copy is what go:embed reads: a pattern cannot reach outside its own
+# package directory.
 internal/web/dist-ng/index.html: web-ng/node_modules $(WEB_NG_SRC)
 	cd web-ng && $(NPM) run build
 	rm -rf internal/web/dist-ng
 	cp -R web-ng/dist/shell internal/web/dist-ng
 
-test-ng: internal/web/dist-ng/index.html
-	cd web-ng && $(NPM) test
-	$(GO) vet -tags webmail_ng ./...
-	$(GO) test -race -tags webmail_ng ./internal/web ./cmd/robinmail
-
-# On 127.0.0.1:8085, so that a development server on 8080 can stay up.
-e2e-ng: build-ng
-	web-ng/scripts/e2e.sh
-
-dev-ng: web-ng/node_modules
-	contrib/dev/seed.sh
-	@trap 'kill 0' EXIT; dev/robinmail -config dev/robinmail.json serve & \
-		cd web-ng && $(NPM) run dev
-
 test: test-go test-web
 
 # With and without the webmail in the binary.
-test-go: internal/web/dist/index.html
+test-go: internal/web/dist-ng/index.html
 	$(GO) vet ./...
-	$(GO) vet -tags webmail ./...
+	$(GO) vet -tags webmail_ng ./...
 	$(GO) test -race ./...
-	$(GO) test -race -tags webmail ./internal/web ./cmd/robinmail
+	$(GO) test -race -tags webmail_ng ./internal/web ./cmd/robinmail
 
-test-web: web/node_modules
-	cd web && $(NPM) run typecheck && $(NPM) test
+test-web: web-ng/node_modules
+	cd web-ng && $(NPM) test
 
+# On 127.0.0.1:8085, so that a development server on 8080 can stay up.
 e2e: build
-	contrib/dev/e2e.sh
+	ROBINMAIL_E2E_PORT=$${ROBINMAIL_E2E_PORT:-8085} contrib/dev/e2e.sh
 
 # Logs a user in through the webmail with a real OpenID provider: starts
 # the Keycloak of contrib/compose/keycloak.yaml (a 500 MB image the first
@@ -145,10 +126,48 @@ keycloak-test: build
 	@contrib/dev/e2e.sh keycloak; s=$$?; \
 		[ -n "$(KEEP)" ] || docker compose -f contrib/compose/keycloak.yaml down; exit $$s
 
-dev: web/node_modules
+dev: web-ng/node_modules
+	contrib/dev/seed.sh
+	@trap 'kill 0' EXIT; dev/robinmail -config dev/robinmail.json serve & \
+		cd web-ng && $(NPM) run dev
+
+# The Vue webmail, the first one.
+build-vue: internal/web/dist/index.html
+	$(GO) build -tags webmail -o robinmail-vue ./cmd/robinmail
+
+web-vue: internal/web/dist/index.html
+
+web/node_modules: web/package.json web/package-lock.json
+	cd web && $(NPM) ci
+	@touch web/node_modules
+
+# "npm run build" type-checks and writes web/dist.
+internal/web/dist/index.html: web/node_modules $(WEB_SRC)
+	cd web && $(NPM) run build
+	rm -rf internal/web/dist
+	cp -R web/dist internal/web/dist
+
+test-vue: internal/web/dist/index.html
+	cd web && $(NPM) run typecheck && $(NPM) test
+	$(GO) vet -tags webmail ./...
+	$(GO) test -race -tags webmail ./internal/web ./cmd/robinmail
+
+e2e-vue: build-vue
+	ROBINMAIL_BINARY=./robinmail-vue ROBINMAIL_E2E_WEBMAIL=vue ROBINMAIL_E2E_PORT=$${ROBINMAIL_E2E_PORT:-8085} contrib/dev/e2e.sh
+
+dev-vue: web/node_modules
 	contrib/dev/seed.sh
 	@trap 'kill 0' EXIT; dev/robinmail -config dev/robinmail.json serve & \
 		cd web && $(NPM) run dev
+
+# The names of before phase 9.
+build-ng: build
+web-ng: web
+test-ng: test-web
+	$(GO) vet -tags webmail_ng ./...
+	$(GO) test -race -tags webmail_ng ./internal/web ./cmd/robinmail
+e2e-ng: e2e
+dev-ng: dev
 
 # Builds the image, starts the cluster of contrib/compose/cluster.yaml, runs
 # the tests in internal/clustertest (they kill and restart containers) and
@@ -178,4 +197,4 @@ thunderbird-test:
 		[ -n "$(KEEP)" ] || contrib/lab/lab.sh down; exit $$s
 
 clean:
-	rm -rf robinmail web/dist internal/web/dist robinmail-ng web-ng/dist internal/web/dist-ng
+	rm -rf robinmail robinmail-vue robinmail-ng web/dist internal/web/dist web-ng/dist internal/web/dist-ng
