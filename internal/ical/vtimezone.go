@@ -2,6 +2,7 @@ package ical
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -123,24 +124,28 @@ func transitions(vt *Component, from, to int) []transition {
 	return out
 }
 
-// candidates are the zones tried for a VTIMEZONE without an IANA name.
+// candidates are the zones tried for a VTIMEZONE without an IANA name, in
+// a fixed order: zones that share their rules with others (New York and
+// Indianapolis, Berlin and Amsterdam) are found as the better known one.
 func candidates() []string {
+	out := []string{"America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles",
+		"America/Anchorage", "Pacific/Honolulu", "America/Toronto", "America/Vancouver", "America/Sao_Paulo",
+		"Europe/London", "Europe/Dublin", "Europe/Lisbon", "Europe/Amsterdam", "Europe/Berlin", "Europe/Paris",
+		"Europe/Brussels", "Europe/Helsinki", "Europe/Moscow", "Asia/Kolkata", "Asia/Shanghai", "Asia/Tokyo",
+		"Australia/Sydney", "Pacific/Auckland", "UTC"}
 	seen := map[string]bool{}
-	var out []string
+	for _, v := range out {
+		seen[v] = true
+	}
+	var rest []string
 	for _, v := range windowsZones {
 		if !seen[v] {
 			seen[v] = true
-			out = append(out, v)
+			rest = append(rest, v)
 		}
 	}
-	for _, v := range []string{"Europe/Amsterdam", "Europe/Brussels", "Europe/London", "Europe/Dublin", "Europe/Lisbon",
-		"America/Toronto", "America/Vancouver", "Australia/Melbourne", "Asia/Hong_Kong", "Asia/Kolkata", "UTC"} {
-		if !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
-	}
-	return out
+	sort.Strings(rest)
+	return append(out, rest...)
 }
 
 func matchZone(vt *Component) *time.Location {
