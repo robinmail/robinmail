@@ -291,6 +291,11 @@ func (s *Store) UpdateCollection(ctx context.Context, account string, id int64, 
 	b.guardAccount()
 	b.ifState(ifState)
 	b.guard(ErrNoCollection, `EXISTS (SELECT 1 FROM collection WHERE account_id = :a AND id = :id)`)
+	if len(u.Props) > 0 {
+		// The props are read and written whole; the guard makes sure no
+		// other write changed the collection meanwhile.
+		b.guard(ErrStateMismatch, `(SELECT modseq FROM collection WHERE account_id = :a AND id = :id) = :cm`, "cm", cur.Modseq)
+	}
 	b.bump()
 	set := func(col string, v any) {
 		b.add(`UPDATE collection SET `+col+` = :v, modseq = `+sqlModseq+` WHERE account_id = :a AND id = :id`, "v", v)
@@ -334,9 +339,6 @@ func (s *Store) UpdateCollection(ctx context.Context, account string, id int64, 
 				props[k] = v
 			}
 		}
-		// The props are read and written whole; the guard makes sure no
-		// other write changed them meanwhile.
-		b.guard(ErrStateMismatch, `(SELECT modseq FROM collection WHERE account_id = :a AND id = :id) = :cm`, "cm", cur.Modseq)
 		set("props", propsJSON(props))
 	}
 	typ := collectionType(cur.Kind)
