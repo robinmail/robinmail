@@ -301,7 +301,7 @@ export class MailPage implements OnInit, OnDestroy {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
     const t = e.target as HTMLElement | null
     if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
-    if (document.querySelector('[role="dialog"], [role="menu"]')) return
+    if (document.querySelector('[role="dialog"], [role="menu"], [role="listbox"]')) return
     const view = this.view
     const selected = view.selectedRows()
     const current = view.currentRow()
@@ -338,9 +338,7 @@ export class MailPage implements OnInit, OnDestroy {
       case '/':
         this.messageList()?.focusSearch()
         break
-      case 'c':
-        compose.compose()
-        break
+      // "c", a new message, is heard by the frame around the pages.
       case 'r':
       case 'a':
       case 'f':
