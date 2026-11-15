@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -256,6 +257,14 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 			wg.Add(1)
 			go func() {
 				defer func() { <-slots; wg.Done() }()
+				// A panic ends this attempt, not the process. The claim
+				// runs out by itself and the message is tried again.
+				defer func() {
+					if v := recover(); v != nil {
+						w.log().Error("queue: delivery attempt panicked", "submission", store.SubmissionID(ref.ID),
+							"panic", v, "stack", string(debug.Stack()))
+					}
+				}()
 				if w.work(ctx, ref) {
 					claimed.Store(ref, true)
 				}

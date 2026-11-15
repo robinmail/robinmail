@@ -28,6 +28,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"runtime/debug"
 
 	"github.com/robinmail/robinmail/internal/ipkey"
 	"github.com/robinmail/robinmail/internal/metrics"
@@ -186,18 +187,28 @@ func (s *Server) Serve(l net.Listener) error {
 		}
 		go func() {
 			defer s.wg.Done()
-			c.serve()
-			s.mu.Lock()
-			delete(s.conns, c)
-			if s.perIP[limitKey]--; s.perIP[limitKey] <= 0 {
-				delete(s.perIP, limitKey)
-			}
-			if c.countedUser != "" {
-				if s.perUser[c.countedUser]--; s.perUser[c.countedUser] <= 0 {
-					delete(s.perUser, c.countedUser)
+			defer func() {
+				s.mu.Lock()
+				delete(s.conns, c)
+				if s.perIP[limitKey]--; s.perIP[limitKey] <= 0 {
+					delete(s.perIP, limitKey)
 				}
-			}
-			s.mu.Unlock()
+				if c.countedUser != "" {
+					if s.perUser[c.countedUser]--; s.perUser[c.countedUser] <= 0 {
+						delete(s.perUser, c.countedUser)
+					}
+				}
+				s.mu.Unlock()
+			}()
+			// A panic ends this session, not the process: SMTP and the
+			// web, and every other session, keep going. serve's own
+			// deferred cleanup has closed the connection by then.
+			defer func() {
+				if v := recover(); v != nil {
+					s.Logger.Error("imap: session panicked", "ip", ip, "panic", v, "stack", string(debug.Stack()))
+				}
+			}()
+			c.serve()
 		}()
 	}
 }

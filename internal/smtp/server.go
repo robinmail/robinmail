@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -261,6 +262,14 @@ func (s *Server) handle(c net.Conn) {
 	defer c.Close()
 	ip := remoteIP(c)
 	key := ip.String()
+	// A panic ends this session, not the process: IMAP and the web, and
+	// every other session, keep going. The deferred calls below run first:
+	// the counts are given back and the connection is closed.
+	defer func() {
+		if v := recover(); v != nil {
+			s.Logger.Error("smtp: session panicked", "remote", key, "panic", v, "stack", string(debug.Stack()))
+		}
+	}()
 	// The limit per address counts an IPv6 /64 as one client.
 	limitKey := ipkey.Of(key)
 
