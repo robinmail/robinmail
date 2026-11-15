@@ -74,7 +74,7 @@ func count(codes []int) map[int]int {
 	return out
 }
 
-// (h) A quota is a guard in the batch that stores a message, and rqlite
+// (h) A quota is a guard in the batch that stores a message, and the Raft log
 // applies batches one after another: so an account with room for 20
 // messages that is sent 90 at once, through three nodes, ends with 20,
 // whatever node took which. The counters are kept by triggers in the
@@ -108,7 +108,7 @@ func quotaAcrossNodes(t *testing.T) {
 			}
 		}
 		// The counters against what is there.
-		rows := rqliteRows(t, fmt.Sprintf(`SELECT a.used_count, a.used_bytes, (SELECT count(*) FROM email e WHERE e.account_id = a.id),
+		rows := dbRows(t, fmt.Sprintf(`SELECT a.used_count, a.used_bytes, (SELECT count(*) FROM email e WHERE e.account_id = a.id),
 			(SELECT coalesce(sum(size), 0) FROM email e WHERE e.account_id = a.id) FROM account a WHERE a.id = '%s'`, s.account))
 		if len(rows) != 1 || rows[0][0] != float64(want) || rows[0][0] != rows[0][2] || rows[0][1] != rows[0][3] {
 			t.Errorf("%s: the counters and the rows: %v, want %d emails", what, rows, want)
@@ -264,7 +264,7 @@ func sieveAcrossNodes(t *testing.T) {
 	if err != nil || len(replies) != 1 {
 		t.Errorf("the sender got %d automatic replies (%v), want 1", len(replies), err)
 	}
-	rows := rqliteRows(t, fmt.Sprintf(`SELECT count(*) FROM vacation_sent WHERE account_id = '%s'`, s.account))
+	rows := dbRows(t, fmt.Sprintf(`SELECT count(*) FROM vacation_sent WHERE account_id = '%s'`, s.account))
 	t.Logf("the sender has %d automatic reply; vacation_sent has %v row for the account", len(replies), rows[0][0])
 	if rows[0][0] != float64(1) {
 		t.Errorf("vacation_sent rows: %v", rows)

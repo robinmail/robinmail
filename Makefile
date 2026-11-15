@@ -7,7 +7,7 @@
 #   make e2e        the browser tests of web/e2e against ./robinmail and the dev instance
 #   make keycloak-test  the browser test of the OpenID Connect login against a Keycloak container
 #   make dev        a development instance with live reload (ng serve on http://localhost:4200)
-#   make cluster-test   the cluster tests on three rqlite and three robinmail nodes in Docker
+#   make cluster-test   the cluster tests on three robinmail nodes in Docker, killed and restarted
 #   make lab-test       the interoperability tests in Docker: Postfix, Exim and OpenSMTPD over SMTP,
 #                       Dovecot's ImapTest, mbsync, OfflineIMAP and Thunderbird over IMAP,
 #                       CalDAV and CardDAV clients
@@ -33,32 +33,27 @@
 # "webmail" embeds internal/web/dist, the Vue build. Those directories and
 # the dist directories of web/ and web-ng/ are build output and not in git.
 #
-# Tests that need rqlite are skipped unless ROBINMAIL_TEST_RQLITE is set:
-#
-#   docker compose -f contrib/compose/compose.yaml up -d
-#   ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 make test
-#
-# The test that sends mail between two servers (cmd/robinmail) also wants
-# ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003, the second database of that
-# compose file. The tests of backup, restore and master key rotation start
-# an rqlite container of their own for each run (docker run, removed
-# afterwards) and are skipped without Docker.
+# The Go tests make their databases themselves: one node, or a cluster of
+# several in the test's own process, in temporary directories
+# (internal/raftdb/raftdbtest). Nothing needs to run for "make test"; the
+# end-to-end test of "serve" with Rspamd wants ROBINMAIL_TEST_RSPAMD (see
+# contrib/compose/compose.yaml) and is skipped without it.
 #
 # Development (make dev): contrib/dev/seed.sh makes an instance in ./dev
 # with the users dev@ and other@robinmail.test (password in that script)
 # and some mail. The Go server listens on http://127.0.0.1:8080 and ng
 # serve on http://localhost:4200, which is the one to open: it serves the
-# webmail with live reload and passes the API on to Go. It needs
-# rqlite-dev from contrib/compose (127.0.0.1:4005, a database the Go tests
-# do not touch). The instance also takes a mail client (IMAP on
+# webmail with live reload and passes the API on to Go. Its database is in
+# dev/data/db. The instance also takes a mail client (IMAP on
 # 127.0.0.1:1993 and :1143, submission on :1465 and :1587, with a
 # self-signed certificate; contrib/dev/seed.sh has the settings) and a
 # calendar and contacts client (CalDAV and CardDAV on
 # http://127.0.0.1:8080/dav/ with an app password).
 #
-# make e2e uses the same instance with the webmail inside ./robinmail, on
+# make e2e uses an instance like it with the webmail inside ./robinmail, on
 # http://127.0.0.1:8085 so that a development server on 8080 can stay up,
-# with a config of its own (dev/robinmail.e2e.json) that adds an OpenID
+# with a config (dev/robinmail.e2e.json) and data directory (dev/e2e-data)
+# of its own, seeded the same way; the config adds an OpenID
 # provider: a fake one, started with the tests, that logs the dev user in
 # without asking. The first time: cd web && npx playwright install chromium
 # It takes about three minutes: the tests that send mail wait for the

@@ -1,9 +1,10 @@
 #!/bin/sh
 # Starts and stops the robinmail cluster of contrib/compose/cluster.yaml.
 #
-#   cluster.sh up [rspamd]   make the secrets, build the image, start three
-#                            rqlite and three robinmail nodes, wait for them,
-#                            add the domain cluster.test and the users
+#   cluster.sh up [rspamd]   make the secrets, build the image, start node 1,
+#                            admit and start nodes 2 and 3 (node add on 1,
+#                            node join on the new node), add the domain
+#                            cluster.test and the users
 #                            user1@cluster.test .. user4@cluster.test, and
 #                            start "the other side": robinmail-sink with
 #                            sink@sink.test
@@ -11,9 +12,8 @@
 #   cluster.sh ps|logs ...   passed on to docker compose
 #
 # The secrets (a master key all nodes share, self-signed certificates
-# for mail.robinmail.test and mail.sink.test, and what locks rqlite down: a
-# CA, a certificate per rqlite node, rqlite's auth file and robinmail's
-# login for it) are made once in contrib/compose/cluster/secrets,
+# for mail.robinmail.test and mail.sink.test) are made once in
+# contrib/compose/cluster/secrets,
 # which git ignores. The users' password is for this local cluster only; set
 # ROBINMAIL_CLUSTER_PASSWORD to use another.
 set -eu
@@ -47,48 +47,6 @@ if [ ! -f "$SECRETS/sink.crt" ]; then
 		-keyout "$SECRETS/sink.key" -out "$SECRETS/sink.crt" 2>/dev/null)
 fi
 
-# rqlite, locked down (cluster.yaml says how). A CA of the cluster's own,
-# and for every rqlite node a certificate for the two names it has: the
-# one the other rqlite nodes reach it under (Raft, mutual TLS: so it is a
-# server and a client certificate) and the one its robinmail does (HTTPS).
-RQ="$SECRETS/rqlite"
-mkdir -p "$RQ"
-EC="-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes"
-if [ ! -f "$RQ/ca.crt" ]; then
-	openssl req -x509 $EC -days 3650 -subj "/CN=robinmail cluster rqlite CA" \
-		-addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
-		-keyout "$SECRETS/rqlite-ca.key" -out "$RQ/ca.crt" 2>/dev/null
-	chmod 600 "$SECRETS/rqlite-ca.key"
-fi
-for n in 1 2 3; do
-	[ -f "$RQ/rqlite-$n.crt" ] && continue
-	openssl req -new $EC -subj "/CN=rqlite-$n" -keyout "$RQ/rqlite-$n.key" -out "$RQ/rqlite-$n.csr" 2>/dev/null
-	printf 'subjectAltName=DNS:rqlite-%s,DNS:rqlite-%s-db\nbasicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\n' "$n" "$n" > "$RQ/rqlite-$n.ext"
-	openssl x509 -req -in "$RQ/rqlite-$n.csr" -CA "$RQ/ca.crt" -CAkey "$SECRETS/rqlite-ca.key" -CAcreateserial \
-		-days 825 -extfile "$RQ/rqlite-$n.ext" -out "$RQ/rqlite-$n.crt" 2>/dev/null
-	rm -f "$RQ/rqlite-$n.csr" "$RQ/rqlite-$n.ext" "$RQ/ca.srl"
-done
-# The logins. rqlite's auth file names three users: robinmail with what
-# robinmail needs and no more, node for an rqlite node that joins, admin
-# for the operator (the tests use it to look at rqlite). Random passwords,
-# written to files and never shown or put on a command line.
-if [ ! -f "$RQ/auth.json" ]; then
-	secret() { head -c 24 /dev/urandom | base64 | tr -d '=+/\n'; }
-	robinmail_pw=$(secret); node_pw=$(secret); admin_pw=$(secret)
-	(umask 077
-	printf 'robinmail:%s\n' "$robinmail_pw" > "$SECRETS/rqlite.auth"
-	printf 'admin:%s\n' "$admin_pw" > "$SECRETS/rqlite-admin.auth")
-	cat > "$RQ/auth.json" <<AUTH
-[
-  {"username": "robinmail", "password": "$robinmail_pw", "perms": ["execute", "query", "backup", "load"]},
-  {"username": "node", "password": "$node_pw", "perms": ["join"]},
-  {"username": "admin", "password": "$admin_pw", "perms": ["all"]}
-]
-AUTH
-fi
-# rqlite's container runs as its own user and reads these through a mount.
-chmod 644 "$RQ"/*
-
 PROFILE=
 if [ "${2:-}" = rspamd ]; then
 	PROFILE="--profile rspamd"
@@ -98,22 +56,42 @@ if [ "${2:-}" = rspamd ]; then
 		}
 	done
 fi
-$COMPOSE $PROFILE up -d --build
+$COMPOSE $PROFILE build
+[ -n "$PROFILE" ] && $COMPOSE $PROFILE up -d rspamd
 
 robinmail() { $COMPOSE exec -T robinmail-1 robinmail -config /etc/robinmail/n1.json "$@"; }
+on() { n=$1; shift; $COMPOSE run --rm --no-deps -T robinmail-$n -config /etc/robinmail/n$n.json "$@"; }
+wait_for() { # what, command...
+	what=$1; shift
+	i=0
+	until "$@" >/dev/null 2>&1; do
+		i=$((i + 1))
+		if [ $i -gt 90 ]; then
+			echo "$what did not happen:" >&2
+			$COMPOSE ps >&2
+			$COMPOSE logs --tail 30 >&2
+			exit 1
+		fi
+		sleep 1
+	done
+}
+has_leader() { robinmail node list | grep -q leader; }
+member() { robinmail node list | grep -q "^n$1 "; }
 
-# rqlite needs a moment to elect a leader, and robinmail waits for it.
-i=0
-until robinmail node list 2>/dev/null | grep -c '^n[123] ' | grep -qx 3; do
-	i=$((i + 1))
-	if [ $i -gt 60 ]; then
-		echo "the cluster did not come up:" >&2
-		$COMPOSE ps >&2
-		$COMPOSE logs --tail 20 >&2
-		exit 1
+# Node 1 starts the cluster. Nodes 2 and 3 are admitted one after the
+# other: with two members both must be up before a third can be added.
+$COMPOSE up -d robinmail-1
+wait_for "node 1 to lead" has_leader
+for n in 2 3; do
+	if ! member $n; then
+		cert=$(on $n node id | awk '{print $3}')
+		join=$(robinmail node add n$n robinmail-$n:7443 "$cert" | sed -n 's/.*robinmail node join //p')
+		on $n node join $join
 	fi
-	sleep 1
+	$COMPOSE up -d robinmail-$n
+	wait_for "node $n to be up" $COMPOSE exec -T robinmail-$n robinmail -config /etc/robinmail/n$n.json node list
 done
+wait_for "the cluster to have a leader" has_leader
 
 robinmail domain list | grep -qx cluster.test || robinmail domain add cluster.test
 for u in user1 user2 user3 user4; do
@@ -123,6 +101,7 @@ robinmail node list
 
 # The other side: one robinmail with its own database and the domain
 # sink.test, which the cluster sends to and gets mail from.
+$COMPOSE up -d robinmail-sink
 sink() { $COMPOSE exec -T robinmail-sink robinmail -config /etc/robinmail/sink.json "$@"; }
 i=0
 until sink domain list >/dev/null 2>&1; do

@@ -109,15 +109,15 @@ func ends(t *testing.T, what string, ended <-chan struct{}, since time.Time) {
 }
 
 // authAcrossNodes is phase 7 on the real cluster: three robinmail nodes,
-// each asking its own rqlite node first, of which two are followers. What
+// of which two are followers of the database. What
 // one node is told has to hold on the others: an app password and its
 // revocation, a revoked session, a spent TOTP code, and the counters of
-// failed logins and wrong codes, which a node reads from its own rqlite
-// node's copy without asking the leader.
+// failed logins and wrong codes, which a node reads from its own copy of
+// the database without asking the leader.
 func authAcrossNodes(t *testing.T) {
 	// The cluster's containers all reach the nodes from one address: the
 	// counter of that address is this test's to reset.
-	rqliteAdmin(0, "POST", "/db/execute", []byte(`["DELETE FROM login_failure WHERE key LIKE 'i:%'"]`))
+	dbExec(t, `DELETE FROM login_failure WHERE key LIKE 'i:%'`)
 	user := fmt.Sprintf("auth%d@%s", time.Now().UnixNano()%1_000_000_000, domain)
 	pw := password()
 	sh(t, 0, fmt.Sprintf(`printf '%%s\n' '%s' | robinmail -config %s user add %s`, pw, robin[0].config, user))
@@ -242,7 +242,7 @@ func authAcrossNodes(t *testing.T) {
 	// --- Wrong codes are counted for the cluster: one is counted (the
 	// replay), four more over nodes 1 and 2, and node 3, which saw none of
 	// them, refuses the right code. A node reads the counters from its
-	// own rqlite node without asking the leader, so a follower may be a
+	// own copy of the database without asking the leader, so it may be a
 	// moment behind: how long that moment is, is what is measured. ---
 	for i := 0; i < 4; i++ {
 		if r := auth(t, i%2, "POST", "/auth/login/totp", pending, "", map[string]string{"code": fmt.Sprintf("%06d", i)}); r.status != 401 {

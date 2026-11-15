@@ -259,7 +259,7 @@ func TestReplicatedCopies(t *testing.T) {
 	}
 	// Not knowing the members is an error, not a cluster of one.
 	r, _ = group(t, 3)
-	r.Peers = &fakePeers{err: errors.New("rqlite is down")}
+	r.Peers = &fakePeers{err: errors.New("the database is down")}
 	if err := r.Put(ctx, key, bytes.NewReader(file)); err == nil {
 		t.Error("Put succeeded without knowing the other nodes")
 	}

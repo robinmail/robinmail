@@ -14,7 +14,6 @@
 #
 #   10.77.25.2   dns         CoreDNS
 #   10.77.25.3   web         nginx: https://mta-sts.<domain>/ and the gate
-#   10.77.25.4   rqlite      robinmail's database
 #   10.77.25.5   jmapsuite   Fastmail's JMAP-TestSuite, only with "lab.sh suite"
 #   10.77.25.6   imapclients Dovecot's ImapTest, mbsync and OfflineIMAP, run by the tests
 #   10.77.25.7   thunderbird Thunderbird, started and driven by the tests over Marionette
@@ -71,16 +70,11 @@ services:
       - "127.0.0.1:2542:2542"
       - "127.0.0.1:2543:2543"
 
-  rqlite:
-    image: rqlite/rqlite:10.7.1
-    hostname: rqlite
-    networks: {lab: {ipv4_address: 10.77.25.4}}
-
   robinmail:
     image: robinmail-lab
     build:
       context: ../..
-    depends_on: [dns, rqlite]
+    depends_on: [dns]
     restart: "no"
     stop_grace_period: 35s
     hostname: mx

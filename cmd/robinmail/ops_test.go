@@ -20,7 +20,6 @@ import (
 	"github.com/robinmail/robinmail/internal/store"
 )
 
-// rqliteImage is the rqlite of contrib/compose/compose.yaml.
 // appOf opens the store of a cli's config, as a command does.
 func appOf(t *testing.T, c *cli) *app {
 	t.Helper()
@@ -287,7 +286,7 @@ func jmapView(t *testing.T, web, user string) map[string]any {
 }
 
 // TestBackupRestore makes a backup of a server with mail and restores it
-// into an empty one: a second rqlite, a second data directory. What JMAP
+// into an empty one: a second data directory, with its own database. What JMAP
 // shows of every account is the same afterwards, to the byte and to the
 // state string.
 func TestBackupRestore(t *testing.T) {
@@ -336,7 +335,7 @@ func TestBackupRestore(t *testing.T) {
 	// What is in it: a SQLite file and the encrypted blob files. No
 	// message is readable in the blob files, and the master key is
 	// nowhere. The database file is the database: it has the previews
-	// and subjects in the clear, as rqlite's own files do.
+	// and subjects in the clear, as the node's own database file does.
 	db := mustRead(t, filepath.Join(dir, "db.sqlite"))
 	if !bytes.HasPrefix(db, []byte("SQLite format 3\x00")) {
 		t.Error("db.sqlite is not a SQLite file")
@@ -371,7 +370,7 @@ func TestBackupRestore(t *testing.T) {
 	}
 	srv.stop()
 
-	// The empty server: another rqlite, another directory.
+	// The empty server: another directory, another database.
 	r := newCLI(t, web)
 	// Without a key file nothing runs; with another key the restore
 	// refuses before it touches anything.

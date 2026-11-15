@@ -188,7 +188,7 @@ func startThunderbird(t *testing.T, user, secret string) *tb {
 	return x
 }
 
-var failureCount = regexp.MustCompile(`\|\s*(\d+)\s*\|`)
+var failureCount = regexp.MustCompile(`(?m)^\[(\d+)\]$`)
 
 // forgetThunderbirdFailures keeps the tests clear of robinmail's limit of
 // 50 failed logins per address of a client in fifteen minutes. The cases

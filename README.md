@@ -32,31 +32,33 @@ why. That file is the design document and the record of what was built and teste
 ## Architecture
 
 - **One binary**, `cmd/robinmail`: inbound SMTP, submission, the outbound queue, IMAP,
-  JMAP, CalDAV and CardDAV, the web login and the webmail. Standard library plus `golang.org/x`, nothing else.
-- **Metadata in rqlite** (SQLite replicated with Raft), reached over HTTP. Every write is
-  one atomic batch; there are no interactive transactions.
-  Whoever reaches rqlite's HTTP port without a login owns every account, so a deployment
-  keeps it on loopback next to each node, with a login and with TLS between rqlite nodes
-  (PLAN.md, "rqlite, locked down"). The development services have neither.
+  JMAP, CalDAV and CardDAV, the web login and the webmail. Standard library plus `golang.org/x`,
+  and since phase 10 etcd's Raft library and a pure-Go SQLite (no cgo).
+- **The database is inside the binary**: SQLite, replicated between the nodes with Raft
+  (`internal/raftdb`), in `<data_dir>/db`. Every write is one atomic batch, ordered by the
+  Raft leader and applied on every node; reads are linearizable. There is no database
+  service and no SQL port: Raft travels over the nodes' mutual TLS, and a command on a
+  node reaches its server over loopback with the node's own key.
 - **Messages as files** on each node's own disk, encrypted with a key per account. Nodes
   copy them to each other over mutual TLS. No object store.
-- **Any node serves any account.** A cluster is several robinmail nodes on one rqlite
-  cluster.
+- **Any node serves any account.** A cluster is three (or five) robinmail nodes and
+  nothing else: `robinmail node add` on a member admits one, `robinmail node join` on the
+  new node joins.
 - **Spam filtering, SPF, DKIM and DMARC are Rspamd's**, asked over HTTP.
-- **Calendars and contacts** are stored once, as iCalendar and vCard text in rqlite;
+- **Calendars and contacts** are stored once, as iCalendar and vCard text in the database;
   JMAP gets them as JSCalendar and JSContact. Invitations go out as email (iMIP) and are
   applied when they come in.
 - **The webmail** (`web-ng/`, Angular) only speaks JMAP and is embedded in the binary:
   mail, calendar and contacts. The Vue webmail in `web/` has mail only and is built with
   `make build-vue`.
 
-What is encrypted at rest: the message files. What is not: everything in rqlite, which
+What is encrypted at rest: the message files. What is not: the database, which
 includes addresses, subjects, previews and the full-text index. Those need an encrypted
 disk.
 
 ## Run a development instance
 
-You need Go, Node and Docker.
+You need Go and Node; Docker for Mailpit and Rspamd (optional).
 
 ```bash
 docker compose -f contrib/compose/compose.yaml up -d
@@ -70,6 +72,15 @@ Open http://localhost:4200 and log in as `dev@robinmail.test`. The password is i
 `contrib/dev/seed.sh`. The instance lives in `./dev`, accepts mail on `127.0.0.1:2525`,
 and sends everything for other domains to Mailpit (http://127.0.0.1:8025), so it never
 sends real mail.
+
+An instance from before phase 10 used rqlite; `contrib/dev/seed.sh` sets its config aside
+and starts a fresh one (nothing is carried over).
+
+A cluster: give each node a `node` section (id, listen, address) and the same master key
+file. Start the first; on each new node run `robinmail node id`, on the first run
+`robinmail node add <id> <address> <certificate>` with what it printed, then on the new
+node the `robinmail node join` line that printed, and start it. Add the nodes one at a
+time. `robinmail node list` shows the members and the leader.
 
 For the binary with the webmail inside:
 
@@ -95,19 +106,20 @@ sets up mail, calendars and contacts at once.
 | Command | What it runs | Needs |
 |---|---|---|
 | `make test` | `go vet`, the Go tests, and the unit tests of the webmail | see below |
-| `make e2e` | the webmail in a browser (Playwright) against the dev instance, on port 8085 | the compose services |
-| `make cluster-test` | three rqlite and three robinmail nodes; nodes are killed and restarted | Docker |
+| `make e2e` | the webmail in a browser (Playwright) against an instance like the dev one, on port 8085 | Mailpit for one test |
+| `make cluster-test` | three robinmail nodes; the database leader and other nodes are killed and restarted | Docker |
 | `make lab-test` | SMTP with Postfix, Exim and OpenSMTPD; IMAP with ImapTest, mbsync, OfflineIMAP and Thunderbird; CalDAV and CardDAV with Thunderbird, vdirsyncer and the Python caldav library; invitations to Postfix and Exim | Docker |
 | `make thunderbird-test` | only the Thunderbird part of the lab | Docker |
 
-The Go tests that need a database are skipped unless they are told where one is:
+The Go tests make their own databases, one node or an in-process cluster of several, in
+temporary directories:
 
 ```bash
-ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003 go test -race ./...
+go test -race ./...
 ```
 
-Both databases come from the compose file above. A few tests (backup and restore, master
-key rotation) start an rqlite container of their own and are skipped without Docker.
+The end-to-end test of `serve` with Rspamd also wants
+`ROBINMAIL_TEST_RSPAMD=http://127.0.0.1:11333` and is skipped without it.
 
 `make e2e` runs the server on port 8085, so a development server on 8080 can stay up.
 `make e2e-vue` runs the same specs against the Vue webmail; the calendar and contacts

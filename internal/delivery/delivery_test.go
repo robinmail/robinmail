@@ -54,7 +54,7 @@ func (f *fakeStore) Account(_ context.Context, addr string) (store.Account, erro
 
 func (f *fakeStore) Deliver(_ context.Context, account string, m store.Message) (store.Email, error) {
 	if account == f.failFor {
-		return store.Email{}, errors.New("rqlite is down")
+		return store.Email{}, errors.New("the database is down")
 	}
 	if m.Key == "" || m.ReceivedAt.IsZero() {
 		return store.Email{}, errors.New("delivery without key or time")
@@ -188,7 +188,7 @@ func TestDeliverUnscanned(t *testing.T) {
 
 func TestRcptStoreDown(t *testing.T) {
 	d, st := setup(t, "")
-	st.lookups = errors.New("rqlite is down")
+	st.lookups = errors.New("the database is down")
 	if got := code(d.Rcpt(context.Background(), env(), "mike@example.test")); got != 451 {
 		t.Errorf("Rcpt with the store down = %d, want 451", got)
 	}
@@ -375,7 +375,7 @@ func TestDomainsFromStore(t *testing.T) {
 		t.Errorf("right after the domain was removed = %d, want 550", got)
 	}
 	// Without an answer there is nothing to decide on: defer.
-	st.noDomains = errors.New("rqlite is down")
+	st.noDomains = errors.New("the database is down")
 	if got := rcpt("mike@example.test"); got != 451 {
 		t.Errorf("with the store down = %d, want 451", got)
 	}

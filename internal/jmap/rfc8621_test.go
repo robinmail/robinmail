@@ -20,10 +20,7 @@ import (
 )
 
 // Tests of the mail methods, written from RFC 8621 and using its examples.
-// They run against a real store and need rqlite:
-//
-//	docker compose -f contrib/compose/compose.yaml up -d
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test ./internal/jmap
+// They run against a real store, on a database of its own.
 //
 // Every test works in an account of its own. A new account has the
 // mailboxes m1 Inbox, m2 Drafts, m3 Sent, m4 Junk and m5 Trash.

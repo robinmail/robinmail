@@ -7,7 +7,6 @@ $TTL 5
 ; Infrastructure
 dns.lab         IN A 10.77.25.2
 web.lab         IN A 10.77.25.3
-rqlite.lab      IN A 10.77.25.4
 suite.lab       IN A 10.77.25.5
 
 ; robinmail

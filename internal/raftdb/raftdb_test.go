@@ -2,6 +2,7 @@ package raftdb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -142,10 +143,10 @@ func TestDeduplication(t *testing.T) {
 	}
 }
 
-// TestDeterminism: what is applied is the same on every node, and nothing
-// in a batch may depend on the node: values are normalised before they are
+// TestNormalize: what is applied is the same on every node, and nothing in
+// a batch may depend on the node: values are normalised before they are
 // proposed, and SQLite functions that read the clock or chance are not
-// used by the store (TestStoreSQLIsDeterministic in internal/store).
+// used by the store (TestSQLIsDeterministic in internal/store).
 func TestNormalize(t *testing.T) {
 	in := []db.Statement{
 		db.Stmt(`x`, 1, int32(2), uint8(3), 4.0, 4.5, "s", []byte{1, 2}, nil, true),
@@ -628,5 +629,49 @@ func TestBackupAndLoad(t *testing.T) {
 	e = openOne(t, dir)
 	if rows := query(t, e, db.Weak, `SELECT v FROM t ORDER BY v`); fmt.Sprint(rows) != "[[after] [one]]" {
 		t.Errorf("after restart: %v", rows)
+	}
+}
+
+// TestApplyIsDeterministic: what applying returns, and so what
+// raft_request records on every node, does not depend on what ran on the
+// node's connection before: a node that has applied other things (or
+// restarted) answers alike. changes() and last_insert_rowid() are per
+// connection and would otherwise leak from one statement into the next.
+func TestApplyIsDeterministic(t *testing.T) {
+	a := openOne(t, t.TempDir())
+	defer a.Close()
+	b := openOne(t, t.TempDir())
+	defer b.Close()
+	// Only a has history: a table with rows, inserted and changed.
+	exec(t, a, `CREATE TABLE other (id INTEGER PRIMARY KEY, v TEXT)`)
+	for i := range 7 {
+		exec(t, a, `INSERT INTO other (v) VALUES (?)`, fmt.Sprint(i))
+	}
+	exec(t, a, `UPDATE other SET v = 'x'`)
+
+	batches := [][]db.Statement{
+		{db.Stmt(`CREATE TABLE t (id INTEGER PRIMARY KEY, k TEXT UNIQUE, n INTEGER)`)},
+		{db.Stmt(`INSERT INTO t (k, n) VALUES ('a', 1)`), db.Stmt(`INSERT INTO t (k, n) VALUES ('b', 2)`)},
+		{db.Stmt(`UPDATE t SET n = n + 1`)},
+		{db.Stmt(`INSERT OR IGNORE INTO t (k, n) VALUES ('a', 9)`)},
+		{db.Stmt(`DELETE FROM t WHERE k = 'nope'`)},
+		{db.Stmt(`CREATE INDEX t_n ON t (n)`), db.Stmt(`SELECT k, n FROM t ORDER BY k`)},
+		{db.Stmt(`UPDATE t SET n = 0 WHERE k = 'a'`), db.Stmt(`INSERT INTO t (k) VALUES ('a')`)},
+		{db.Stmt(`REPLACE INTO t (id, k, n) VALUES (1, 'a', 5)`)},
+	}
+	for i, batch := range batches {
+		ra, ea := a.Execute(ctx, batch...)
+		rb, eb := b.Execute(ctx, batch...)
+		ja, _ := json.Marshal(struct {
+			R []db.Result
+			E string
+		}{ra, fmt.Sprint(ea)})
+		jb, _ := json.Marshal(struct {
+			R []db.Result
+			E string
+		}{rb, fmt.Sprint(eb)})
+		if string(ja) != string(jb) {
+			t.Errorf("batch %d: %s on one node, %s on the other", i, ja, jb)
+		}
 	}
 }

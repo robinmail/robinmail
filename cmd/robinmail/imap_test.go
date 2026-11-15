@@ -134,7 +134,7 @@ func hasLine(lines []string, want string) bool {
 }
 
 // TestIMAPAndJMAPOnTwoNodes is the exit of phase 6 as far as a test can
-// show it: two robinmail nodes on one rqlite, two IMAP sessions, a JMAP
+// show it: two robinmail nodes of one cluster, two IMAP sessions, a JMAP
 // client and an event source, and every change made through one of them
 // reaching the others.
 //
@@ -153,7 +153,7 @@ func hasLine(lines []string, want string) bool {
 // that is phase 4's and has its own tests. What node A hears of node B's
 // writes it hears through its poll of the account's modseq.
 //
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test -v -run TestIMAPAndJMAPOnTwoNodes ./cmd/robinmail
+//	go test -v -run TestIMAPAndJMAPOnTwoNodes ./cmd/robinmail
 func TestIMAPAndJMAPOnTwoNodes(t *testing.T) {
 	type node struct {
 		*instance

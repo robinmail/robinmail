@@ -24,7 +24,6 @@ import (
 //   - Anna sends as info@A over SMTP and has an identity for it over JMAP;
 //     she may not send as an alias that is not hers.
 //
-//     ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003 \
 //     go test -v -run TestAliasesAndForwarding ./cmd/robinmail
 func TestAliasesAndForwarding(t *testing.T) {
 	world := newSendNet()

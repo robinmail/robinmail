@@ -159,11 +159,11 @@ func verifyDKIM(t *testing.T, msg []byte, pub *rsa.PublicKey) map[string]string 
 // "robinmail dns", catches it at the receiving end, and verifies the
 // DKIM-Signature against the public key that command printed for DNS. So
 // it also shows that nothing robinmail does after the scan (its Received
-// line, the queue, SMTP) breaks the signature. It needs rqlite, and the
+// line, the queue, SMTP) breaks the signature. It needs the
 // Rspamd of contrib/compose with its DKIM key directory:
 //
 //	docker compose -f contrib/compose/compose.yaml up -d
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RSPAMD=http://127.0.0.1:11333 \
+//	ROBINMAIL_TEST_RSPAMD=http://127.0.0.1:11333 \
 //	ROBINMAIL_TEST_DKIM_DIR=$PWD/contrib/compose/rspamd/dkim go test -v -run TestOutgoingMailIsSignedByRspamd ./cmd/robinmail
 func TestOutgoingMailIsSignedByRspamd(t *testing.T) {
 	scanner, keyDir := os.Getenv("ROBINMAIL_TEST_RSPAMD"), os.Getenv("ROBINMAIL_TEST_DKIM_DIR")

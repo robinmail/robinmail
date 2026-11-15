@@ -513,9 +513,9 @@ func repairLoop(ctx context.Context, st *store.Store, log *slog.Logger, interval
 // then every interval, until ctx is done.
 //
 // Nobody picks which node trims: all of them do. Each trim is one atomic
-// batch in rqlite that deletes whatever is older than the cut and records,
-// per account, the newest state it removed. Two nodes trimming at the same
-// moment run one after the other on the rqlite leader; the second finds
+// batch that deletes whatever is older than the cut and records, per
+// account, the newest state it removed. Two nodes trimming at the same
+// moment are ordered by the Raft log; the second finds
 // nothing left. A node that dies mid-trim leaves either the whole batch or
 // none of it.
 func trimLoop(ctx context.Context, st *store.Store, log *slog.Logger, first, interval, auditRetention time.Duration) {

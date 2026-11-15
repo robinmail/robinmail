@@ -15,10 +15,8 @@ import (
 	"github.com/robinmail/robinmail/internal/store"
 )
 
-// These tests run the Worker against a real store (rqlite), a test
-// resolver and mail servers on 127.0.0.1. They need:
-//
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test ./internal/queue
+// These tests run the Worker against a real store (a database of its own
+// in a temporary directory), a test resolver and mail servers on 127.0.0.1.
 
 func states(sub store.Submission) string {
 	var out []string

@@ -4,7 +4,6 @@ $TTL 5
 @   IN NS  dns.lab.test.
 2   IN PTR dns.lab.test.
 3   IN PTR web.lab.test.
-4   IN PTR rqlite.lab.test.
 5   IN PTR suite.lab.test.
 10  IN PTR mx.robin.test.
 11  IN PTR mx.postfix.test.

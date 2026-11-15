@@ -303,11 +303,9 @@ func (c *jmapClient) call(calls string) []any {
 //   - With an MTA-STS policy in mode enforce, mail goes to a server whose
 //     certificate is valid for its name and not to one whose is not.
 //
-// It needs two rqlite databases:
+// Each server has a database of its own:
 //
-//	docker compose -f contrib/compose/compose.yaml up -d
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003 \
-//	  go test -v -run TestSendBetweenTwoServers ./cmd/robinmail
+//	go test -v -run TestSendBetweenTwoServers ./cmd/robinmail
 func TestSendBetweenTwoServers(t *testing.T) {
 	world := newSendNet()
 	var a, b *instance

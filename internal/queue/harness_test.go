@@ -300,7 +300,7 @@ func (l *localFake) Local(_ context.Context, from, to string, msg []byte) error 
 	return nil
 }
 
-// world is everything a queue test needs: a store on the real rqlite, an
+// world is everything a queue test needs: a store on a database of its own, an
 // account that sends, DNS, a network, a clock and a Worker.
 type world struct {
 	t      *testing.T

@@ -36,7 +36,7 @@ func (t *table) Nodes(context.Context) ([]store.Node, error) {
 	defer t.mu.Unlock()
 	t.reads++
 	if t.down {
-		return nil, errors.New("rqlite is down")
+		return nil, errors.New("the database is down")
 	}
 	var out []store.Node
 	for _, n := range t.rows {

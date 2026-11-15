@@ -303,7 +303,7 @@ func TestFilterRedirectLoop(t *testing.T) {
 // is ignored.
 func TestFilterFailures(t *testing.T) {
 	e := filterSetup(t, "")
-	e.filters.fail = errors.New("rqlite is down")
+	e.filters.fail = errors.New("the database is down")
 	if err := e.deliver(t, "mike@example.test", plainMsg); code(err) != 451 || len(e.st.got) != 0 {
 		t.Errorf("store down: %v", err)
 	}

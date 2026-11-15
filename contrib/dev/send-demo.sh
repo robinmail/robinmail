@@ -6,18 +6,15 @@
 # other's domain to a port on 127.0.0.1 (outbound.routes), so no mail
 # leaves this machine.
 #
-#   docker compose -f contrib/compose/compose.yaml up -d      # rqlite on :4001 and :4003
 #   contrib/dev/send-demo.sh
 #
 # What it shows: an upload, an Email made from properties with an
 # attachment, an EmailSubmission, the delivery status, the message on the
 # other server, a reply, and a bounce for an address that does not exist.
 #
-# The two instances live in ./dev/send-a and ./dev/send-b (ignored by git)
-# and are stopped when the script ends. Server A uses the same database as
-# the development instance of seed.sh, so stop that one first: two servers
-# on one database are one queue, and they do not share a blob directory.
-# The users' password is for these local instances only; set
+# The two instances live in ./dev/send-a and ./dev/send-b (ignored by git),
+# each with its database in its data directory, and are stopped when the
+# script ends. The users' password is for these local instances only; set
 # ROBINMAIL_DEV_PASSWORD to use another.
 set -eu
 cd "$(dirname "$0")/../.."
@@ -27,30 +24,28 @@ B=dev/send-b
 A_URL=http://127.0.0.1:8085
 B_URL=http://127.0.0.1:8086
 
-if curl -s -o /dev/null -m 2 http://127.0.0.1:8080/auth/session; then
-	echo "a robinmail server answers on 127.0.0.1:8080 (make dev?); stop it first, see the comment in this script" >&2
-	exit 1
-fi
-
 mkdir -p dev "$A" "$B"
 go build -o dev/robinmail ./cmd/robinmail
 
-config() { # dir hostname rqlite smtp http other-domain other-smtp
+config() { # dir hostname smtp http other-domain other-smtp
 	[ -f "$1/robinmail.json" ] || cat > "$1/robinmail.json" <<JSON
 {
   "hostname": "$2",
   "data_dir": "data",
   "master_key_file": "master.key",
-  "rqlite": {"url": "$3"},
-  "smtp": {"listen": "127.0.0.1:$4"},
-  "web": {"http_listen": "127.0.0.1:$5"},
+  "smtp": {"listen": "127.0.0.1:$3"},
+  "web": {"http_listen": "127.0.0.1:$4"},
   "submission": {"undo_seconds": 0},
-  "outbound": {"routes": {"$6": "127.0.0.1:$7"}}
+  "outbound": {"routes": {"$5": "127.0.0.1:$6"}}
 }
 JSON
 }
-config "$A" mail.a.robinmail.test http://127.0.0.1:4001 2535 8085 b.robinmail.test 2536
-config "$B" mail.b.robinmail.test http://127.0.0.1:4003 2536 8086 a.robinmail.test 2535
+# An instance from before phase 10 names an rqlite: it starts again.
+for d in "$A" "$B"; do
+	if [ -f "$d/robinmail.json" ] && grep -q '"rqlite"' "$d/robinmail.json"; then rm -rf "$d"; mkdir -p "$d"; fi
+done
+config "$A" mail.a.robinmail.test 2535 8085 b.robinmail.test 2536
+config "$B" mail.b.robinmail.test 2536 8086 a.robinmail.test 2535
 a() { dev/robinmail -config "$A/robinmail.json" "$@"; }
 b() { dev/robinmail -config "$B/robinmail.json" "$@"; }
 setup() { # command domain user

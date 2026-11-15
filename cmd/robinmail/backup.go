@@ -23,13 +23,14 @@ import (
 //	db.sqlite                         the database, one SQLite file
 //	blobs/<account>/<xx>/<sha256>     the blob files, as they are on disk
 //
-// The database file is a copy rqlite makes at one point of its log, so
-// all tables in it are from one moment. The blob files are the encrypted
+// The database file is a copy of this node's database once it holds all
+// that was committed when the backup began (internal/raftdb), so all
+// tables in it are from one moment. The blob files are the encrypted
 // files of the nodes' disks: the messages in a backup can be read by
 // nobody without the master key, and the master key is not in it. The
 // database file is as readable as the database is: addresses, subjects,
 // previews, the search index and password hashes are in it in the clear.
-// A backup wants the same care as the disks of the rqlite nodes.
+// A backup wants the same care as the disks of the nodes.
 //
 // Which blobs: everything the database refers to just before and just
 // after the copy is made, fetched from another node where this one lacks
@@ -247,7 +248,8 @@ func readManifest(dir string) (manifest, error) {
 	return m, nil
 }
 
-// restore loads a backup into an empty server: the database into rqlite,
+// restore loads a backup into an empty server of one node (add the others
+// afterwards): the database,
 // the blob files into this node's blob directory (and from there, in a
 // cluster, to the other nodes). No server may be running on the database.
 //

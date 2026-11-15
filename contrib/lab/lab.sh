@@ -32,7 +32,6 @@ versions() {
 	echo "vdirsyncer $($COMPOSE exec -T davclients vdirsyncer --version 2>&1 | sed 's/.*version //')"
 	echo "CoreDNS   $($COMPOSE exec -T dns /coredns -version 2>/dev/null | sed -n 's/^CoreDNS-//p')"
 	echo "nginx     $($COMPOSE exec -T web nginx -v 2>&1 | sed 's/.*\///')"
-	echo "rqlite    $($COMPOSE exec -T rqlite rqlited -version 2>&1 | awk '{print $2}')"
 }
 
 case "${1:-}" in

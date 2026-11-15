@@ -33,8 +33,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robinmail/robinmail/internal/message"
 	"github.com/robinmail/robinmail/internal/db"
+	"github.com/robinmail/robinmail/internal/message"
 	"github.com/robinmail/robinmail/internal/smtp"
 	"github.com/robinmail/robinmail/internal/store"
 	"github.com/robinmail/robinmail/internal/tlsrpt"

@@ -160,10 +160,8 @@ func reportMessage(to string) string {
 // SMTP into a running "serve", a client logs in over HTTP and runs what a
 // webmail does over JMAP: session, mailboxes, a page of threads, an email
 // with its body, mark read, move, changes, download, the HTML view, logout.
-// It needs rqlite:
 //
-//	docker compose -f contrib/compose/compose.yaml up -d
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test -v -run TestJMAPEndToEnd ./cmd/robinmail
+//	go test -v -run TestJMAPEndToEnd ./cmd/robinmail
 func TestJMAPEndToEnd(t *testing.T) {
 	c := newCLI(t, `"smtp":{"listen":"127.0.0.1:0"},"web":{"http_listen":"127.0.0.1:0"},`)
 	domain := "jmap-" + randomHex() + ".test"

@@ -14,9 +14,10 @@
 #
 # The server listens on 127.0.0.1:8080 like the development instance. When
 # one is running there already, ROBINMAIL_E2E_PORT=8085 puts this one on
-# another port (and its SMTP on the next); both then work on the same
-# database (rqlite-dev of contrib/compose, 127.0.0.1:4005), as two nodes
-# would. The Go tests have databases of their own.
+# another port (and its SMTP on the next). It has a data directory of its
+# own, dev/e2e-data, seeded like the development instance (the same users,
+# password and sample mail), so a running development server keeps its
+# database and the tests do not change its mail.
 set -eu
 cd "$(dirname "$0")/../.."
 PORT=${ROBINMAIL_E2E_PORT:-8080}
@@ -25,6 +26,7 @@ export ROBINMAIL_E2E_PORT="$PORT"
 contrib/dev/seed.sh
 go build -o dev/oidc-provider ./contrib/dev/oidc-provider
 node contrib/dev/e2e-config.mjs
+ROBINMAIL_SEED_CONFIG=dev/robinmail.e2e.json contrib/dev/seed.sh
 
 dev/oidc-provider -listen 127.0.0.1:8090 &
 provider=$!

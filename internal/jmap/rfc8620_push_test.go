@@ -16,7 +16,7 @@ import (
 	"github.com/robinmail/robinmail/internal/store"
 )
 
-// Tests of push, written from RFC 8620 section 7. They need rqlite, as the
+// Tests of push, written from RFC 8620 section 7. They need a store, as the
 // other tests here.
 
 // pushEnv is an env whose handler has a hub and is reachable over real

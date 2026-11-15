@@ -149,7 +149,7 @@ func TestSendAsAlias(t *testing.T) {
 		t.Errorf("%d queued, aliases asked %d times", len(st.queued), asked)
 	}
 	// A lookup that fails gives no address away.
-	s.SendAs = func(context.Context, string) ([]string, error) { return nil, errors.New("rqlite is down") }
+	s.SendAs = func(context.Context, string) ([]string, error) { return nil, errors.New("the database is down") }
 	_, err := s.Submit(context.Background(), Outgoing{Account: mike, From: "info@example.test", Rcpts: []string{"bob@elsewhere.example"}, Raw: msg("info@example.test")})
 	if kind(err) != RefuseMailFrom {
 		t.Errorf("with the alias lookup down: %v", err)
@@ -433,7 +433,7 @@ func TestSubmissionHandler(t *testing.T) {
 		"no From":              {env.Rcpts, []byte("Subject: x\r\n\r\nx\r\n"), nil, 550, "5.6.0"},
 		"too many recipients":  {[]string{"a@x.test", "b@x.test", "c@x.test"}, draft(""), nil, 452, "4.5.3"},
 		"rate limit":           {env.Rcpts, draft(""), store.ErrRateLimited, 451, "4.7.1"},
-		"store down":           {env.Rcpts, draft(""), errors.New("rqlite is away"), 451, "4.3.0"},
+		"store down":           {env.Rcpts, draft(""), errors.New("the database is away"), 451, "4.3.0"},
 	} {
 		st.refuse = tc.store
 		err := h.Deliver(ctx, &smtp.Envelope{AuthUser: "mike@example.test", From: "mike@example.test", Rcpts: tc.rcpts}, tc.msg)

@@ -171,12 +171,12 @@ func TestAliasDepth(t *testing.T) {
 // A lookup that fails defers the mail; it does not bounce it.
 func TestAliasLookupFails(t *testing.T) {
 	d, _, al, fw := aliasSetup(t, "")
-	al.fail = errors.New("rqlite is down")
+	al.fail = errors.New("the database is down")
 	if _, _, err := routeOf(t, d, "", "info@example.test"); code(err) != 451 {
 		t.Errorf("alias lookup down: %v", err)
 	}
 	al.fail = nil
-	fw.fail = errors.New("rqlite is down")
+	fw.fail = errors.New("the database is down")
 	msg := []byte("Subject: x\r\n\r\nbody\r\n")
 	if err := d.Deliver(context.Background(), env("both@example.test"), msg); code(err) != 451 {
 		t.Errorf("forward queue down: %v", err)

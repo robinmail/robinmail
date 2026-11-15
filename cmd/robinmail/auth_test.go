@@ -173,7 +173,7 @@ func (c *jmapClient) post(method, url, body string, out any) int {
 //     node ends with them), turns TOTP off, resets the password and reads
 //     the log of all of it.
 //
-//     ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test -v -run TestAuthEndToEnd ./cmd/robinmail
+//     go test -v -run TestAuthEndToEnd ./cmd/robinmail
 func TestAuthEndToEnd(t *testing.T) {
 	a, b := twoAuthNodes(t, "auth", "")
 	anna := a.user("anna")

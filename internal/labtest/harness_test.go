@@ -120,14 +120,18 @@ func waitFor(t testing.TB, what string, limit time.Duration, ok func() bool) tim
 	return 0
 }
 
-// labSQL runs a statement in robinmail's database in the lab and returns
-// what rqlite's command line prints. The statement goes to its standard
-// input: one given as an argument is ignored.
+// labSQL runs a statement in robinmail's database in the lab, through
+// "robinmail db query" (a SELECT: one JSON row per line) or "db exec"
+// (anything else) in robinmail's container, and returns what it prints.
 func labSQL(t testing.TB, sql string) string {
 	t.Helper()
-	out, err := composeErr([]byte(sql+"\n"), "exec", "-T", "rqlite", "rqlite", "-H", "localhost")
+	verb := "exec"
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SELECT") {
+		verb = "query"
+	}
+	out, err := composeErr(nil, "exec", "-T", "robinmail", "robinmail", "-config", "/lab/robinmail.json", "db", verb, sql)
 	if err != nil {
-		t.Fatalf("rqlite: %s: %v\n%s", sql, err, out)
+		t.Fatalf("robinmail db %s: %s: %v\n%s", verb, sql, err, out)
 	}
 	return out
 }

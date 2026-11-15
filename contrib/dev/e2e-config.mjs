@@ -13,6 +13,9 @@ import { readFileSync, writeFileSync } from 'node:fs'
 
 const keycloak = 'http://127.0.0.1:8180/realms/robinmail'
 const cfg = JSON.parse(readFileSync('dev/robinmail.json', 'utf8'))
+// A data directory of its own: the database of the development instance
+// is held by its server while it runs.
+cfg.data_dir = 'e2e-data'
 // ROBINMAIL_E2E_PORT moves the instance off the development ports, for
 // when a development server is already running there: the web listener
 // goes to that port, SMTP to the one after it, and the IMAP and

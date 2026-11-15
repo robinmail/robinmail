@@ -2,6 +2,7 @@ package clustertest
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -19,12 +20,12 @@ func TestCluster(t *testing.T) {
 	for n := range robin {
 		waitFor(t, robin[n].service, 60*time.Second, func() bool { return nodeUp(n) == nil })
 	}
-	if got := rqliteReachable(); got != 3 {
-		t.Fatalf("%d of 3 rqlite nodes reachable", got)
+	if got := membersUp(); got != 3 {
+		t.Fatalf("%d of 3 nodes in the cluster", got)
 	}
 	sessions := logins(t, 0)
 
-	t.Run("a: rqlite leader killed and restarted during deliveries", func(t *testing.T) { leaderKilled(t, sessions) })
+	t.Run("a: database leader killed and restarted during deliveries", func(t *testing.T) { leaderKilled(t, sessions) })
 	t.Run("b: robinmail node killed during deliveries", func(t *testing.T) { nodeKilled(t, sessions) })
 	t.Run("c: node with a wiped blob directory catches up", func(t *testing.T) { wipedNode(t, sessions) })
 	t.Run("d: read through a node that lacks the blob", func(t *testing.T) { readWithoutBlob(t, sessions) })
@@ -34,7 +35,7 @@ func TestCluster(t *testing.T) {
 	t.Run("h: a quota under concurrent delivery through three nodes", quotaAcrossNodes)
 	t.Run("i: Sieve under concurrent delivery through three nodes", sieveAcrossNodes)
 	t.Run("j: a scrub replaces a damaged blob file from another node", scrubRepairs)
-	t.Run("k: rqlite is closed to whoever has no login or no certificate", rqliteClosed)
+	t.Run("k: the database has no port but the members' mutual TLS", databaseClosed)
 }
 
 func report(t *testing.T, st *stream, d time.Duration) {
@@ -58,9 +59,11 @@ func report(t *testing.T, st *stream, d time.Duration) {
 }
 
 // (a) A steady stream of deliveries to four accounts through all three
-// robinmail nodes. The rqlite leader is killed in the middle and started
-// again later. Afterwards every message that got 250 exists exactly once
-// and reads back through every robinmail node.
+// robinmail nodes. The node that leads the database is killed in the
+// middle and started again later: the other two elect a leader and go on,
+// the senders go on through them. Afterwards every message that got 250
+// exists exactly once, the UIDs of each mailbox have no gaps or doubles,
+// and everything reads back through every node, the restarted one too.
 func leaderKilled(t *testing.T, sessions []session) {
 	st := newStream("a")
 	stop := make(chan struct{})
@@ -68,31 +71,54 @@ func leaderKilled(t *testing.T, sessions []session) {
 	wg := st.start(6, stop, 90*time.Second)
 
 	time.Sleep(5 * time.Second)
-	leader := rqliteLeader(t)
+	leader := dbLeader(t)
 	before, _, _, _ := st.counts()
-	t.Logf("after 5s: %d delivered; killing the rqlite leader, rqlite-%d", before, leader+1)
-	compose(t, "kill", fmt.Sprintf("rqlite-%d", leader+1))
+	t.Logf("after 5s: %d delivered; killing the database leader, %s", before, robin[leader].service)
+	compose(t, "kill", robin[leader].service)
 	killed := time.Now()
 
 	time.Sleep(15 * time.Second)
 	during, _, _, _ := st.counts()
-	next := rqliteLeader(t)
+	next := dbLeader(t)
 	if next == leader {
-		t.Errorf("rqlite-%d still leads after it was killed", leader+1)
+		t.Errorf("%s still leads after it was killed", robin[leader].service)
 	}
-	t.Logf("15s later: %d more delivered with two rqlite nodes, rqlite-%d leads; starting rqlite-%d again", during-before, next+1, leader+1)
+	t.Logf("15s later: %d more delivered with two nodes, %s leads; starting %s again", during-before, robin[next].service, robin[leader].service)
 	if during == before {
 		t.Error("no delivery succeeded while the old leader was down")
 	}
-	compose(t, "start", fmt.Sprintf("rqlite-%d", leader+1))
-	rejoin := waitFor(t, "rqlite to have three reachable nodes again", 60*time.Second, func() bool { return rqliteReachable() == 3 })
-	t.Logf("rqlite-%d was down for %s and rejoined %s after its start", leader+1, time.Since(killed).Round(time.Second), rejoin.Round(time.Millisecond))
+	compose(t, "start", robin[leader].service)
+	rejoin := waitFor(t, "three nodes in the cluster again", 60*time.Second, func() bool { return membersUp() == 3 })
+	t.Logf("%s was down for %s and was back in the cluster %s after its start", robin[leader].service, time.Since(killed).Round(time.Second), rejoin.Round(time.Millisecond))
+	waitFor(t, robin[leader].service+" to answer", 60*time.Second, func() bool { return nodeUp(leader) == nil })
 
 	time.Sleep(5 * time.Second)
 	close(stop)
 	wg.Wait()
 	report(t, st, time.Since(start))
 	verify(t, st, sessions, 0, 1, 2)
+	uidsWithoutGaps(t)
+}
+
+// uidsWithoutGaps checks every mailbox of the cluster: its UIDs are 1 to
+// n-1 without a double, as far as messages were not removed, and below
+// uidnext; and the account's modseq is at least that of every email.
+func uidsWithoutGaps(t *testing.T) {
+	t.Helper()
+	num := func(v any) int64 { n, _ := v.(json.Number).Int64(); return n }
+	for _, r := range dbRows(t, `SELECT m.account_id, m.id, count(*), count(DISTINCT em.uid), max(em.uid), m.uidnext
+		FROM mailbox m JOIN email_mailbox em ON em.account_id = m.account_id AND em.mailbox_id = m.id
+		GROUP BY m.account_id, m.id`) {
+		if num(r[2]) != num(r[3]) {
+			t.Errorf("mailbox %v of %v: %v rows, %v distinct UIDs", r[1], r[0], r[2], r[3])
+		}
+		if num(r[4]) >= num(r[5]) {
+			t.Errorf("mailbox %v of %v: highest UID %v, uidnext %v", r[1], r[0], r[4], r[5])
+		}
+	}
+	for _, r := range dbRows(t, `SELECT a.id FROM account a WHERE a.modseq < (SELECT coalesce(max(modseq), 0) FROM email e WHERE e.account_id = a.id)`) {
+		t.Errorf("account %v has an email with a modseq above its own", r[0])
+	}
 }
 
 // (b) The same stream while a robinmail node is killed. Mail it was given
@@ -181,8 +207,10 @@ func nodeKilled(t *testing.T, sessions []session) {
 
 // (c) A node loses its blob directory. Its repair pass fetches every blob
 // the database refers to from the other nodes. Proof that it has them
-// all: the other two robinmail nodes are killed and every message is read
-// through the wiped node alone.
+// all: one other node is killed and every message is read through the
+// wiped node without it fetching a single blob. (Not both others, as
+// before phase 10: the database is on the nodes now, and one node of
+// three alone is a minority that refuses to answer.)
 func wipedNode(t *testing.T, sessions []session) {
 	const victim = 2
 	// Everything delivered so far, by all parts of the test.
@@ -210,8 +238,10 @@ func wipedNode(t *testing.T, sessions []session) {
 		t.Errorf("repair still found something missing")
 	}
 
-	// Alone: nobody to fetch from.
-	compose(t, "kill", robin[0].service, robin[1].service)
+	// One other node down; the victim must not fetch from the one left.
+	since := time.Now()
+	compose(t, "kill", robin[0].service)
+	waitFor(t, "a leader of the two left", 30*time.Second, func() bool { return membersUp() == 2 })
 	j := newJMAP(victim)
 	read, bad := 0, 0
 	for _, s := range sessions {
@@ -224,21 +254,24 @@ func wipedNode(t *testing.T, sessions []session) {
 			if err != nil || !bytes.Contains(raw, []byte("token "+e.subject+"\r\n")) {
 				bad++
 				if bad <= 5 {
-					t.Errorf("%s alone cannot read %s: %v", robin[victim].service, e.subject, err)
+					t.Errorf("%s cannot read %s: %v", robin[victim].service, e.subject, err)
 				}
 			}
 			read++
 		}
 	}
-	t.Logf("with %s and %s killed, %s alone read %d of %d messages from its own disk",
-		robin[0].service, robin[1].service, robin[victim].service, read-bad, read)
+	fetched := strings.Count(compose(t, "logs", "--no-log-prefix", "--since", since.UTC().Format(time.RFC3339), robin[victim].service), "blob fetched")
+	t.Logf("with %s killed, %s read %d of %d messages, fetching %d blobs from a peer",
+		robin[0].service, robin[victim].service, read-bad, read, fetched)
 	if read != total {
 		t.Errorf("read %d messages, want %d", read, total)
 	}
-	compose(t, "start", robin[0].service, robin[1].service)
-	for _, n := range []int{0, 1} {
-		waitFor(t, robin[n].service, 60*time.Second, func() bool { return nodeUp(n) == nil })
+	if fetched != 0 {
+		t.Errorf("%s fetched %d blobs: its own disk did not have them", robin[victim].service, fetched)
 	}
+	compose(t, "start", robin[0].service)
+	waitFor(t, robin[0].service, 60*time.Second, func() bool { return nodeUp(0) == nil })
+	waitFor(t, "three nodes in the cluster", 60*time.Second, func() bool { return membersUp() == 3 })
 }
 
 // (d) A message is read through a node that does not have its blob: the
@@ -316,7 +349,7 @@ func readWithoutBlob(t *testing.T, sessions []session) {
 // (e) Deliveries per second through the three-node cluster, at several
 // numbers of concurrent senders spread over the three nodes. Each
 // delivery is a full SMTP transaction that ends, before its 250, with the
-// blob on two nodes and one write through rqlite's Raft log.
+// blob on two nodes and one write through the Raft log.
 func throughput(t *testing.T, sessions []session) {
 	for _, workers := range []int{3, 12, 48} {
 		st := newStream("e")
@@ -410,7 +443,7 @@ func senderKilled(t *testing.T, sessions []session) {
 	// Who holds what. A claim names the node in front of the colon.
 	claims := func() map[string]int {
 		out := map[string]int{}
-		for _, row := range rqliteRows(t, "SELECT claimed_by FROM submission WHERE queue = 'active' AND claimed_by <> ''") {
+		for _, row := range dbRows(t, "SELECT claimed_by FROM submission WHERE queue = 'active' AND claimed_by <> ''") {
 			node, _, _ := strings.Cut(row[0].(string), ":")
 			out[node]++
 		}
@@ -473,7 +506,7 @@ func senderKilled(t *testing.T, sessions []session) {
 		t.Errorf("%d lost, %d doubled, %d different subjects", lost, doubled, len(seen))
 	}
 	// The queue is empty, and JMAP shows every submission as handed over.
-	if left := rqliteRows(t, "SELECT count(*) FROM submission WHERE queue = 'active'"); fmt.Sprint(left[0][0]) != "0" {
+	if left := dbRows(t, "SELECT count(*) FROM submission WHERE queue = 'active'"); fmt.Sprint(left[0][0]) != "0" {
 		t.Errorf("%v submissions are still active", left[0][0])
 	}
 	res, err := j.call(sender.cookie, "EmailSubmission/get", map[string]any{"accountId": sender.account, "ids": submissions,

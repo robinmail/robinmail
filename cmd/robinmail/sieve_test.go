@@ -57,7 +57,6 @@ func (c *jmapClient) upload(account, typ, content string) string {
 //
 //   - a message she refuses comes back to Bob with her reason.
 //
-//     ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RQLITE_B=http://127.0.0.1:4003 \
 //     go test -v -run TestSieveEndToEnd ./cmd/robinmail
 func TestSieveEndToEnd(t *testing.T) {
 	world := newSendNet()

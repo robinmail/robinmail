@@ -683,7 +683,7 @@ func (f *fakeLimits) LoginFailures(_ context.Context, window time.Duration, keys
 	defer f.mu.Unlock()
 	f.reads++
 	if f.down {
-		return nil, errors.New("rqlite is down")
+		return nil, errors.New("the database is down")
 	}
 	out := map[string]store.LoginFailure{}
 	for _, k := range keys {
@@ -699,7 +699,7 @@ func (f *fakeLimits) AddLoginFailure(_ context.Context, window time.Duration, ke
 	defer f.mu.Unlock()
 	f.writes++
 	if f.down {
-		return errors.New("rqlite is down")
+		return errors.New("the database is down")
 	}
 	for _, k := range keys {
 		v, ok := f.m[k]
@@ -834,7 +834,7 @@ func TestAddresses(t *testing.T) {
 	if strings.TrimSpace(rec.Body.String()) != `{"addresses":["anna@example.test","info@example.test","office@example.test"]}` {
 		t.Fatalf("with aliases: %s", rec.Body)
 	}
-	st.s.SendAs = func(context.Context, string) ([]string, error) { return nil, errors.New("rqlite is down") }
+	st.s.SendAs = func(context.Context, string) ([]string, error) { return nil, errors.New("the database is down") }
 	if rec := st.do("GET", tlsBase+"/auth/addresses", "", cookie(c)); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("store down: %d", rec.Code)
 	}

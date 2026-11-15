@@ -151,11 +151,10 @@ const (
 
 // TestServeEndToEnd is phase 2's exit: a message sent over SMTP is scanned
 // by a real Rspamd and lands in the Inbox with score headers, GTUBE is
-// refused with 550, and spam goes to Junk. It needs rqlite and Rspamd:
+// refused with 550, and spam goes to Junk. It needs Rspamd:
 //
 //	docker compose -f contrib/compose/compose.yaml up -d
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 ROBINMAIL_TEST_RSPAMD=http://127.0.0.1:11333 \
-//	  go test -v -run TestServeEndToEnd ./cmd/robinmail
+//	ROBINMAIL_TEST_RSPAMD=http://127.0.0.1:11333 go test -v -run TestServeEndToEnd ./cmd/robinmail
 func TestServeEndToEnd(t *testing.T) {
 	scanner := os.Getenv("ROBINMAIL_TEST_RSPAMD")
 	if scanner == "" {
@@ -290,7 +289,6 @@ func TestServeRspamdDown(t *testing.T) {
 		})
 	}
 }
-
 
 // freeAddr returns a loopback address whose port was free a moment ago.
 func freeAddr(t *testing.T) string {

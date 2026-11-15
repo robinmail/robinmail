@@ -17,7 +17,7 @@ import (
 // OVERQUOTA), JMAP Email/import (overQuota) and upload. The use is shown
 // by IMAP GETQUOTAROOT, JMAP Quota/get and "user quota".
 //
-//	ROBINMAIL_TEST_RQLITE=http://127.0.0.1:4001 go test -v -run TestQuotaEndToEnd ./cmd/robinmail
+//	go test -v -run TestQuotaEndToEnd ./cmd/robinmail
 func TestQuotaEndToEnd(t *testing.T) {
 	var imapAddr string
 	onIMAPListen = func(_, implicit net.Addr) { imapAddr = implicit.String() }
